@@ -1,0 +1,150 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+/* Theme Definitions */
+:root, [data-theme="theme1"] {
+  --primary-50: #eff6ff;     /* indigo-50 mapping */
+  --primary-100: #e0e7ff;    /* indigo-100 mapping */
+  --primary-200: #c7d2fe;    /* indigo-200 mapping */
+  --primary-300: #a5b4fc;    /* indigo-300 mapping */
+  --primary-400: #818cf8;    /* indigo-400 mapping */
+  --primary-500: #6366f1;    /* indigo-500 mapping */
+  --primary-600: #4f46e5;    /* indigo-600 mapping */
+  --primary-700: #4338ca;    /* indigo-700 mapping */
+  --primary-800: #3730a3;    /* indigo-800 mapping */
+  --primary-900: #312e81;    /* indigo-900 mapping */
+  --primary-gradient-from: #2563eb; /* blue-600 */
+}
+
+[data-theme="theme2"] {
+  --primary-50: #f0fdf4;     /* emerald-50 mapping */
+  --primary-100: #d1fae5;    /* emerald-100 mapping */
+  --primary-200: #a7f3d0;    /* emerald-200 mapping */
+  --primary-300: #6ee7b7;    /* emerald-300 mapping */
+  --primary-400: #34d399;    /* emerald-400 mapping */
+  --primary-500: #10b981;    /* emerald-500 mapping */
+  --primary-600: #059669;    /* emerald-600 mapping */
+  --primary-700: #047857;    /* emerald-700 mapping */
+  --primary-800: #065f46;    /* emerald-800 mapping */
+  --primary-900: #064e3b;    /* emerald-900 mapping */
+  --primary-gradient-from: #0d9488; /* teal-600 */
+}
+
+[data-theme="theme3"] {
+  --primary-50: #fffbeb;     /* amber-50 mapping */
+  --primary-100: #fef3c7;    /* amber-100 mapping */
+  --primary-200: #fde68a;    /* amber-200 mapping */
+  --primary-300: #fcd34d;    /* amber-300 mapping */
+  --primary-400: #fbbf24;    /* amber-400 mapping */
+  --primary-500: #f59e0b;    /* amber-500 mapping */
+  --primary-600: #d97706;    /* amber-600 mapping */
+  --primary-700: #b45309;    /* amber-700 mapping */
+  --primary-800: #92400e;    /* amber-800 mapping */
+  --primary-900: #78350f;    /* amber-900 mapping */
+  --primary-gradient-from: #ea580c; /* orange-600 */
+}
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-indigo-50: var(--primary-50);
+  --color-indigo-100: var(--primary-100);
+  --color-indigo-200: var(--primary-200);
+  --color-indigo-300: var(--primary-300);
+  --color-indigo-400: var(--primary-400);
+  --color-indigo-500: var(--primary-500);
+  --color-indigo-600: var(--primary-600);
+  --color-indigo-700: var(--primary-700);
+  --color-indigo-800: var(--primary-800);
+  --color-indigo-900: var(--primary-900);
+  
+  --color-blue-600: var(--primary-gradient-from);
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #f8fafc;
+  color: #0f172a;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom modern scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.gsi-material-button {
+  -moz-user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  -webkit-appearance: none;
+  background-color: WHITE;
+  background-image: none;
+  border: 1px solid #747775;
+  -webkit-border-radius: 4px;
+  border-radius: 24px;
+  -webkit-box-sizing: border-box;
+  box-sizing: border-box;
+  color: #1f1f1f;
+  cursor: pointer;
+  font-family: 'Inter', arial, sans-serif;
+  font-size: 15px;
+  font-weight: 500;
+  height: 48px;
+  letter-spacing: 0.25px;
+  outline: none;
+  overflow: hidden;
+  padding: 0 24px;
+  position: relative;
+  text-align: center;
+  -webkit-transition: background-color .218s, border-color .218s, box-shadow .218s;
+  transition: background-color .218s, border-color .218s, box-shadow .218s;
+  vertical-align: middle;
+  white-space: nowrap;
+  width: auto;
+  max-width: 400px;
+  min-width: min-content;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+.gsi-material-button:hover {
+  background-color: #f7f9f9;
+  border-color: #747775;
+  box-shadow: 0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15);
+}
+
+.gsi-material-button:active {
+  background-color: #e8eaed;
+}
+
+/* Custom card-enter transitions */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
