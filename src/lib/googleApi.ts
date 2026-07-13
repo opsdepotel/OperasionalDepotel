@@ -5,6 +5,28 @@
 
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus } from '../types';
 
+const originalFetch = window.fetch;
+async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
+  const { timeout = 30000, ...restOptions } = options;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await originalFetch(resource, {
+      ...restOptions,
+      signal: controller.signal
+    });
+    return response;
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error('Permintaan ke Google API mengalami timeout (melebihi batas 30 detik). Silakan periksa koneksi internet Anda atau gunakan Mode Demo (Offline).');
+    }
+    throw err;
+  } finally {
+    clearTimeout(id);
+  }
+}
+const fetch = fetchWithTimeout;
+
 const DB_FILE_NAME = 'Operasional Perusahaan DB';
 const FOLDER_NAME = 'Operasional Perusahaan Bukti';
 
@@ -265,6 +287,8 @@ export async function findOrCreateDatabase(token: string): Promise<string> {
   if (token === 'mock_demo_token') {
     return 'mock_spreadsheet_id';
   }
+
+  console.log('Menggunakan ID spreadsheet operasional yang ditetapkan:', SPREADSHEET_ID);
   await ensureSheetsAndHeaders(token, SPREADSHEET_ID);
   localStorage.setItem(SPREADSHEET_ID_KEY, SPREADSHEET_ID);
   return SPREADSHEET_ID;
@@ -275,6 +299,8 @@ export async function findOrCreateFolder(token: string): Promise<string> {
   if (token === 'mock_demo_token') {
     return 'mock_folder_id';
   }
+
+  console.log('Menggunakan ID folder Google Drive yang ditetapkan:', DRIVE_FOLDER_ID);
   localStorage.setItem(DRIVE_FOLDER_ID_KEY, DRIVE_FOLDER_ID);
   return DRIVE_FOLDER_ID;
 }
