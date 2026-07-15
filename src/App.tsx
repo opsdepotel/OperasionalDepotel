@@ -47,10 +47,6 @@ export default function App() {
   const [token, setToken] = useState<string | null>(null);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [unauthorizedDomainInfo, setUnauthorizedDomainInfo] = useState<{ hostname: string; projectId: string } | null>(null);
-  const [isNetworkError, setIsNetworkError] = useState(false);
-  const [isPopupClosedError, setIsPopupClosedError] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const isInvalidGoogleAccount = !!(user && user.email && user.email.toLowerCase() !== 'ops.depotel@gmail.com' && token !== 'mock_demo_token');
 
@@ -257,9 +253,6 @@ export default function App() {
   const handleLogin = async () => {
     setIsLoggingIn(true);
     setError(null);
-    setUnauthorizedDomainInfo(null);
-    setIsNetworkError(false);
-    setIsPopupClosedError(false);
     try {
       const result = await googleSignIn();
       if (result) {
@@ -269,21 +262,7 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Login error details:', err);
-      if (err.code === 'auth/unauthorized-domain' || err.message?.includes('unauthorized-domain')) {
-        const hostname = window.location.hostname;
-        const projectId = firebaseConfig.projectId || 'absolute-portfolio-q2t1j';
-        setUnauthorizedDomainInfo({ hostname, projectId });
-      } else if (err.code === 'auth/network-request-failed' || err.message?.includes('network-request-failed')) {
-        setIsNetworkError(true);
-        setError('Koneksi diblokir oleh browser (Network Request Failed). Ini biasanya terjadi ketika Firebase Auth dijalankan di dalam iframe preview AI Studio.');
-      } else if (err.code === 'auth/popup-closed-by-user' || err.message?.includes('popup-closed-by-user')) {
-        setIsPopupClosedError(true);
-        setError('Pintu masuk ditutup sebelum selesai. Jika Anda berada di dalam preview AI Studio, harap gunakan tombol "Buka di Tab Baru" di bawah atau "Mode Demo (Offline)".');
-      } else if (err.code === 'auth/popup-blocked' || err.message?.includes('popup-blocked')) {
-        setError('Popup masuk diblokir oleh browser. Izinkan popup untuk situs ini atau gunakan "Buka di Tab Baru".');
-      } else {
-        setError(err.message || 'Login gagal. Pastikan Anda menyetujui izin Google Sheets dan Drive.');
-      }
+      setError('Error menghubungkan dengan Google');
     } finally {
       setIsLoggingIn(false);
     }
@@ -774,184 +753,6 @@ export default function App() {
                 </button>
               </div>
             </div>
-          ) : unauthorizedDomainInfo ? (
-            <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 text-xs text-left space-y-3.5 animate-slide-up">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5 animate-bounce" />
-                <div>
-                  <h3 className="font-bold text-amber-800 text-xs">Domain Belum Diotorisasi</h3>
-                  <p className="text-[11px] text-amber-700 mt-1 leading-relaxed">
-                    Domain preview ini belum terdaftar di daftar <strong>Authorized Domains</strong> Firebase Authentication Anda.
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-amber-100/50 p-2 rounded-xl border border-amber-200/50 flex items-center justify-between gap-2">
-                <code className="text-[10px] font-mono break-all font-bold select-all text-amber-900">
-                  {unauthorizedDomainInfo.hostname}
-                </code>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(unauthorizedDomainInfo.hostname);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
-                  }}
-                  className="px-2 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[9px] font-bold transition-colors cursor-pointer shrink-0"
-                >
-                  {copied ? 'Tersalin!' : 'Salin'}
-                </button>
-              </div>
-
-              <a
-                href={`https://console.firebase.google.com/project/${unauthorizedDomainInfo.projectId}/authentication/providers`}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer text-center"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Buka Settings Firebase Console</span>
-              </a>
-
-              <div className="text-[10px] text-amber-800/80 space-y-1 bg-amber-100/30 p-2.5 rounded-xl border border-amber-200/30">
-                <p className="font-bold text-amber-800">Langkah Otorisasi:</p>
-                <ol className="list-decimal pl-3.5 space-y-1">
-                  <li>Klik tombol di atas untuk membuka Firebase Console Anda.</li>
-                  <li>Di menu sebelah kiri, buka <strong>Authentication</strong>, lalu klik tab <strong>Settings</strong> di kanan atas.</li>
-                  <li>Pilih menu <strong>Authorized domains</strong> di kolom kiri.</li>
-                  <li>Klik <strong>Add domain</strong>, masukkan domain yang telah disalin di atas, and klik <strong>Add</strong>.</li>
-                  <li>Kembali ke sini dan klik <strong>Hubungkan kembali</strong> di bawah.</li>
-                </ol>
-              </div>
-            </div>
-          ) : isNetworkError ? (
-            <div className="bg-indigo-50 border border-indigo-200 text-indigo-950 rounded-2xl p-4 text-xs text-left space-y-3.5 animate-slide-up">
-              <div className="flex items-start gap-2.5">
-                <div className="p-1 bg-indigo-100 text-indigo-700 rounded-lg shrink-0">
-                  <AlertCircle className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-indigo-900 text-xs">Blokir Koneksi Iframe Detected</h3>
-                  <p className="text-[11px] text-indigo-700/90 mt-1 leading-relaxed">
-                    Browser memblokir popup Google Auth karena aplikasi ini sedang berjalan di dalam panel <strong>Iframe Preview AI Studio</strong>.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-1 border-t border-indigo-100">
-                <p className="font-bold text-[11px] text-indigo-900 flex items-center gap-1">
-                  <span>💡 Solusi Terbaik (Pilih Salah Satu):</span>
-                </p>
-                <div className="grid grid-cols-1 gap-2">
-                  <a
-                    href={window.location.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-center font-bold text-[11px] flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>1. Buka di Tab Baru (Disarankan)</span>
-                  </a>
-                  <button
-                    onClick={() => startDemoMode()}
-                    className="p-2.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-xl text-center font-bold text-[11px] flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
-                  >
-                    <CheckSquare className="w-4 h-4 text-emerald-600" />
-                    <span>2. Gunakan Mode Demo (Offline)</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : isPopupClosedError ? (
-            <div className="bg-amber-50 border border-amber-200 text-amber-950 rounded-2xl p-4 text-xs text-left space-y-3.5 animate-slide-up animate-duration-300">
-              <div className="flex items-start gap-2.5">
-                <div className="p-1 bg-amber-100 text-amber-700 rounded-lg shrink-0">
-                  <AlertTriangle className="w-5 h-5 text-amber-600" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-amber-900 text-xs">Error 403 / Login Ditutup</h3>
-                  <p className="text-[11px] text-amber-700 mt-1 leading-relaxed">
-                    Koneksi gagal atau ditutup karena popup Google mendeteksi <strong>Error 403: access_denied</strong> (Aplikasi belum diverifikasi / dalam mode Testing).
-                  </p>
-                </div>
-              </div>
-
-              <div className="text-[10px] text-amber-800/90 space-y-2.5 bg-amber-100/30 p-3 rounded-xl border border-amber-200/30">
-                <p className="font-bold text-amber-800 flex items-center gap-1">
-                  <span>🛠️ Cara Mengatasi Error 403 (Pilih salah satu):</span>
-                </p>
-                <div className="space-y-3 pl-1">
-                  <div>
-                    <span className="font-bold text-amber-900 block mb-0.5">Metode A: Tambahkan Email sebagai Test User (Sangat Direkomendasikan)</span>
-                    <ol className="list-decimal pl-4 space-y-1">
-                      <li>
-                        Buka <a href={`https://console.cloud.google.com/apis/credentials/consent?project=${firebaseConfig.projectId}`} target="_blank" rel="noreferrer" className="text-indigo-600 font-bold underline inline-flex items-center gap-0.5">Google Cloud Console - OAuth Consent Screen <ExternalLink className="w-2.5 h-2.5" /></a>.
-                      </li>
-                      <li>
-                        Gulir ke bawah ke bagian <strong>Test users</strong>, klik tombol <strong>+ Add Users</strong>.
-                      </li>
-                      <li>
-                        Masukkan email Anda: <strong className="select-all font-mono text-[9px] bg-amber-100 px-1 py-0.5 rounded border border-amber-200 text-amber-900">ops.depotel@gmail.com</strong>
-                      </li>
-                      <li>
-                        Klik <strong>Save</strong> dan coba masuk kembali.
-                      </li>
-                    </ol>
-                  </div>
-
-                  <div className="border-t border-amber-200/50 pt-2">
-                    <span className="font-bold text-amber-900 block mb-0.5">Metode B: Ubah Status ke "In Production"</span>
-                    <p className="leading-relaxed text-amber-800">
-                      Pada link <a href={`https://console.cloud.google.com/apis/credentials/consent?project=${firebaseConfig.projectId}`} target="_blank" rel="noreferrer" className="text-indigo-600 font-bold underline">OAuth Consent Screen</a> di atas, klik tombol <strong>Publish App</strong> di bawah "Publishing status". Ini akan membuka akses untuk semua email tanpa verifikasi (abaikan peringatan Unverified).
-                    </p>
-                  </div>
-
-                  <div className="border-t border-amber-200/50 pt-2">
-                    <span className="font-bold text-amber-900 block mb-0.5">Metode C: Otorisasi Domain di Firebase</span>
-                    <p className="leading-relaxed text-amber-800">
-                      Buka <a href={`https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/providers`} target="_blank" rel="noreferrer" className="text-indigo-600 font-bold underline">Firebase Console Settings</a>, pilih tab <strong>Sign-in method</strong> &rarr; aktifkan <strong>Google</strong>. Lalu di tab <strong>Settings</strong> &rarr; <strong>Authorized domains</strong>, daftarkan domain di bawah ini:
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-amber-100/50 p-2.5 rounded-xl border border-amber-200/50 flex items-center justify-between gap-2">
-                <code className="text-[10px] font-mono break-all font-bold select-all text-amber-900">
-                  {window.location.hostname}
-                </code>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(window.location.hostname);
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 2000);
-                  }}
-                  className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[9px] font-bold transition-all cursor-pointer shrink-0"
-                >
-                  {copied ? 'Tersalin!' : 'Salin'}
-                </button>
-              </div>
-
-              <div className="space-y-2 pt-1 border-t border-amber-100">
-                <p className="font-bold text-[11px] text-amber-900">💡 Alternatif Instan:</p>
-                <div className="grid grid-cols-1 gap-2">
-                  <a
-                    href={window.location.href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-center font-bold text-[11px] flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                    <span>Buka di Tab Baru</span>
-                  </a>
-                  <button
-                    onClick={() => startDemoMode()}
-                    className="p-2.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-xl text-center font-bold text-[11px] flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
-                  >
-                    <CheckSquare className="w-4 h-4 text-emerald-600" />
-                    <span>Gunakan Mode Demo (Offline)</span>
-                  </button>
-                </div>
-              </div>
-            </div>
           ) : (
             error && (
               <div className="bg-red-50 border border-red-100 text-red-600 rounded-2xl p-3 text-xs flex items-start gap-2 text-left animate-slide-up">
@@ -979,34 +780,10 @@ export default function App() {
                   <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
                   <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
                 </svg>
-                <span>{unauthorizedDomainInfo || isNetworkError || isPopupClosedError ? 'Coba Hubungkan Kembali' : 'Menghubungkan dengan Google'}</span>
+                <span>Menghubungkan dengan Google</span>
               </>
             )}
           </button>
-
-          <div className="pt-4 border-t border-slate-100 flex flex-col gap-2">
-            <a
-              href={window.location.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="w-full py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
-            >
-              <ExternalLink className="w-4 h-4 text-slate-500" />
-              <span>Buka di Tab Baru (Disarankan)</span>
-            </a>
-
-            <button
-              onClick={() => {
-                if (confirm('Gunakan Mode Demo (Offline)? Data operasional akan disimpan di browser secara lokal tanpa memerlukan Google Sheets.')) {
-                  startDemoMode();
-                }
-              }}
-              className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-2 border border-slate-200 transition-all cursor-pointer"
-            >
-              <Database className="w-4 h-4 text-slate-500" />
-              <span>Gunakan Mode Demo (Offline)</span>
-            </button>
-          </div>
         </div>
       </div>
     );
