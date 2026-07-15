@@ -18,7 +18,8 @@ import {
   createUsageItem,
   updateUsageItem,
   deleteUsageItem,
-  saveUserProfile
+  saveUserProfile,
+  uploadReceiptFile
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus } from './types';
 
@@ -32,6 +33,7 @@ import { ReviewBudgetModal } from './components/ReviewBudgetModal';
 import { TransferModal } from './components/TransferModal';
 import { ReviewReportModal } from './components/ReviewReportModal';
 import { AppLoginForm } from './components/AppLoginForm';
+import { AdjustmentPanel } from './components/AdjustmentPanel';
 
 // Icons
 import {
@@ -77,7 +79,7 @@ export default function App() {
   const [activeRole, setActiveRole] = useState<Role>(Role.USER);
 
   // Navigation / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment'>('dashboard');
   const [selectedRequest, setSelectedRequest] = useState<BudgetRequest | null>(null);
 
   // Review Modals Active
@@ -373,6 +375,68 @@ export default function App() {
       } else {
         setActiveView('dashboard');
       }
+      await handleManualRefresh();
+    }
+  };
+
+  // Workflow Action: Create Adjustment (Admin Direct Action)
+  const handleCreateAdjustment = async (
+    targetUserEmail: string,
+    amount: number,
+    type: string,
+    notes: string,
+    tanggal: string,
+    file: File | null
+  ) => {
+    if (!token || !spreadsheetId) return;
+
+    const success = await runGoogleAction(
+      async () => {
+        let finalBuktiUrl = '';
+        let finalBuktiFileId = '';
+
+        if (file) {
+          if (!driveFolderId) {
+            throw new Error('ID Folder Google Drive belum terinisialisasi.');
+          }
+          const uploadResult = await uploadReceiptFile(token, driveFolderId, file);
+          finalBuktiUrl = uploadResult.viewUrl;
+          finalBuktiFileId = uploadResult.fileId;
+        }
+
+        // Find target user managerEmail
+        const targetUser = profiles.find(p => p.email.toLowerCase() === targetUserEmail.toLowerCase());
+        const targetManagerEmail = targetUser?.managerEmail || '';
+
+        // Generate clean unique ID based on selected date
+        const dateStr = tanggal.replace(/-/g, '');
+        const randomDigits = Math.floor(1000 + Math.random() * 9000);
+        const uid = `ADJ-${dateStr}-${randomDigits}`;
+
+        const newRequest: BudgetRequest = {
+          id: uid,
+          userEmail: targetUserEmail,
+          managerEmail: targetManagerEmail,
+          tanggalPemakaian: tanggal,
+          siteId: 'ADJUSTMENT',
+          jumlahPengajuan: amount,
+          keterangan: `[ADJUSTMENT] ${type} - ${notes}`,
+          status: RequestStatus.CLOSED,
+          managerActionAmount: amount,
+          managerComment: 'Disetujui otomatis oleh Admin',
+          adminActionAmount: amount,
+          createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+          buktiTransferUrl: finalBuktiUrl || undefined,
+          buktiTransferFileId: finalBuktiFileId || undefined
+        };
+
+        await createBudgetRequest(token, spreadsheetId, newRequest);
+      },
+      'Gagal membuat transaksi Adjustment.'
+    );
+
+    if (success !== null) {
+      setActiveView('dashboard');
       await handleManualRefresh();
     }
   };
@@ -877,6 +941,17 @@ export default function App() {
             role={activeRole}
             onAuthError={handleGoogleAuthError}
           />
+        ) : activeView === 'adjustment' && userProfile ? (
+          <AdjustmentPanel
+            profiles={profiles}
+            requests={requests}
+            usageItems={usageItems}
+            googleToken={token!}
+            driveFolderId={driveFolderId || ''}
+            onCreateAdjustment={handleCreateAdjustment}
+            onClose={() => setActiveView('dashboard')}
+            onAuthError={handleGoogleAuthError}
+          />
         ) : (
           /* Dashboard Main Section */
           <div className="space-y-4 animate-slide-up">
@@ -919,6 +994,8 @@ export default function App() {
                   activeFilter={statusFilter}
                   onSelectFilter={setStatusFilter}
                   onManageUsers={() => setActiveView('setup-profile')}
+                  onOpenAdjustment={() => setActiveView('adjustment')}
+                  profiles={profiles}
                 />
               </>
             ) : (

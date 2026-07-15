@@ -543,7 +543,7 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     const todayStr = req.tanggalPemakaian.replace(/-/g, '');
     let finalUid = req.id;
     let isUnique = !existingUIDs.includes(finalUid.toUpperCase());
-    const prefix = req.id.startsWith('OPT') ? 'OPT' : 'OP';
+    const prefix = req.id.startsWith('OPT') ? 'OPT' : req.id.startsWith('ADJ') ? 'ADJ' : 'OP';
     
     // Regenerate until we find a completely unused ID
     while (!isUnique) {
@@ -566,7 +566,9 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
       ManagerActionAmount: req.managerActionAmount,
       ManagerComment: req.managerComment,
       AdminActionAmount: req.adminActionAmount,
-      CreatedAt: req.createdAt
+      CreatedAt: req.createdAt,
+      BuktiTransferUrl: req.buktiTransferUrl || '',
+      BuktiTransferFileId: req.buktiTransferFileId || ''
     });
 
     const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:append?valueInputOption=USER_ENTERED`, {

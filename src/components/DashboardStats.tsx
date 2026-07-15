@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
+import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile } from '../types';
 import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck } from 'lucide-react';
 
 interface DashboardStatsProps {
@@ -15,6 +15,8 @@ interface DashboardStatsProps {
   activeFilter?: string;
   onSelectFilter?: (filterKey: string) => void;
   onManageUsers?: () => void;
+  onOpenAdjustment?: () => void;
+  profiles?: UserProfile[];
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -24,7 +26,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   usageItems,
   activeFilter = 'ALL',
   onSelectFilter,
-  onManageUsers
+  onManageUsers,
+  onOpenAdjustment,
+  profiles = []
 }) => {
   // Format Currency
   const formatIDR = (num: number) => {
@@ -304,6 +308,19 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       .filter(item => closedRequestIds.includes(item.requestId))
       .reduce((sum, item) => sum + item.nominal, 0);
 
+    const unbalancedUsersCount = profiles.filter(user => {
+      const userReqs = requests.filter(r => r.userEmail.toLowerCase() === user.email.toLowerCase());
+      const userReqIds = userReqs.map(r => r.id);
+      const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId));
+
+      const totalTransferredVal = userReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
+      const closedReqIds = userReqs.filter(r => r.status === RequestStatus.CLOSED).map(r => r.id);
+      const totalReportedClosed = userUsage.filter(item => closedReqIds.includes(item.requestId)).reduce((sum, item) => sum + item.nominal, 0);
+      
+      const balance = totalTransferredVal - totalReportedClosed;
+      return Math.abs(balance) > 0.01;
+    }).length;
+
     return (
       <div className="space-y-4">
         {/* Urgent Task Card */}
@@ -360,6 +377,42 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Review</span>
             </div>
           </div>
+
+          {onOpenAdjustment && (
+            <div 
+              onClick={onOpenAdjustment}
+              className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-400 hover:shadow-md col-span-2 group ${
+                activeFilter === 'ADJUSTMENT' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PROSES PENYESUAIAN</p>
+                  <h4 className="font-display font-black text-slate-800 text-xs mt-1 group-hover:text-indigo-600 transition-colors">Adjustment Saldo User</h4>
+                </div>
+                <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                  Admin Direct
+                </span>
+              </div>
+              <div className="flex items-end justify-between mt-3">
+                <span className="text-3xl font-display font-bold text-slate-900">
+                  {unbalancedUsersCount} <span className="text-xs text-slate-400 font-normal">User</span>
+                </span>
+                {unbalancedUsersCount > 0 ? (
+                  <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                    Perlu Balance
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                    All Balanced
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2 font-medium">
+                Sesuaikan sisa saldo operasional (lebih/kurang) masing-masing user menjadi Rp 0 secara instan dengan bukti potongan/transfer.
+              </p>
+            </div>
+          )}
 
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm col-span-2">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">TOTAL REKONSILIASI KEUANGAN</p>

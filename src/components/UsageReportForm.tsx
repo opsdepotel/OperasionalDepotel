@@ -175,6 +175,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [showCameraStream, setShowCameraStream] = useState(false);
   const [previewItem, setPreviewItem] = useState<UsageReportItem | null>(null);
+  const [previewRequestProof, setPreviewRequestProof] = useState(false);
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
 
   // Form State for Adding/Editing Item
@@ -443,6 +444,41 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           </span>
         </div>
       </div>
+
+      {/* Bukti Transfer / Adjustment Card for CLOSED UIDs */}
+      {request.buktiTransferUrl && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
+          <div className="flex items-center gap-2 text-indigo-800">
+            <CheckCircle2 className="w-5 h-5 text-indigo-600 shrink-0" />
+            <div>
+              <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">BUKTI TRANSFER / PENYESUAIAN</p>
+              <h4 className="text-xs font-bold text-slate-800">Dokumen Penyelesaian Transaksi</h4>
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500 font-medium">
+            Transaksi ini telah selesai disesuaikan oleh Admin dengan lampiran dokumen pendukung sebagai bukti potongan atau transfer.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPreviewRequestProof(true)}
+              className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span>Lihat Bukti Dokumen</span>
+            </button>
+            <a
+              href={request.buktiTransferUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="py-2 px-3 bg-white hover:bg-slate-50 text-indigo-600 font-bold text-[10px] rounded-xl border border-indigo-200 flex items-center justify-center gap-1.5 transition-all cursor-pointer text-center"
+            >
+              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Buka Dokumen Asli</span>
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Section 1: Item List */}
       <div className="space-y-3">
@@ -1020,6 +1056,87 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               >
                 <ExternalLink className="w-4 h-4" />
                 <span>Buka Nota Asli</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ----------------- POPUP MODAL REQUEST PROOF PREVIEW ----------------- */}
+      {previewRequestProof && request.buktiTransferUrl && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-xs font-bold text-indigo-500 uppercase tracking-widest">BUKTI TRANSFER / PENYESUAIAN</h3>
+                <h4 className="text-sm font-bold text-slate-800 mt-0.5">{request.keterangan}</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewRequestProof(false)}
+                className="w-8 h-8 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Receipt metadata info */}
+            <div className="bg-slate-50 rounded-2xl p-3 text-xs text-slate-600 grid grid-cols-2 gap-2 border border-slate-100">
+              <div>
+                <span className="text-[9px] text-slate-400 font-bold block uppercase">Jumlah Penyesuaian</span>
+                <span className="font-bold text-slate-800">{formatIDR(request.adminActionAmount)}</span>
+              </div>
+              <div>
+                <span className="text-[9px] text-slate-400 font-bold block uppercase">ID Proses (UID)</span>
+                <span className="font-bold text-indigo-600">{request.id}</span>
+              </div>
+            </div>
+
+            {/* Inline Preview Window */}
+            <div className="flex-1 bg-slate-100 rounded-2xl border border-slate-200 overflow-hidden flex items-center justify-center min-h-[300px] relative p-1">
+              {request.buktiTransferFileId ? (
+                <img
+                  src={`https://drive.google.com/thumbnail?sz=w1000&id=${request.buktiTransferFileId}`}
+                  alt="Bukti Transfer / Penyesuaian"
+                  className="max-w-full max-h-[50vh] rounded-xl object-contain shadow-sm"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    const fallback = document.getElementById('request-preview-fallback');
+                    if (fallback) fallback.classList.remove('hidden');
+                  }}
+                />
+              ) : null}
+              
+              {/* Fallback block for direct preview errors or non-image types (like PDF) */}
+              <div 
+                id="request-preview-fallback" 
+                className={`flex flex-col items-center justify-center text-center p-6 text-slate-500 space-y-2 ${request.buktiTransferFileId ? 'hidden absolute inset-0 bg-slate-50 flex' : ''}`}
+              >
+                <FileText className="w-12 h-12 text-slate-300" />
+                <p className="text-xs font-bold text-slate-700">Dokumen Lampiran Terlampir</p>
+                <p className="text-[10px] text-slate-400 max-w-[240px]">Dokumen ini tidak dapat ditampilkan sebagai gambar langsung (format PDF atau pembatasan akses). Silakan unduh atau buka langsung.</p>
+              </div>
+            </div>
+
+            {/* Action footer */}
+            <div className="pt-3 border-t border-slate-100 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPreviewRequestProof(false)}
+                className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-xs transition-all cursor-pointer text-center"
+              >
+                Tutup Preview
+              </button>
+              <a
+                href={request.buktiTransferUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-indigo-100 text-center"
+              >
+                <ExternalLink className="w-4 h-4" />
+                <span>Buka Dokumen Asli</span>
               </a>
             </div>
           </div>
