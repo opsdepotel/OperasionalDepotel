@@ -425,6 +425,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wider">Total Closing Terverifikasi</span>
                 <span className="text-sm font-bold font-display text-emerald-600">{formatIDR(totalClosed)}</span>
               </div>
+              <div className="col-span-2 pt-3 border-t border-slate-100 mt-1">
+                <span className="text-[9px] text-slate-400 block font-bold uppercase tracking-wider">Selisih Operasional Belum Dilaporkan / Di Tangan Karyawan</span>
+                <span className="text-base font-extrabold font-display text-amber-600 block mt-0.5">
+                  {formatIDR(totalTransferred - totalClosed)}
+                </span>
+              </div>
             </div>
           </div>
 

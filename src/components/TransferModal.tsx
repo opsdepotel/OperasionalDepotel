@@ -302,68 +302,27 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               />
 
               {/* Capture/Upload Options Panel */}
-              {!showCameraStream ? (
-                <div className="grid grid-cols-3 gap-2">
-                  {/* Live webcam */}
-                  <button
-                    type="button"
-                    onClick={startCameraStream}
-                    className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
-                  >
-                    <Video className="w-5 h-5 text-indigo-500 animate-pulse" />
-                    <span>Kamera Live</span>
-                  </button>
+              <div className="grid grid-cols-2 gap-2">
+                {/* Native device camera */}
+                <button
+                  type="button"
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                >
+                  <Camera className="w-5 h-5 text-indigo-500" />
+                  <span>Kamera HP</span>
+                </button>
 
-                  {/* Native device camera */}
-                  <button
-                    type="button"
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
-                  >
-                    <Camera className="w-5 h-5 text-indigo-500" />
-                    <span>Kamera HP</span>
-                  </button>
-
-                  {/* Choose file / gallery */}
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
-                  >
-                    <UploadCloud className="w-5 h-5 text-indigo-500" />
-                    <span>File / Galeri</span>
-                  </button>
-                </div>
-              ) : (
-                /* Live Camera Stream Block */
-                <div className="border border-slate-200 rounded-xl p-3 bg-slate-900 text-white space-y-3 relative">
-                  <div className="relative aspect-video bg-black rounded-lg overflow-hidden flex items-center justify-center">
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={captureInAppPhoto}
-                      className="flex-1 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs flex items-center justify-center gap-1 cursor-pointer transition-all"
-                    >
-                      <Camera className="w-4 h-4" />
-                      <span>Tangkap Foto</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={stopCameraStream}
-                      className="py-1.5 px-3 bg-slate-700 hover:bg-slate-600 text-white font-semibold rounded-lg text-xs cursor-pointer transition-all"
-                    >
-                      Tutup
-                    </button>
-                  </div>
-                </div>
-              )}
+                {/* Choose file / gallery */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                >
+                  <UploadCloud className="w-5 h-5 text-indigo-500" />
+                  <span>File / Galeri</span>
+                </button>
+              </div>
             </div>
           </div>
         ) : (

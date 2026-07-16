@@ -43,6 +43,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   const [tanggalAdjustment, setTanggalAdjustment] = useState(new Date().toISOString().split('T')[0]);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [inputAmount, setInputAmount] = useState<string>('');
 
   // File Upload / Camera State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -83,6 +84,16 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     
     return totalTransferred - totalReportedClosed;
   };
+
+  // Auto-fill nominal amount when selected user changes
+  useEffect(() => {
+    if (selectedUser) {
+      const balance = getUserBalance(selectedUser.email);
+      setInputAmount(Math.abs(balance).toString());
+    } else {
+      setInputAmount('');
+    }
+  }, [selectedUser]);
 
   // Filter unbalanced users
   const unbalancedUsers = profiles.filter(user => {
@@ -172,18 +183,22 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       return;
     }
 
+    const parsedAmount = parseFloat(inputAmount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setError('Nominal penyesuaian harus berupa angka positif lebih dari 0.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      // The adjustment amount needed to make the balance exactly 0
-      // If balance is 50,000 (positive, user has surplus), we want to reduce by 50,000 (amount = -50,000).
-      // If balance is -50,000 (negative, user has deficit/talangan), we want to pay/transfer them 50,000 (amount = 50,000).
-      const adjustmentAmount = -balance;
+      const isDeduction = adjustmentType === 'Pemotongan Gaji' || adjustmentType === 'Pengembalian Cash dari User';
+      const adjustmentAmount = isDeduction ? -parsedAmount : parsedAmount;
 
       await onCreateAdjustment(
         selectedUser.email,
         adjustmentAmount,
         adjustmentType,
-        notes || `Penyesuaian Saldo ke Rp 0 via ${adjustmentType}`,
+        notes || `Penyesuaian Saldo via ${adjustmentType}`,
         tanggalAdjustment,
         selectedFile
       );
@@ -192,6 +207,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       setSelectedUser(null);
       setAdjustmentType('');
       setNotes('');
+      setInputAmount('');
       setTanggalAdjustment(new Date().toISOString().split('T')[0]);
       setSelectedFile(null);
     } catch (err: any) {
@@ -215,8 +231,14 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   // If a user is selected, render the Adjustment Form
   if (selectedUser) {
     const balance = getUserBalance(selectedUser.email);
-    const adjustmentAmount = -balance;
     const isPositiveBalance = balance > 0;
+
+    const isDeduction = adjustmentType 
+      ? (adjustmentType === 'Pemotongan Gaji' || adjustmentType === 'Pengembalian Cash dari User')
+      : (balance > 0);
+    const parsedInputAmount = parseFloat(inputAmount) || 0;
+    const currentAdjustmentAmount = isDeduction ? -parsedInputAmount : parsedInputAmount;
+    const projectedBalance = balance + currentAdjustmentAmount;
 
     return (
       <div className="space-y-4">
@@ -236,7 +258,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           </button>
           <div>
             <h2 className="text-sm font-black text-slate-800 font-display">Form Adjustment Saldo</h2>
-            <p className="text-[10px] text-slate-400 font-medium">Buat saldo operasional user menjadi Rp 0 (Balance)</p>
+            <p className="text-[10px] text-slate-400 font-medium">Sesuaikan saldo operasional user secara fleksibel</p>
           </div>
         </div>
 
@@ -252,22 +274,32 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
             </div>
           </div>
           
-          <div className="grid grid-cols-2 gap-3 pt-3 border-t border-slate-800">
+          <div className="grid grid-cols-3 gap-3 pt-3 border-t border-slate-800 text-left">
             <div>
-              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider">Saldo Operasional Saat Ini</span>
-              <span className={`text-sm font-bold font-mono font-display ${isPositiveBalance ? 'text-blue-400' : 'text-rose-400'}`}>
+              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider">Saldo Saat Ini</span>
+              <span className={`text-[11px] font-bold font-mono font-display ${isPositiveBalance ? 'text-blue-400' : 'text-rose-400'}`}>
                 {formatIDR(balance)}
               </span>
             </div>
             <div>
-              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider">Nominal Penyesuaian (Adjustment)</span>
-              <span className={`text-sm font-bold font-mono font-display ${adjustmentAmount > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {adjustmentAmount > 0 ? `+${formatIDR(adjustmentAmount)}` : formatIDR(adjustmentAmount)}
+              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider">Nominal Penyesuaian</span>
+              <span className={`text-[11px] font-bold font-mono font-display ${currentAdjustmentAmount > 0 ? 'text-emerald-400' : currentAdjustmentAmount < 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+                {currentAdjustmentAmount > 0 ? `+${formatIDR(currentAdjustmentAmount)}` : currentAdjustmentAmount < 0 ? formatIDR(currentAdjustmentAmount) : formatIDR(0)}
+              </span>
+            </div>
+            <div>
+              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider">Proyeksi Saldo Akhir</span>
+              <span className={`text-[11px] font-bold font-mono font-display ${projectedBalance === 0 ? 'text-emerald-400' : projectedBalance > 0 ? 'text-blue-400' : 'text-rose-400'}`}>
+                {formatIDR(projectedBalance)}
               </span>
             </div>
           </div>
           <div className="text-[9px] text-slate-400 leading-relaxed bg-slate-950 p-2 rounded-xl border border-slate-800/80">
-            * Transaksi ini akan langsung membuat saldo operasional user di atas menjadi <strong>Rp 0 (Balance)</strong>.
+            {projectedBalance === 0 ? (
+              <span>* Transaksi ini akan langsung membuat saldo operasional user menjadi <strong>Rp 0 (Balance)</strong>.</span>
+            ) : (
+              <span>* Transaksi ini akan mengubah saldo operasional user menjadi <strong>{formatIDR(projectedBalance)}</strong>.</span>
+            )}
           </div>
         </div>
 
@@ -353,6 +385,28 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                 </label>
               </div>
             )}
+          </div>
+
+          {/* Nominal Adjustment Input */}
+          <div className="space-y-1.5 text-left">
+            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+              Nominal Adjustment (IDR) <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <input
+                type="number"
+                value={inputAmount}
+                onChange={(e) => setInputAmount(e.target.value)}
+                placeholder="Masukkan nominal adjustment..."
+                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-bold"
+                required
+                min="0"
+              />
+              <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            </div>
+            <p className="text-[9px] text-slate-400 leading-normal">
+              Pre-filled dengan total imbalance otomatis (Rp {formatIDR(Math.abs(balance))}). Anda dapat mengubah nilai di atas secara manual jika diperlukan.
+            </p>
           </div>
 
           {/* Tanggal Adjustment */}
