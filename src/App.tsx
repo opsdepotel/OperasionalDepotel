@@ -26,6 +26,7 @@ import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemS
 // Components
 import { Header } from './components/Header';
 import { ProfileSetup } from './components/ProfileSetup';
+import { ProfileSettings } from './components/ProfileSettings';
 import { DashboardStats } from './components/DashboardStats';
 import { BudgetRequestForm } from './components/BudgetRequestForm';
 import { UsageReportForm } from './components/UsageReportForm';
@@ -79,7 +80,7 @@ export default function App() {
   const [activeRole, setActiveRole] = useState<Role>(Role.USER);
 
   // Navigation / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'profile-settings'>('dashboard');
   const [selectedRequest, setSelectedRequest] = useState<BudgetRequest | null>(null);
 
   // Review Modals Active
@@ -358,6 +359,30 @@ export default function App() {
       setActiveView('dashboard');
       await handleManualRefresh();
     }
+  };
+
+  // Profile Update Password
+  const handleUpdatePassword = async (newPassword: string) => {
+    if (!userProfile) return false;
+    const updatedProfile: UserProfile = {
+      ...userProfile,
+      password: newPassword
+    };
+
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || '';
+
+    const success = await runGoogleAction(
+      () => saveUserProfile(currentToken, currentSheetId, updatedProfile),
+      'Gagal memperbarui password.'
+    );
+
+    if (success !== null) {
+      setUserProfile(updatedProfile);
+      setProfiles(prev => prev.map(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase() ? updatedProfile : p));
+      return true;
+    }
+    return false;
   };
 
   // Workflow Action 1: Create Budget Request
@@ -884,6 +909,8 @@ export default function App() {
           spreadsheetId={spreadsheetId}
           onRefresh={handleManualRefresh}
           isRefreshing={isLoading}
+          onOpenSettings={() => setActiveView('profile-settings')}
+          activeView={activeView}
         />
       )}
 
@@ -911,7 +938,14 @@ export default function App() {
         ) : activeView === 'setup-profile' ? (
           <ProfileSetup
             profiles={profiles}
+            requests={requests}
             onSave={handleSaveProfile}
+            onClose={() => setActiveView('dashboard')}
+          />
+        ) : activeView === 'profile-settings' && userProfile ? (
+          <ProfileSettings
+            userProfile={userProfile}
+            onUpdatePassword={handleUpdatePassword}
             onClose={() => setActiveView('dashboard')}
           />
         ) : activeView === 'new-request' && userProfile ? (

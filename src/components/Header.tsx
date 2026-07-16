@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { UserProfile, Role } from '../types';
-import { LogOut, RefreshCw } from 'lucide-react';
+import { LogOut, RefreshCw, Settings } from 'lucide-react';
 
 interface HeaderProps {
   userProfile: UserProfile | null;
@@ -15,6 +15,8 @@ interface HeaderProps {
   spreadsheetId: string | null;
   onRefresh: () => void;
   isRefreshing: boolean;
+  onOpenSettings?: () => void;
+  activeView?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -24,7 +26,9 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   spreadsheetId,
   onRefresh,
-  isRefreshing
+  isRefreshing,
+  onOpenSettings,
+  activeView
 }) => {
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-100 shadow-sm px-4 py-3">
@@ -44,6 +48,21 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {/* Settings / Profile Button */}
+          {onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              className={`p-2 rounded-xl transition-all cursor-pointer ${
+                activeView === 'profile-settings'
+                  ? 'text-indigo-600 bg-indigo-50 font-bold'
+                  : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'
+              }`}
+              title="Pengaturan Profil & Sandi"
+            >
+              <Settings className="w-4 h-4" />
+            </button>
+          )}
+
           {/* Refresh Button */}
           <button
             onClick={onRefresh}

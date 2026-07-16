@@ -4,17 +4,19 @@
  */
 
 import React, { useState } from 'react';
-import { UserProfile, Role } from '../types';
+import { UserProfile, Role, BudgetRequest } from '../types';
 import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock } from 'lucide-react';
 
 interface ProfileSetupProps {
   profiles: UserProfile[];
+  requests: BudgetRequest[];
   onSave: (profile: UserProfile) => Promise<void>;
   onClose: () => void;
 }
 
 export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   profiles,
+  requests,
   onSave,
   onClose
 }) => {
@@ -228,25 +230,23 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="joko@company.com"
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  disabled={editingProfile ? requests.some(r => 
+                    r.userEmail.toLowerCase() === editingProfile.email.toLowerCase() ||
+                    r.managerEmail.toLowerCase() === editingProfile.email.toLowerCase()
+                  ) : false}
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed"
                 />
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               </div>
-            </div>
-
-            {/* Password */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Password</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Masukkan password"
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                />
-                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              </div>
+              {editingProfile && requests.some(r => 
+                r.userEmail.toLowerCase() === editingProfile.email.toLowerCase() ||
+                r.managerEmail.toLowerCase() === editingProfile.email.toLowerCase()
+              ) && (
+                <p className="text-[10px] text-amber-600 font-semibold mt-1 flex items-start gap-1">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
+                  <span>Email tidak dapat diedit karena telah tercatat dalam riwayat transaksi pengajuan atau laporan.</span>
+                </p>
+              )}
             </div>
 
             {/* Divisi */}
@@ -382,7 +382,6 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                       {p.role === Role.USER && p.managerEmail && (
                         <span className="block text-slate-400">Manager: {p.managerEmail}</span>
                       )}
-                      <span className="block text-[9px] text-slate-400 font-mono mt-0.5">Password: {p.password || '******'}</span>
                     </div>
                   </div>
 
