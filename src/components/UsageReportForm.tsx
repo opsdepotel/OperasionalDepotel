@@ -9,7 +9,7 @@ import { uploadReceiptFile } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare
+  MessageSquare, Sparkles, AlertTriangle
 } from 'lucide-react';
 
 interface UsageReportFormProps {
@@ -186,6 +186,69 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // AI Receipt Validation States for Manager and Admin
+  const [scanningItemIds, setScanningItemIds] = useState<Record<string, boolean>>({});
+  const [scanResults, setScanResults] = useState<Record<string, { nominal: number; keterangan: string; tanggal: string }>>({});
+  const [scanErrors, setScanErrors] = useState<Record<string, string | null>>({});
+  const [mismatchModal, setMismatchModal] = useState<{
+    isOpen: boolean;
+    itemKeterangan: string;
+    userNominal: number;
+    extNominal: number;
+    userTanggal: string;
+    extTanggal: string;
+    extKeterangan: string;
+  } | null>(null);
+
+  const handleValidateItemWithAi = async (item: UsageReportItem) => {
+    setScanningItemIds(prev => ({ ...prev, [item.id]: true }));
+    setScanErrors(prev => ({ ...prev, [item.id]: null }));
+
+    try {
+      const response = await window.fetch('/api/gemini/analyze-receipt', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          imageUrl: item.buktiUrl,
+          googleToken: googleToken,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Terjadi kesalahan saat memproses gambar dengan AI.');
+      }
+
+      const extData = result.data;
+      setScanResults(prev => ({ ...prev, [item.id]: extData }));
+
+      // Compare original report data vs extracted data
+      const nominalMismatch = Math.abs((extData.nominal || 0) - item.nominal) > 10;
+      const dateMismatch = extData.tanggal && item.tanggalPenggunaan && extData.tanggal !== item.tanggalPenggunaan;
+
+      if (nominalMismatch || dateMismatch) {
+        // Trigger Pop up Warning/Notifikasi
+        setMismatchModal({
+          isOpen: true,
+          itemKeterangan: item.keterangan,
+          userNominal: item.nominal,
+          extNominal: extData.nominal || 0,
+          userTanggal: item.tanggalPenggunaan,
+          extTanggal: extData.tanggal || '-',
+          extKeterangan: extData.keterangan || '-',
+        });
+      }
+    } catch (err: any) {
+      console.error('Error in handleValidateItemWithAi in UsageReportForm:', err);
+      setScanErrors(prev => ({ ...prev, [item.id]: err.message || 'Gagal menjalankan validasi AI.' }));
+    } finally {
+      setScanningItemIds(prev => ({ ...prev, [item.id]: false }));
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -548,10 +611,94 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
                   {/* Decision Buttons for Manager and Admin */}
                   {(role === Role.MANAGER || role === Role.ADMIN) && (
-                    <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 space-y-2 mt-2">
-                      <span className="block text-[10px] font-bold text-slate-400 uppercase">
-                        Review Keputusan ({role === Role.MANAGER ? 'Manager' : 'Admin / Finansial'})
-                      </span>
+                    <div className="space-y-2 mt-2">
+                      {/* AI Validation Area */}
+                      <div className="bg-indigo-50/40 rounded-xl p-2.5 border border-indigo-100/60 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] text-indigo-700 font-bold flex items-center gap-1">
+                            <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
+                            <span>AI Receipt & Invoice Validator</span>
+                          </span>
+                          
+                          <button
+                            type="button"
+                            onClick={() => handleValidateItemWithAi(item)}
+                            disabled={scanningItemIds[item.id]}
+                            className="py-1 px-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-extrabold text-[9px] rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-sm"
+                          >
+                            {scanningItemIds[item.id] ? (
+                              <>
+                                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                <span>Menganalisis...</span>
+                              </>
+                            ) : scanResults[item.id] ? (
+                              <span>Ulangi Validasi AI</span>
+                            ) : (
+                              <span>Validasi Bukti via AI</span>
+                            )}
+                          </button>
+                        </div>
+
+                        {scanErrors[item.id] && (
+                          <p className="text-[9px] text-red-600 font-semibold bg-red-50 p-1.5 rounded-md">
+                            {scanErrors[item.id]}
+                          </p>
+                        )}
+
+                        {scanResults[item.id] && (
+                          <div className="text-[10px] bg-white border border-slate-150 rounded-lg p-2.5 space-y-2 text-slate-600 shadow-sm animate-fade-in">
+                            <div className="flex items-center gap-1 pb-1.5 border-b border-slate-100 font-bold text-indigo-700">
+                              <Sparkles className="w-3 h-3 text-indigo-500 animate-pulse" />
+                              <span>Hasil Pengecekan AI (Tanggal & Nominal)</span>
+                            </div>
+                            
+                            {/* Perbandingan Nominal */}
+                            <div className="flex items-center justify-between gap-2 py-0.5 text-[11px]">
+                              <span className="text-[10px] text-slate-500 font-medium">Nominal Transaksi:</span>
+                              <div className="flex flex-col items-end text-right font-mono text-[10px]">
+                                <span>Input: <strong className="text-slate-800 font-bold">{formatIDR(item.nominal)}</strong></span>
+                                <span>AI: <strong className="text-indigo-800 font-bold">{formatIDR(scanResults[item.id].nominal)}</strong></span>
+                              </div>
+                            </div>
+                            {Math.abs(scanResults[item.id].nominal - item.nominal) > 10 ? (
+                              <div className="text-red-600 font-bold flex items-center gap-1 bg-red-50/50 p-1 rounded border border-red-100 text-[9px]">
+                                <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                                <span>Nominal berbeda! Selisih {formatIDR(Math.abs(scanResults[item.id].nominal - item.nominal))}</span>
+                              </div>
+                            ) : (
+                              <div className="text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50/50 p-1 rounded border border-emerald-100 text-[9px]">
+                                <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                                <span>Nominal Sesuai</span>
+                              </div>
+                            )}
+
+                            {/* Perbandingan Tanggal */}
+                            <div className="flex items-center justify-between gap-2 py-0.5 border-t border-slate-50 pt-1.5 text-[11px]">
+                              <span className="text-[10px] text-slate-500 font-medium">Tanggal Transaksi:</span>
+                              <div className="flex flex-col items-end text-right font-mono text-[10px]">
+                                <span>Input: <strong className="text-slate-800 font-bold">{item.tanggalPenggunaan}</strong></span>
+                                <span>AI: <strong className="text-indigo-800 font-bold">{scanResults[item.id].tanggal}</strong></span>
+                              </div>
+                            </div>
+                            {scanResults[item.id].tanggal && item.tanggalPenggunaan && scanResults[item.id].tanggal !== item.tanggalPenggunaan ? (
+                              <div className="text-red-600 font-bold flex items-center gap-1 bg-red-50/50 p-1 rounded border border-red-100 text-[9px]">
+                                <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                                <span>Tanggal berbeda!</span>
+                              </div>
+                            ) : (
+                              <div className="text-emerald-700 font-bold flex items-center gap-1 bg-emerald-50/50 p-1 rounded border border-emerald-100 text-[9px]">
+                                <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-500" />
+                                <span>Tanggal Sesuai</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 space-y-2">
+                        <span className="block text-[10px] font-bold text-slate-400 uppercase">
+                          Review Keputusan ({role === Role.MANAGER ? 'Manager' : 'Admin / Finansial'})
+                        </span>
                       
                       {/* If role is Admin, show Manager's decision for context */}
                       {role === Role.ADMIN && (
@@ -618,6 +765,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         </>
                       )}
                     </div>
+                  </div>
                   )}
 
                   {/* Actions Bar */}
@@ -1097,6 +1245,54 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 <ExternalLink className="w-4 h-4" />
                 <span>Buka Dokumen Asli</span>
               </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pop Up Notifikasi Mismatch / Warning */}
+      {mismatchModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-6 space-y-4 animate-scale-up border border-red-100 text-left">
+            <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center shadow-inner">
+              <AlertTriangle className="w-6 h-6 animate-pulse" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-sm font-black text-slate-800 font-display">Peringatan: Bukti Ditengarai Tidak Sesuai!</h3>
+              <p className="text-[11px] text-slate-500 leading-relaxed font-semibold">
+                Hasil ekstraksi kecerdasan buatan (AI) menunjukkan ketidakcocokan antara data laporan yang diinput pengguna dengan bukti nota terlampir:
+              </p>
+              
+              <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 text-xs space-y-2.5">
+                <div>
+                  <span className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">Item Laporan Pengguna:</span>
+                  <p className="font-bold text-slate-700 text-xs">"{mismatchModal.itemKeterangan}"</p>
+                  <div className="flex gap-4 mt-1 font-mono text-[10px] text-slate-600">
+                    <span>Nominal: <strong className="text-slate-800 font-bold">{formatIDR(mismatchModal.userNominal)}</strong></span>
+                    <span>Tanggal: <strong className="text-slate-800 font-bold">{mismatchModal.userTanggal}</strong></span>
+                  </div>
+                </div>
+                <div className="border-t border-slate-200 pt-2.5">
+                  <span className="text-[9px] text-indigo-500 font-bold block uppercase tracking-wider">Hasil Ekstraksi AI:</span>
+                  <p className="font-bold text-indigo-900 text-xs">"{mismatchModal.extKeterangan}"</p>
+                  <div className="flex gap-4 mt-1 font-mono text-[10px] text-indigo-900">
+                    <span>Nominal: <strong className="font-bold text-red-600">{formatIDR(mismatchModal.extNominal)}</strong></span>
+                    <span>Tanggal: <strong className="font-bold text-indigo-800">{mismatchModal.extTanggal}</strong></span>
+                  </div>
+                </div>
+              </div>
+              
+              <p className="text-[10px] text-red-600 bg-red-50/50 p-2.5 rounded-xl font-medium border border-red-100 leading-normal">
+                ⚠️ <strong>Saran Sistem:</strong> Disarankan bagi Manager atau Admin untuk mem-verifikasi laporan ini dengan lebih teliti karena bukti transaksi ditengarai tidak cocok.
+              </p>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setMismatchModal(null)}
+                className="w-full py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-sm text-center"
+              >
+                Saya Mengerti, Lanjutkan Review
+              </button>
             </div>
           </div>
         </div>
