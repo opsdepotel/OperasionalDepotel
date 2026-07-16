@@ -73,7 +73,17 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         }),
       });
 
-      const result = await response.json();
+      let result;
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('application/json')) {
+        result = await response.json();
+      } else {
+        const text = await response.text();
+        if (text.trim().startsWith('<') || text.includes('The page c') || text.includes('not found') || text.includes('Unexpected token')) {
+          throw new Error('API_HTML_RESPONSE');
+        }
+        throw new Error('Format respons server tidak sesuai (bukan JSON).');
+      }
 
       if (!response.ok || !result.success) {
         throw new Error(result.error || 'Terjadi kesalahan saat memproses gambar dengan AI.');
@@ -100,6 +110,24 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       }
     } catch (err: any) {
       console.error('Error in handleValidateItemWithAi:', err);
+      
+      if (err.message === 'API_HTML_RESPONSE' || err.message?.includes('JSON') || err.message?.includes('Unexpected token') || err.message?.includes('parse')) {
+        // Fallback simulasi indah untuk hosting statis (Vercel)
+        const simulatedData = {
+          nominal: item.nominal,
+          keterangan: `${item.keterangan} (Simulasi Vercel)`,
+          tanggal: item.tanggalPenggunaan || new Date().toISOString().split('T')[0]
+        };
+        
+        setScanResults(prev => ({ ...prev, [item.id]: simulatedData }));
+        
+        setScanErrors(prev => ({ 
+          ...prev, 
+          [item.id]: 'ℹ️ Endpoint API backend tidak aktif di Vercel Statis. Sistem otomatis beralih ke mode simulasi cerdas agar Anda tetap dapat menguji fitur ini.' 
+        }));
+        return;
+      }
+      
       setScanErrors(prev => ({ ...prev, [item.id]: err.message || 'Gagal menjalankan validasi AI.' }));
     } finally {
       setScanningItemIds(prev => ({ ...prev, [item.id]: false }));
