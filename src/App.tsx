@@ -1065,7 +1065,6 @@ export default function App() {
                     onSubmitReview={handleReviewUsageItems}
                     onClose={() => setReviewReportReq(null)}
                     onPreviewDocument={setPreviewDocument}
-                    googleToken={token!}
                   />
                 )}
 
