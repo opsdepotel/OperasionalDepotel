@@ -947,6 +947,8 @@ export default function App() {
             userProfile={userProfile}
             onUpdatePassword={handleUpdatePassword}
             onClose={() => setActiveView('dashboard')}
+            theme={theme}
+            onThemeChange={setTheme}
           />
         ) : activeView === 'new-request' && userProfile ? (
           <BudgetRequestForm

@@ -13,6 +13,8 @@ interface ProfileSettingsProps {
   userProfile: UserProfile;
   onUpdatePassword: (newPassword: string) => Promise<boolean>;
   onClose: () => void;
+  theme: string;
+  onThemeChange: (theme: string) => void;
 }
 
 type Step = 'profile' | 'new-password' | 'success';
@@ -20,7 +22,9 @@ type Step = 'profile' | 'new-password' | 'success';
 export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
   userProfile,
   onUpdatePassword,
-  onClose
+  onClose,
+  theme,
+  onThemeChange
 }) => {
   const [step, setStep] = useState<Step>('profile');
   const [newPassword, setNewPassword] = useState('');
@@ -138,6 +142,53 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                   {userProfile.managerEmail || '-'}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Pilihan Tema */}
+          <div className="pt-3 border-t border-slate-100 space-y-2.5">
+            <span className="block text-[10px] font-black text-slate-400 uppercase tracking-wider">
+              Tema Tampilan Aplikasi
+            </span>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => onThemeChange('theme1')}
+                className={`flex flex-col items-center gap-2 p-2.5 rounded-2xl border transition-all cursor-pointer text-center ${
+                  theme === 'theme1'
+                    ? 'border-indigo-500 bg-indigo-50/50 shadow-inner'
+                    : 'border-slate-150 hover:bg-slate-50'
+                }`}
+              >
+                <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 shadow-sm" />
+                <span className="text-[10px] font-bold text-slate-700">Biru (Indigo)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onThemeChange('theme2')}
+                className={`flex flex-col items-center gap-2 p-2.5 rounded-2xl border transition-all cursor-pointer text-center ${
+                  theme === 'theme2'
+                    ? 'border-emerald-500 bg-emerald-50/50 shadow-inner'
+                    : 'border-slate-150 hover:bg-slate-50'
+                }`}
+              >
+                <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-teal-600 to-emerald-600 shadow-sm" />
+                <span className="text-[10px] font-bold text-slate-700">Hijau (Emerald)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onThemeChange('theme3')}
+                className={`flex flex-col items-center gap-2 p-2.5 rounded-2xl border transition-all cursor-pointer text-center ${
+                  theme === 'theme3'
+                    ? 'border-amber-500 bg-amber-50/50 shadow-inner'
+                    : 'border-slate-150 hover:bg-slate-50'
+                }`}
+              >
+                <div className="w-6 h-6 rounded-lg bg-gradient-to-tr from-orange-600 to-amber-600 shadow-sm" />
+                <span className="text-[10px] font-bold text-slate-700">Amber (Gold)</span>
+              </button>
             </div>
           </div>
 
