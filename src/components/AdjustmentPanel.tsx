@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus } from '../types';
+import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
 import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar } from 'lucide-react';
 import { uploadReceiptFile } from '../lib/googleApi';
 
@@ -78,11 +78,13 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     const userReqIds = userReqs.map(r => r.id);
     const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId));
 
-    const totalTransferred = userReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
-    const closedReqIds = userReqs.filter(r => r.status === RequestStatus.CLOSED).map(r => r.id);
-    const totalReportedClosed = userUsage.filter(item => closedReqIds.includes(item.requestId)).reduce((sum, item) => sum + item.nominal, 0);
+    const totalTransferred = userReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalAdjustments = userReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalReportedApproved = userUsage
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+      .reduce((sum, item) => sum + item.nominal, 0);
     
-    return totalTransferred - totalReportedClosed;
+    return totalTransferred + totalAdjustments - totalReportedApproved;
   };
 
   // Auto-fill nominal amount when selected user changes

@@ -121,6 +121,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       return dec?.status === ItemStatus.REJECTED;
     });
 
+    const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
     let nextRequestStatus: RequestStatus;
 
     if (role === Role.MANAGER) {
@@ -137,8 +138,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         // If Admin rejects any item, it goes back to User for reporting/correction
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        // If Admin approves all, next status is REPORTING so Admin can close later or User can add more items
-        nextRequestStatus = RequestStatus.REPORTING;
+        // If Admin approves all, for Dana Talangan go to PENDING_TALANGAN_TRANSFER, otherwise REPORTING
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
       }
     }
 

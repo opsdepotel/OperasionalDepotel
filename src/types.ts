@@ -18,7 +18,8 @@ export enum RequestStatus {
   REPORTING = 'REPORTING', // User is filling usage reports, or has pending corrections
   REVIEW_MANAGER = 'REVIEW_MANAGER', // Reports submitted, waiting for Manager review
   REVIEW_ADMIN = 'REVIEW_ADMIN', // Reports approved by Manager, waiting for Admin review
-  CLOSED = 'CLOSED' // All reports approved by Admin, process closed
+  CLOSED = 'CLOSED', // All reports approved by Admin, process closed
+  PENDING_TALANGAN_TRANSFER = 'PENDING_TALANGAN_TRANSFER' // Added: Waiting for Admin to transfer/reimburse bailout funds
 }
 
 export enum ItemStatus {
@@ -68,3 +69,24 @@ export interface UserProfile {
   managerEmail: string;
   divisi: string;
 }
+
+export interface SiteInfo {
+  siteId: string;
+  siteName: string;
+  coordinates: string;
+}
+
+export interface UserActivity {
+  id: string; // Map to ActivityID
+  userEmail: string;
+  tanggal: string; // YYYY-MM-DD
+  createdAt: string; // Timestamp
+  siteId: string;
+  siteName: string;
+  coordinatesDb: string; // From database
+  coordinatesActual: string; // From real GPS
+  keterangan: string;
+  buktiUrl: string;
+  buktiFileId?: string;
+}
+

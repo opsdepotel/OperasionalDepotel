@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { BudgetRequest } from '../types';
+import { BudgetRequest, RequestStatus } from '../types';
 import { 
   CreditCard, 
   AlertCircle, 
@@ -24,6 +24,7 @@ interface TransferModalProps {
   googleToken: string;
   driveFolderId: string | null;
   onAuthError?: () => void;
+  approvedUsageAmount?: number;
 }
 
 export const TransferModal: React.FC<TransferModalProps> = ({
@@ -33,9 +34,15 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   onClose,
   googleToken,
   driveFolderId,
-  onAuthError
+  onAuthError,
+  approvedUsageAmount = 0
 }) => {
-  const [transferredAmount, setTransferredAmount] = useState(String(request.managerActionAmount));
+  const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
+  const isFinalTalanganTransfer = isTalangan && request.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
+
+  const [transferredAmount, setTransferredAmount] = useState(
+    isFinalTalanganTransfer ? String(approvedUsageAmount) : String(request.managerActionAmount)
+  );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -65,8 +72,6 @@ export const TransferModal: React.FC<TransferModalProps> = ({
       minimumFractionDigits: 0
     }).format(num);
   };
-
-  const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -127,13 +132,13 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    const amt = isTalangan ? 0 : Number(transferredAmount);
-    if (!isTalangan) {
+    const amt = isFinalTalanganTransfer ? approvedUsageAmount : (isTalangan ? 0 : Number(transferredAmount));
+    if (!isTalangan || isFinalTalanganTransfer) {
       if (isNaN(amt) || amt <= 0) {
         setError('Nominal transfer harus lebih besar dari Rp 0.');
         return;
       }
-      if (amt > request.managerActionAmount) {
+      if (!isTalangan && amt > request.managerActionAmount) {
         setError(`Nominal transfer tidak boleh melebihi jumlah yang disetujui manager (${formatIDR(request.managerActionAmount)}).`);
         return;
       }
@@ -148,7 +153,8 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     let finalBuktiFileId = '';
 
     try {
-      if (!isTalangan && selectedFile) {
+      const shouldUpload = (!isTalangan || isFinalTalanganTransfer) && selectedFile;
+      if (shouldUpload) {
         if (!driveFolderId) {
           throw new Error('ID Folder Google Drive belum terinisialisasi.');
         }
@@ -181,7 +187,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
       {/* Title */}
       <div className="flex items-center justify-between pb-2 border-b border-slate-100">
         <div>
-          <h2 className="font-display font-bold text-slate-800 text-sm">Proses Transfer Anggaran</h2>
+          <h2 className="font-display font-bold text-slate-800 text-sm">
+            {isFinalTalanganTransfer ? 'Proses Transfer Dana Talangan (Reimbursement)' : 'Proses Transfer Anggaran'}
+          </h2>
           <p className="text-[10px] text-slate-400">Role: Admin / Finansial</p>
         </div>
         <button
@@ -208,8 +216,12 @@ export const TransferModal: React.FC<TransferModalProps> = ({
             <span className="font-semibold text-slate-800">{requesterName || request.userEmail}</span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-400 block font-semibold">Disetujui Manager</span>
-            <span className="font-bold text-emerald-600">{formatIDR(request.managerActionAmount)}</span>
+            <span className="text-[10px] text-slate-400 block font-semibold">
+              {isFinalTalanganTransfer ? 'Total Reimbursement' : 'Disetujui Manager'}
+            </span>
+            <span className="font-bold text-emerald-600">
+              {formatIDR(isFinalTalanganTransfer ? approvedUsageAmount : request.managerActionAmount)}
+            </span>
           </div>
         </div>
         {request.managerComment && (
@@ -229,31 +241,45 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         )}
 
         {/* Amount to transfer */}
-        {!isTalangan ? (
+        {(!isTalangan || isFinalTalanganTransfer) ? (
           <div className="space-y-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Nominal Dana Ditransfer (Rupiah)</label>
-              <div className="relative">
-                <input
-                  type="number"
-                  value={transferredAmount}
-                  onChange={(e) => setTransferredAmount(e.target.value)}
-                  placeholder="Nominal transfer"
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                  required
-                />
-                <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              </div>
-              {transferredAmount && !isNaN(Number(transferredAmount)) && (
-                <p className="text-[10px] text-indigo-600 font-semibold mt-1">
-                  Format: {formatIDR(Number(transferredAmount))}
+            {isFinalTalanganTransfer ? (
+              <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl p-3.5 text-xs space-y-1">
+                <p className="font-semibold flex items-center gap-1.5 text-emerald-700">
+                  <Coins className="w-4 h-4 text-emerald-600" />
+                  <span>Reimbursement Dana Talangan Pribadi</span>
                 </p>
-              )}
-            </div>
+                <p className="text-[10px] text-slate-600 leading-relaxed font-medium">
+                  Total dana talangan yang disetujui untuk di-reimburse adalah <strong>{formatIDR(approvedUsageAmount)}</strong>. Silakan transfer nominal tersebut ke pemohon, lalu unggah bukti transfer di bawah ini untuk menutup (closing) UID ini secara permanen.
+                </p>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 mb-1">Nominal Dana Ditransfer (Rupiah)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={transferredAmount}
+                    onChange={(e) => setTransferredAmount(e.target.value)}
+                    placeholder="Nominal transfer"
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                    required
+                  />
+                  <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                </div>
+                {transferredAmount && !isNaN(Number(transferredAmount)) && (
+                  <p className="text-[10px] text-indigo-600 font-semibold mt-1">
+                    Format: {formatIDR(Number(transferredAmount))}
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Bukti Transfer Upload */}
             <div className="space-y-2 pt-1">
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Bukti / Nota Transfer Bank (Wajib)</label>
+              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                {isFinalTalanganTransfer ? 'Bukti / Nota Transfer Pengembalian Dana (Wajib)' : 'Bukti / Nota Transfer Bank (Wajib)'}
+              </label>
               
               {/* File Status Indicator */}
               {selectedFile ? (
@@ -344,7 +370,13 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
         >
           <CreditCard className="w-4 h-4" />
-          <span>{isSubmitting ? 'Memproses & Mengunggah...' : (isTalangan ? 'Konfirmasi & Aktifkan UID' : 'Kirim Bukti & Konfirmasi Transfer')}</span>
+          <span>
+            {isSubmitting 
+              ? 'Memproses & Mengunggah...' 
+              : (isFinalTalanganTransfer 
+                  ? 'Kirim Bukti & Selesaikan Reimbursement' 
+                  : (isTalangan ? 'Konfirmasi & Aktifkan UID' : 'Kirim Bukti & Konfirmasi Transfer'))}
+          </span>
         </button>
       </form>
     </div>

@@ -1,6 +1,6 @@
 {
   "name": "Operasional Perusahaan",
   "description": "Aplikasi manajemen operasional perusahaan, pengajuan anggaran, transfer dana, dan pelaporan penggunaan berbasis Google Sheets dan Google Drive.",
-  "requestFramePermissions": ["camera"],
+  "requestFramePermissions": ["camera", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

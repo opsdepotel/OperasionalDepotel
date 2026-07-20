@@ -142,19 +142,6 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
   }
 };
 
-export const startDemoMode = () => {
-  const mockToken = 'mock_demo_token';
-  const minimalUser = {
-    uid: 'demo_user_uid',
-    email: 'ops.depotel@gmail.com',
-    displayName: 'Administrator Depotel (Offline)',
-    photoURL: ''
-  };
-  localStorage.setItem('g_access_token', mockToken);
-  localStorage.setItem('g_google_user', JSON.stringify(minimalUser));
-  window.location.reload();
-};
-
 export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken || localStorage.getItem('g_access_token');
 };

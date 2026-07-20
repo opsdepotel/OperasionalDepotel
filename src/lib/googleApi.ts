@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus } from '../types';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity } from '../types';
 
 const originalFetch = window.fetch;
 async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
@@ -44,6 +44,10 @@ const LAPORAN_HEADERS = [
 
 const USERS_HEADERS = [
   'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi'
+];
+
+const ACTIVITY_HEADERS = [
+  'ActivityID', 'UserEmail', 'Tanggal', 'CreatedAt', 'SiteID', 'SiteName', 'CoordinatesDb', 'CoordinatesActual', 'Keterangan', 'BuktiUrl', 'BuktiFileId'
 ];
 
 // Helper to convert sheet rows (2D array) to JSON objects
@@ -113,6 +117,23 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
   };
 }
 
+// Map row map to UserActivity
+function mapToUserActivity(row: Record<string, any>): UserActivity {
+  return {
+    id: String(row.ActivityID),
+    userEmail: String(row.UserEmail),
+    tanggal: String(row.Tanggal),
+    createdAt: String(row.CreatedAt),
+    siteId: String(row.SiteID),
+    siteName: String(row.SiteName),
+    coordinatesDb: String(row.CoordinatesDb || ''),
+    coordinatesActual: String(row.CoordinatesActual || ''),
+    keterangan: String(row.Keterangan),
+    buktiUrl: String(row.BuktiUrl),
+    buktiFileId: String(row.BuktiFileId || '')
+  };
+}
+
 // Dynamic Database and Folder names
 export const SPREADSHEET_ID_KEY = 'op_company_sheet_id';
 export const DRIVE_FOLDER_ID_KEY = 'op_company_folder_id';
@@ -140,7 +161,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
   const meta = await res.json();
   const sheetTitles = meta.sheets ? meta.sheets.map((s: any) => s.properties.title) : [];
 
-  const requiredSheets = ['Pengajuan', 'Laporan', 'Users'];
+  const requiredSheets = ['Pengajuan', 'Laporan', 'Users', 'Activity'];
   const sheetsToAdd = requiredSheets.filter(title => !sheetTitles.includes(title));
 
   if (sheetsToAdd.length > 0) {
@@ -173,7 +194,8 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
       data: [
         { range: 'Pengajuan!A1:N1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:L1', values: [LAPORAN_HEADERS] },
-        { range: 'Users!A1:G1', values: [USERS_HEADERS] }
+        { range: 'Users!A1:G1', values: [USERS_HEADERS] },
+        { range: 'Activity!A1:K1', values: [ACTIVITY_HEADERS] }
       ]
     })
   });
@@ -406,6 +428,19 @@ export async function fetchProfiles(token: string, spreadsheetId: string): Promi
   if (!res.ok) return [];
   const data = await res.json();
   return parseSheetRows<UserProfile>(USERS_HEADERS, data.values, mapToUserProfile);
+}
+
+// Fetch User Activities
+export async function fetchUserActivities(token: string, spreadsheetId: string): Promise<UserActivity[]> {
+  if (token === 'mock_demo_token') {
+    return getMockData<UserActivity[]>('mock_db_kegiatan', []);
+  }
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:K1000`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) return [];
+  const data = await res.json();
+  return parseSheetRows<UserActivity>(ACTIVITY_HEADERS, data.values, mapToUserActivity);
 }
 
 // Helper to convert object to spreadsheet row according to header list
@@ -787,6 +822,78 @@ export async function deleteUsageItem(token: string, spreadsheetId: string, item
   }
 }
 
+// Create User Activity
+export async function createUserActivity(token: string, spreadsheetId: string, activity: UserActivity): Promise<void> {
+  if (token === 'mock_demo_token') {
+    const list = getMockData<UserActivity[]>('mock_db_kegiatan', []);
+    const todayStr = activity.tanggal.replace(/-/g, '');
+    let finalId = activity.id;
+    let isUnique = !list.some(a => a.id.toUpperCase() === finalId.toUpperCase());
+    while (!isUnique) {
+      const randomDigits = Math.floor(1000 + Math.random() * 9000);
+      finalId = `ACT-${todayStr}-${randomDigits}`;
+      isUnique = !list.some(a => a.id.toUpperCase() === finalId.toUpperCase());
+    }
+    activity.id = finalId;
+    const newList = [activity, ...list];
+    setMockData('mock_db_kegiatan', newList);
+    return;
+  }
+
+  // Real sync
+  const checkRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:A1000`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  
+  let existingIDs: string[] = [];
+  if (checkRes.ok) {
+    const data = await checkRes.json();
+    if (data.values) {
+      existingIDs = data.values.map((v: any[]) => String(v[0]).trim().toUpperCase());
+    }
+  }
+  
+  const todayStr = activity.tanggal.replace(/-/g, '');
+  let finalId = activity.id;
+  let isUnique = !existingIDs.includes(finalId.toUpperCase());
+  while (!isUnique) {
+    const randomDigits = Math.floor(1000 + Math.random() * 9000);
+    finalId = `ACT-${todayStr}-${randomDigits}`;
+    isUnique = !existingIDs.includes(finalId.toUpperCase());
+  }
+  activity.id = finalId;
+
+  const rowData = objectToRow(ACTIVITY_HEADERS, {
+    ActivityID: activity.id,
+    UserEmail: activity.userEmail,
+    Tanggal: activity.tanggal,
+    CreatedAt: activity.createdAt,
+    SiteID: activity.siteId,
+    SiteName: activity.siteName,
+    CoordinatesDb: activity.coordinatesDb,
+    CoordinatesActual: activity.coordinatesActual,
+    Keterangan: activity.keterangan,
+    BuktiUrl: activity.buktiUrl,
+    BuktiFileId: activity.buktiFileId || ''
+  });
+
+  const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:append?valueInputOption=USER_ENTERED`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      values: [rowData]
+    })
+  });
+
+  if (!appendRes.ok) {
+    const txt = await appendRes.text();
+    throw new Error(`Gagal menyimpan kegiatan: ${txt}`);
+  }
+}
+
 // Fetch single profile
 export async function fetchUserProfile(token: string, spreadsheetId: string, email: string): Promise<UserProfile | null> {
   const profiles = await fetchProfiles(token, spreadsheetId);
@@ -853,3 +960,118 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
     });
   }
 }
+
+// Fetch Sites from SiteID Sheet
+export async function fetchSites(token: string, spreadsheetId: string): Promise<SiteInfo[]> {
+  if (token === 'mock_demo_token') {
+    return getMockData<SiteInfo[]>('mock_db_sites', [
+      { siteId: 'JKT-SOUTH-02', siteName: 'Depotel JKT South 02', coordinates: '-6.2088, 106.8456' },
+      { siteId: 'SITE-A', siteName: 'Site Alfa Jakarta', coordinates: '-6.1751, 106.8272' },
+      { siteId: 'SITE-B', siteName: 'Site Bravo Surabaya', coordinates: '-7.2575, 112.7521' },
+      { siteId: 'SITE-C', siteName: 'Site Charlie Medan', coordinates: '3.5952, 98.6722' }
+    ]);
+  }
+
+  try {
+    // 1. Lightly fetch all spreadsheet sheet titles to find matches case-insensitively
+    const metaRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    
+    let resolvedTitle = 'SiteID'; // default fallback
+    if (metaRes.ok) {
+      const meta = await metaRes.json();
+      const titles: string[] = meta.sheets ? meta.sheets.map((s: any) => s.properties.title) : [];
+      console.log('Available sheets in spreadsheet:', titles);
+      
+      const found = titles.find(t => {
+        const clean = t.trim().toLowerCase().replace(/[\s_-]/g, '');
+        return clean === 'siteid' || clean === 'site';
+      });
+      if (found) {
+        resolvedTitle = found;
+        console.log(`Resolved SiteID sheet title to: "${resolvedTitle}"`);
+      }
+    }
+
+    // 2. Fetch all sheet values without the A1:G2000 row limit
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(resolvedTitle)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    
+    if (!res.ok) {
+      console.warn(`Gagal membaca sheet "${resolvedTitle}". Pastikan sheet tersebut ada di Google Sheet.`);
+      return [];
+    }
+    
+    const data = await res.json();
+    if (!data.values || data.values.length === 0) {
+      console.log(`Sheet "${resolvedTitle}" kosong atau tidak memiliki baris data.`);
+      return [];
+    }
+
+    const rows = data.values;
+    
+    // 3. Determine if the first row is a header row
+    const firstRowHasHeaders = rows[0].some((val: any) => {
+      const s = String(val).toLowerCase();
+      return s.includes('id') || s.includes('nama') || s.includes('name') || s.includes('lat') || s.includes('lon') || s.includes('koordinat');
+    });
+
+    let dataRows = rows;
+    let idIdx = 0;
+    let nameIdx = 1;
+    let latIdx = 2;
+    let lonIdx = 3;
+
+    if (firstRowHasHeaders) {
+      const headers = rows[0].map((h: any) => String(h).trim().toLowerCase());
+      console.log(`Header kolom ditemukan pada sheet "${resolvedTitle}":`, headers);
+      
+      const foundIdIdx = headers.findIndex((h: string) => h === 'siteid' || h === 'id' || h.includes('siteid') || h.includes('site id') || h.includes('id'));
+      if (foundIdIdx !== -1) idIdx = foundIdIdx;
+
+      const foundNameIdx = headers.findIndex((h: string) => h === 'sitename' || h === 'name' || h.includes('sitename') || h.includes('site name') || h.includes('nama') || h.includes('name'));
+      if (foundNameIdx !== -1) nameIdx = foundNameIdx;
+
+      const foundLatIdx = headers.findIndex((h: string) => h === 'lat' || h === 'latitude' || h.includes('lat'));
+      if (foundLatIdx !== -1) latIdx = foundLatIdx;
+
+      const foundLonIdx = headers.findIndex((h: string) => h === 'lon' || h === 'longitude' || h.includes('lon') || h.includes('lng') || h.includes('long'));
+      if (foundLonIdx !== -1) lonIdx = foundLonIdx;
+
+      console.log(`Mapping indeks kolom -> ID: ${idIdx}, Nama: ${nameIdx}, Lat: ${latIdx}, Lon: ${lonIdx}`);
+      dataRows = rows.slice(1);
+    } else {
+      console.log(`Baris pertama tidak dideteksi sebagai header. Menggunakan pemetaan kolom bawaan (0, 1, 2, 3)`);
+    }
+
+    const sitesList = dataRows.map((row: any[]) => {
+      const siteId = String(row[idIdx] !== undefined ? row[idIdx] : '').trim();
+      const siteName = String(row[nameIdx] !== undefined ? row[nameIdx] : '').trim();
+      
+      const latVal = String(row[latIdx] !== undefined ? row[latIdx] : '').trim();
+      const lonVal = String(row[lonIdx] !== undefined ? row[lonIdx] : '').trim();
+      
+      let coordinates = '';
+      if (latVal && lonVal) {
+        coordinates = `${latVal}, ${lonVal}`;
+      } else {
+        coordinates = latVal || lonVal;
+      }
+
+      return {
+        siteId,
+        siteName,
+        coordinates
+      };
+    }).filter(s => s.siteId !== '');
+
+    console.log(`Berhasil memuat ${sitesList.length} site dari Google Sheet.`);
+    return sitesList;
+  } catch (err) {
+    console.error('Error fetching SiteID sheet:', err);
+    return [];
+  }
+}
+

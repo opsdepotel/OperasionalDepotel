@@ -4,8 +4,8 @@
  */
 
 import React, { useState } from 'react';
-import { BudgetRequest, RequestStatus } from '../types';
-import { Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles } from 'lucide-react';
+import { BudgetRequest, RequestStatus, SiteInfo } from '../types';
+import { Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles, ExternalLink } from 'lucide-react';
 
 interface BudgetRequestFormProps {
   userEmail: string;
@@ -14,6 +14,7 @@ interface BudgetRequestFormProps {
   onSubmit: (req: BudgetRequest) => Promise<void>;
   onClose: () => void;
   initialIsTalangan?: boolean;
+  sites?: SiteInfo[];
 }
 
 export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
@@ -22,7 +23,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   defaultSiteId,
   onSubmit,
   onClose,
-  initialIsTalangan = false
+  initialIsTalangan = false,
+  sites = []
 }) => {
   const [isTalangan, setIsTalangan] = useState(initialIsTalangan);
   const [tanggalPemakaian, setTanggalPemakaian] = useState(() => {
@@ -35,6 +37,28 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   const [keterangan, setKeterangan] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Extract and match site IDs. Format is "XXXNNN" (3 letters, 3 digits)
+  const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
+  const regexMatches = siteId.match(siteIdRegex) || [];
+  const uniqueMatches = Array.from(new Set(regexMatches.map(m => m.toUpperCase())));
+  
+  // If user typed something but it doesn't match the format yet, fall back to single string
+  const parsedIds = uniqueMatches.length > 0 ? uniqueMatches : (siteId.trim() ? [siteId.trim().toUpperCase()] : []);
+  const isMultiple = parsedIds.length > 1;
+
+  // Map each parsed ID to its matching site in the database
+  const siteResults = parsedIds.map(id => {
+    const found = sites.find(s => s.siteId.toUpperCase().trim() === id);
+    return {
+      id,
+      found: !!found,
+      siteName: found ? found.siteName : null,
+      coordinates: found ? found.coordinates : null
+    };
+  });
+
+  const someFound = siteResults.some(r => r.found);
 
   // Helper to generate a clean UID
   const generateUID = () => {
@@ -190,6 +214,69 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
             />
             <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           </div>
+
+          {/* Site ID Detail Match Info */}
+          {parsedIds.length > 0 && (
+            isMultiple ? (
+              someFound ? (
+                <div className="mt-1.5 p-2.5 bg-emerald-50 border border-emerald-100 rounded-xl space-y-1.5 animate-slide-up">
+                  <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+                    <span>Site Terverifikasi (Multiple)</span>
+                  </div>
+                  <div className="space-y-1 ml-2.5">
+                    {siteResults.map((res, idx) => (
+                      <div key={idx} className="text-[10px] flex flex-wrap gap-x-1 items-baseline">
+                        <span className="font-mono font-bold text-slate-600">{res.id}:</span>
+                        {res.found ? (
+                          <span className="text-emerald-700 font-medium">{res.siteName}</span>
+                        ) : (
+                          <span className="text-rose-500 italic text-[9px] font-semibold">Tidak ditemukan/tidak terdaftar</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[10px] text-rose-500 font-semibold mt-1.5 ml-1 animate-pulse">
+                  * Site ID tidak ditemukan/tidak terdaftar
+                </p>
+              )
+            ) : (
+              siteResults[0]?.found ? (
+                <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-100 rounded-xl space-y-0.5 animate-slide-up">
+                  <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
+                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+                    <span>Site Terverifikasi</span>
+                  </div>
+                  <p className="text-[10px] font-semibold text-slate-700 ml-2.5">
+                    Nama: <span className="text-emerald-700">{siteResults[0].siteName}</span>
+                  </p>
+                  {siteResults[0].coordinates && (
+                    <p className="text-[9px] text-slate-500 font-mono ml-2.5 flex items-center gap-1">
+                      Koord:{" "}
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(siteResults[0].coordinates.trim())}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-0.5 transition-colors"
+                        title="Buka di Google Maps"
+                      >
+                        <span>{siteResults[0].coordinates}</span>
+                        <ExternalLink className="w-2.5 h-2.5" />
+                      </a>
+                    </p>
+                  )}
+                </div>
+              ) : (
+                siteId.trim() && (
+                  <p className="text-[10px] text-rose-500 font-semibold mt-1.5 ml-1 animate-pulse">
+                    * Site ID tidak ditemukan/tidak terdaftar
+                  </p>
+                )
+              )
+            )
+          )}
         </div>
 
         {/* Jumlah Pengajuan atau Info Dana Talangan */}

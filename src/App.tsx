@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { initAuth, googleSignIn, logout, startDemoMode } from './lib/firebase';
+import { initAuth, googleSignIn, logout } from './lib/firebase';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
   findOrCreateDatabase,
@@ -19,9 +19,12 @@ import {
   updateUsageItem,
   deleteUsageItem,
   saveUserProfile,
-  uploadReceiptFile
+  uploadReceiptFile,
+  fetchSites,
+  fetchUserActivities,
+  createUserActivity
 } from './lib/googleApi';
-import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus } from './types';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity } from './types';
 
 // Components
 import { Header } from './components/Header';
@@ -35,13 +38,14 @@ import { TransferModal } from './components/TransferModal';
 import { ReviewReportModal } from './components/ReviewReportModal';
 import { AppLoginForm } from './components/AppLoginForm';
 import { AdjustmentPanel } from './components/AdjustmentPanel';
+import { ActivityLogView } from './components/ActivityLogView';
 
 // Icons
 import {
   Coins, ClipboardList, CheckCircle2, AlertCircle, Clock, Plus, LogIn,
   RefreshCw, FileSpreadsheet, Eye, Search, AlertTriangle, Check, CreditCard,
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight,
-  Database, ArrowLeft, ArrowRightLeft, Paperclip
+  Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter
 } from 'lucide-react';
 
 export default function App() {
@@ -51,7 +55,7 @@ export default function App() {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const isInvalidGoogleAccount = !!(user && user.email && user.email.toLowerCase() !== 'ops.depotel@gmail.com' && token !== 'mock_demo_token');
+  const isInvalidGoogleAccount = !!(user && user.email && user.email.toLowerCase() !== 'ops.depotel@gmail.com');
 
   // Theme state defaulting to 'theme3' as requested
   const [theme, setTheme] = useState<string>(() => {
@@ -73,14 +77,37 @@ export default function App() {
   // Data arrays
   const [requests, setRequests] = useState<BudgetRequest[]>([]);
   const [usageItems, setUsageItems] = useState<UsageReportItem[]>([]);
-  const [profiles, setProfiles] = useState<UserProfile[]>([]);
+  const [profiles, setProfiles] = useState<UserProfile[]>(() => {
+    try {
+      const cached = localStorage.getItem('op_app_cached_profiles');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [sites, setSites] = useState<SiteInfo[]>(() => {
+    try {
+      const cached = localStorage.getItem('op_app_cached_sites');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [activities, setActivities] = useState<UserActivity[]>(() => {
+    try {
+      const cached = localStorage.getItem('op_app_cached_activities');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   // Simulation Role Override
   const [activeRole, setActiveRole] = useState<Role>(Role.USER);
 
   // Navigation / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'profile-settings'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'profile-settings' | 'activities'>('dashboard');
   const [selectedRequest, setSelectedRequest] = useState<BudgetRequest | null>(null);
 
   // Review Modals Active
@@ -94,6 +121,13 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [initialIsTalangan, setInitialIsTalangan] = useState(false);
+  const [expandedReportReqIds, setExpandedReportReqIds] = useState<Record<string, boolean>>({});
+
+  // Closed requests filter states
+  const [closedUserFilter, setClosedUserFilter] = useState<string>('ALL');
+  const [closedDivisiFilter, setClosedDivisiFilter] = useState<string>('ALL');
+  const [closedStartDateFilter, setClosedStartDateFilter] = useState<string>('');
+  const [closedEndDateFilter, setClosedEndDateFilter] = useState<string>('');
 
   // Trigger loading & initialization
   useEffect(() => {
@@ -126,9 +160,9 @@ export default function App() {
   const initializeDatabaseAndLoad = async () => {
     if (!token || !user) return;
 
-    // Strict validation: Ensure connected Google account is ops.depotel@gmail.com or mock demo
+    // Strict validation: Ensure connected Google account is ops.depotel@gmail.com
     const emailLower = user.email?.toLowerCase();
-    const isValidEmail = emailLower === 'ops.depotel@gmail.com' || token === 'mock_demo_token';
+    const isValidEmail = emailLower === 'ops.depotel@gmail.com';
     if (!isValidEmail) {
       console.warn('initializeDatabaseAndLoad: Invalid Google email detected, skipping database sync.');
       return;
@@ -175,20 +209,28 @@ export default function App() {
 
   const syncAllData = async (accessToken: string, sheetId: string) => {
     try {
-      const [allReqs, allItems, allProfs] = await Promise.all([
+      const [allReqs, allItems, allProfs, allSites, allActs] = await Promise.all([
         fetchBudgetRequests(accessToken, sheetId),
         fetchUsageItems(accessToken, sheetId),
-        fetchProfiles(accessToken, sheetId)
+        fetchProfiles(accessToken, sheetId),
+        fetchSites(accessToken, sheetId),
+        fetchUserActivities(accessToken, sheetId)
       ]);
 
       setRequests(allReqs.sort((a, b) => b.id.localeCompare(a.id))); // Newest first
       setUsageItems(allItems);
       setProfiles(allProfs);
+      setSites(allSites);
+      setActivities(allActs);
+      localStorage.setItem('op_app_cached_sites', JSON.stringify(allSites));
+      localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
 
       // If the user is already logged in, keep their active session and update with the latest data
-      if (userProfile) {
+      const savedUserId = sessionStorage.getItem('op_app_logged_in_user_id');
+      const activeUserProf = userProfile || (savedUserId ? allProfs.find(p => p.userId?.toLowerCase() === savedUserId.toLowerCase()) : null);
+      if (activeUserProf) {
         const updatedProfile = allProfs.find(
-          p => p.userId?.toLowerCase() === userProfile.userId?.toLowerCase()
+          p => p.userId?.toLowerCase() === activeUserProf.userId?.toLowerCase()
         );
         if (updatedProfile) {
           setUserProfile(updatedProfile);
@@ -346,6 +388,84 @@ export default function App() {
     setActiveView('dashboard');
   };
 
+  const handleAppLoginWithCredentials = async (
+    userId: string,
+    password: string,
+    onFormError: (msg: string) => void
+  ) => {
+    setError(null);
+    let currentToken = token;
+    let currentUser = user;
+
+    // 1. If Google is not connected (needsAuth is true or token is missing), trigger Google Sign-In popup
+    if (!currentToken || !currentUser || needsAuth) {
+      setIsLoading(true);
+      setLoadingStep('Menghubungkan Akun Google secara otomatis...');
+      try {
+        const result = await googleSignIn();
+        if (result) {
+          currentToken = result.accessToken;
+          currentUser = result.user;
+          setToken(result.accessToken);
+          setUser(result.user);
+          setNeedsAuth(false);
+        } else {
+          throw new Error('Gagal mendapatkan token akses Google.');
+        }
+      } catch (err: any) {
+        console.error('Auto Google auth error:', err);
+        setIsLoading(false);
+        setLoadingStep('');
+        onFormError('Gagal menghubungkan ke Google Account. Pastikan Anda masuk menggunakan email ops.depotel@gmail.com.');
+        return;
+      }
+    }
+
+    // 2. Validate credentials against Google Sheets
+    setIsLoading(true);
+    setLoadingStep('Memverifikasi kredensial login...');
+    try {
+      const sheetId = spreadsheetId || await findOrCreateDatabase(currentToken!);
+      setSpreadsheetId(sheetId);
+      
+      const folderId = driveFolderId || await findOrCreateFolder(currentToken!);
+      setDriveFolderId(folderId);
+
+      const allProfs = await fetchProfiles(currentToken!, sheetId);
+      setProfiles(allProfs);
+      localStorage.setItem('op_app_cached_profiles', JSON.stringify(allProfs));
+
+      const matched = allProfs.find(
+        (p) =>
+          p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
+          p.password === password
+      );
+
+      if (matched) {
+        await syncAllData(currentToken!, sheetId);
+        handleAppLoginSuccess(matched);
+      } else {
+        onFormError('User ID atau Password salah. Silakan coba lagi.');
+      }
+    } catch (err: any) {
+      console.error('Login validation error:', err);
+      // Fallback to cache if offline / Sheet request fails
+      const matched = profiles.find(
+        (p) =>
+          p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
+          p.password === password
+      );
+      if (matched) {
+        handleAppLoginSuccess(matched);
+      } else {
+        onFormError(err.message || 'Gagal memproses verifikasi login.');
+      }
+    } finally {
+      setIsLoading(false);
+      setLoadingStep('');
+    }
+  };
+
   // Profile Save
   const handleSaveProfile = async (newProfile: UserProfile) => {
     if (!token || !spreadsheetId) return;
@@ -369,7 +489,7 @@ export default function App() {
       password: newPassword
     };
 
-    const currentToken = token || 'mock_demo_token';
+    const currentToken = token || '';
     const currentSheetId = spreadsheetId || '';
 
     const success = await runGoogleAction(
@@ -513,9 +633,12 @@ export default function App() {
   const handleAdminTransfer = async (transferredAmount: number, buktiUrl: string, buktiFileId: string) => {
     if (!token || !spreadsheetId || !transferReq) return;
 
+    const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.keterangan.startsWith('[DANA TALANGAN]');
+    const isPendingTalanganTransfer = transferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
+
     const updated: BudgetRequest = {
       ...transferReq,
-      status: RequestStatus.TRANSFERRED,
+      status: (isReqTalangan && isPendingTalanganTransfer) ? RequestStatus.CLOSED : RequestStatus.TRANSFERRED,
       adminActionAmount: transferredAmount,
       buktiTransferUrl: buktiUrl,
       buktiTransferFileId: buktiFileId
@@ -523,7 +646,7 @@ export default function App() {
 
     const success = await runGoogleAction(
       () => updateBudgetRequest(token, spreadsheetId, updated),
-      'Gagal memproses transfer anggaran.'
+      (isReqTalangan && isPendingTalanganTransfer) ? 'Gagal memproses transfer dana talangan.' : 'Gagal memproses transfer anggaran.'
     );
     if (success !== null) {
       setTransferReq(null);
@@ -592,6 +715,66 @@ export default function App() {
     }
   };
 
+  const handleSaveActivity = async (
+    activityData: {
+      tanggal: string;
+      siteId: string;
+      siteName: string;
+      coordinatesDb: string;
+      coordinatesActual: string;
+      keterangan: string;
+    },
+    photoFile?: File
+  ) => {
+    if (!token || !spreadsheetId) {
+      throw new Error('Koneksi database tidak aktif. Hubungkan Google Account Anda.');
+    }
+
+    let finalBuktiUrl = '';
+    let finalBuktiFileId = '';
+
+    if (photoFile) {
+      if (token === 'mock_demo_token') {
+        // Read file as base64 for local preview
+        const reader = new FileReader();
+        const base64Promise = new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+        });
+        reader.readAsDataURL(photoFile);
+        finalBuktiUrl = await base64Promise;
+      } else {
+        const uploadResult = await uploadReceiptFile(token, driveFolderId, photoFile);
+        finalBuktiUrl = uploadResult.viewUrl;
+        finalBuktiFileId = uploadResult.fileId;
+      }
+    }
+
+    const todayStr = activityData.tanggal.replace(/-/g, '');
+    const randomDigits = Math.floor(1000 + Math.random() * 9000);
+    const activityId = `ACT-${todayStr}-${randomDigits}`;
+
+    const newActivity: UserActivity = {
+      id: activityId,
+      userEmail: userProfile?.email || user?.email || '',
+      tanggal: activityData.tanggal,
+      createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      siteId: activityData.siteId,
+      siteName: activityData.siteName,
+      coordinatesDb: activityData.coordinatesDb,
+      coordinatesActual: activityData.coordinatesActual,
+      keterangan: activityData.keterangan,
+      buktiUrl: finalBuktiUrl,
+      buktiFileId: finalBuktiFileId || undefined
+    };
+
+    await createUserActivity(token, spreadsheetId, newActivity);
+
+    // Refresh activities state
+    const allActs = await fetchUserActivities(token, spreadsheetId);
+    setActivities(allActs);
+    localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
+  };
+
   // Workflow Action 5: Review Usage Items (Manager/Admin Action)
   const handleReviewUsageItems = async (
     itemDecisions: { itemId: string; status: ItemStatus; comment: string }[],
@@ -654,6 +837,58 @@ export default function App() {
     .filter(p => p.role === Role.MANAGER)
     .map(p => p.email);
 
+  const parseIndonesianDate = (dateStr: string): Date | null => {
+    if (!dateStr) return null;
+    const datePart = dateStr.split(',')[0].trim();
+    
+    if (datePart.includes('/')) {
+      const parts = datePart.split('/');
+      if (parts.length === 3) {
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const year = parseInt(parts[2], 10);
+        if (!isNaN(day) && !isNaN(month) && !isNaN(year)) {
+          return new Date(year, month, day);
+        }
+      }
+    }
+
+    if (datePart.includes('-')) {
+      const parts = datePart.split('-');
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          const year = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10) - 1;
+          const day = parseInt(parts[2], 10);
+          return new Date(year, month, day);
+        } else {
+          const day = parseInt(parts[0], 10);
+          const month = parseInt(parts[1], 10) - 1;
+          const year = parseInt(parts[2], 10);
+          return new Date(year, month, day);
+        }
+      }
+    }
+
+    const parsed = Date.parse(dateStr);
+    return isNaN(parsed) ? null : new Date(parsed);
+  };
+
+  const getClosingDate = (req: BudgetRequest): Date | null => {
+    const reqItems = usageItems.filter(i => i.requestId === req.id);
+    if (reqItems.length > 0) {
+      const dates = reqItems
+        .map(i => i.updatedAt)
+        .filter(Boolean)
+        .map(d => parseIndonesianDate(d))
+        .filter((d): d is Date => d !== null);
+      if (dates.length > 0) {
+        return new Date(Math.max(...dates.map(d => d.getTime())));
+      }
+    }
+    return parseIndonesianDate(req.createdAt);
+  };
+
   // Filtering Logic for requests list on Dashboard
   const filteredRequests = requests.filter((r) => {
     // Role based scoping
@@ -689,7 +924,9 @@ export default function App() {
       if (statusFilter === 'PENDING') {
         if (r.status !== RequestStatus.PENDING_APPROVAL) return false;
       } else if (statusFilter === 'APPROVED') {
-        if (r.status !== RequestStatus.APPROVED && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
+        if (r.status !== RequestStatus.APPROVED && 
+            r.status !== RequestStatus.PARTIALLY_APPROVED && 
+            r.status !== RequestStatus.PENDING_TALANGAN_TRANSFER) return false;
       } else if (statusFilter === 'TRANSFERRED') {
         if (activeRole === Role.MANAGER) {
           if (r.status !== RequestStatus.TRANSFERRED && r.status !== RequestStatus.REPORTING) return false;
@@ -703,6 +940,10 @@ export default function App() {
               r.status !== RequestStatus.REPORTING) return false;
         } else if (activeRole === Role.MANAGER) {
           if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
+          const reqItems = usageItems.filter(i => i.requestId === r.id);
+          if (reqItems.length > 0 && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
+            return false;
+          }
         } else if (activeRole === Role.ADMIN) {
           if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
         } else {
@@ -710,6 +951,37 @@ export default function App() {
         }
       } else if (statusFilter === 'CLOSED') {
         if (r.status !== RequestStatus.CLOSED) return false;
+
+        // User filter
+        if (closedUserFilter !== 'ALL') {
+          if (r.userEmail.toLowerCase() !== closedUserFilter.toLowerCase()) return false;
+        }
+
+        // Division filter
+        if (closedDivisiFilter !== 'ALL') {
+          const reqProfile = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+          const divisi = reqProfile?.divisi || '';
+          if (divisi.toLowerCase() !== closedDivisiFilter.toLowerCase()) return false;
+        }
+
+        // Closing date range filter
+        if (closedStartDateFilter || closedEndDateFilter) {
+          const closingDate = getClosingDate(r);
+          if (closingDate) {
+            if (closedStartDateFilter) {
+              const start = new Date(closedStartDateFilter);
+              start.setHours(0, 0, 0, 0);
+              if (closingDate < start) return false;
+            }
+            if (closedEndDateFilter) {
+              const end = new Date(closedEndDateFilter);
+              end.setHours(23, 59, 59, 999);
+              if (closingDate > end) return false;
+            }
+          } else {
+            return false;
+          }
+        }
       } else if (statusFilter === 'REJECTED') {
         if (r.status !== RequestStatus.REJECTED) return false;
       }
@@ -735,6 +1007,8 @@ export default function App() {
         return 'bg-indigo-50 text-indigo-600 border border-indigo-150';
       case RequestStatus.REVIEW_ADMIN:
         return 'bg-cyan-50 text-cyan-600 border border-cyan-150';
+      case RequestStatus.PENDING_TALANGAN_TRANSFER:
+        return 'bg-pink-50 text-pink-600 border border-pink-150 animate-pulse';
       case RequestStatus.CLOSED:
         return 'bg-slate-100 text-slate-500 border border-slate-200';
       default:
@@ -759,6 +1033,8 @@ export default function App() {
         return 'border-l-indigo-500';
       case RequestStatus.REVIEW_ADMIN:
         return 'border-l-cyan-500';
+      case RequestStatus.PENDING_TALANGAN_TRANSFER:
+        return 'border-l-pink-500';
       case RequestStatus.CLOSED:
         return 'border-l-slate-400';
       default:
@@ -776,6 +1052,7 @@ export default function App() {
       case RequestStatus.REPORTING: return 'Pelaporan Penggunaan';
       case RequestStatus.REVIEW_MANAGER: return 'Review Laporan (Manager)';
       case RequestStatus.REVIEW_ADMIN: return 'Review Laporan (Admin)';
+      case RequestStatus.PENDING_TALANGAN_TRANSFER: return 'Menunggu Transfer Dana Talangan';
       case RequestStatus.CLOSED: return 'Closing';
       default: return status;
     }
@@ -789,89 +1066,114 @@ export default function App() {
     }).format(num);
   };
 
-  // Render Login state
-  if (needsAuth || isInvalidGoogleAccount) {
+  // Render Login state only if the Google Account is explicitly invalid
+  if (isInvalidGoogleAccount) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="w-full max-w-sm bg-white rounded-3xl border border-slate-200 shadow-xl p-6 text-center space-y-6 animate-slide-up">
           {/* Logo illustration */}
           <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto shadow-md border border-indigo-100">
-            {isInvalidGoogleAccount ? (
-              <XCircle className="w-8 h-8 text-red-600 animate-pulse" />
-            ) : (
-              <Database className="w-8 h-8 text-indigo-600" />
-            )}
+            <XCircle className="w-8 h-8 text-red-600 animate-pulse" />
           </div>
 
           <div>
             <h1 className="font-display font-black text-slate-800 text-base tracking-tight">
-              {isInvalidGoogleAccount ? 'Akun Google Salah' : 'Koneksi Google Account'}
+              Akun Google Salah
             </h1>
           </div>
 
-          {isInvalidGoogleAccount ? (
-            <div className="bg-red-50 border border-red-200 text-red-900 rounded-2xl p-4 text-xs text-left space-y-4 animate-slide-up">
-              <div className="flex items-start gap-2.5">
-                <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
-                <div>
-                  <h3 className="font-bold text-red-800 text-xs">Akses Ditolak</h3>
-                  <p className="text-[11px] text-red-700 mt-1 leading-relaxed">
-                    Anda masuk menggunakan akun <strong className="break-all font-mono">{user?.email}</strong>.
-                  </p>
-                  <p className="text-[11px] text-red-700 mt-1.5 leading-relaxed">
-                    Semua user wajib menghubungkan Google Account melalui email operasional pusat:
-                  </p>
-                  <p className="font-bold font-mono text-[11px] bg-red-100/50 p-1.5 rounded border border-red-200 text-red-900 mt-1.5 text-center">
-                    ops.depotel@gmail.com
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-red-200/50">
-                <button
-                  onClick={async () => {
-                    await logout();
-                    setToken(null);
-                    setUser(null);
-                    setNeedsAuth(true);
-                  }}
-                  className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer text-center"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Ganti ke Akun ops.depotel@gmail.com</span>
-                </button>
+          <div className="bg-red-50 border border-red-200 text-red-900 rounded-2xl p-4 text-xs text-left space-y-4 animate-slide-up">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-bold text-red-800 text-xs">Akses Ditolak</h3>
+                <p className="text-[11px] text-red-700 mt-1 leading-relaxed">
+                  Anda masuk menggunakan akun <strong className="break-all font-mono">{user?.email}</strong>.
+                </p>
+                <p className="text-[11px] text-red-700 mt-1.5 leading-relaxed">
+                  Semua user wajib menghubungkan Google Account melalui email operasional pusat:
+                </p>
+                <p className="font-bold font-mono text-[11px] bg-red-100/50 p-1.5 rounded border border-red-200 text-red-900 mt-1.5 text-center">
+                  ops.depotel@gmail.com
+                </p>
               </div>
             </div>
-          ) : (
-            error && (
-              <div className="bg-red-50 border border-red-100 text-red-600 rounded-2xl p-3 text-xs flex items-start gap-2 text-left animate-slide-up">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
-                <span>{error}</span>
+
+            <div className="space-y-2 pt-2 border-t border-red-200/50">
+              <button
+                onClick={async () => {
+                  await logout();
+                  setToken(null);
+                  setUser(null);
+                  setNeedsAuth(true);
+                }}
+                className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer text-center"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Ganti ke Akun ops.depotel@gmail.com</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Render Google Account Connection block if Google is not connected
+  if (!user || !token || needsAuth) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm bg-white rounded-3xl border border-slate-200 shadow-xl p-6 text-center space-y-6 animate-slide-up">
+          {/* Logo illustration */}
+          <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto shadow-md border border-indigo-100">
+            <Database className="w-8 h-8 text-indigo-600 animate-pulse" />
+          </div>
+
+          <div className="space-y-2">
+            <h1 className="font-display font-black text-slate-800 text-base tracking-tight">
+              Sistem Manajemen Operasional
+            </h1>
+            <p className="text-xs text-slate-400 font-medium">
+              Hubungkan Google Account Anda untuk memuat database
+            </p>
+          </div>
+
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 text-xs text-left space-y-3">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-bold text-amber-800 text-xs">Hubungkan Akun Google</h3>
+                <p className="text-[11px] text-amber-700 mt-1 leading-relaxed">
+                  Aplikasi ini disinkronkan secara online dengan Google Sheets &amp; Drive operasional pusat.
+                </p>
+                <p className="text-[11px] text-amber-700 mt-1 leading-relaxed">
+                  Semua user wajib menghubungkan Google Account resmi:
+                </p>
+                <p className="font-bold font-mono text-[11px] bg-amber-100/50 p-1.5 rounded border border-amber-200 text-amber-900 mt-1.5 text-center">
+                  ops.depotel@gmail.com
+                </p>
               </div>
-            )
+            </div>
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-150 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2.5 text-left animate-slide-up">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-500" />
+              <span>{error}</span>
+            </div>
           )}
 
           <button
             onClick={handleLogin}
             disabled={isLoggingIn}
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 transition-all cursor-pointer"
           >
             {isLoggingIn ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>Menghubungkan Google...</span>
-              </>
+              <RefreshCw className="w-4 h-4 animate-spin text-white" />
             ) : (
-              <>
-                <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-4 h-4">
-                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                </svg>
-                <span>Menghubungkan dengan Google</span>
-              </>
+              <LogIn className="w-4 h-4 text-white" />
             )}
+            <span>{isLoggingIn ? 'Menghubungkan...' : 'Hubungkan Google Account'}</span>
           </button>
         </div>
       </div>
@@ -918,11 +1220,13 @@ export default function App() {
       <main className="flex-1 p-4 max-w-md mx-auto w-full space-y-4">
         {/* Error Banner */}
         {error && (
-          <div className="bg-red-50 border border-red-100 text-red-600 rounded-2xl p-4 text-xs flex items-start gap-2.5 animate-slide-up">
-            <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5 text-red-500" />
-            <div>
-              <p className="font-bold">Terjadi Kesalahan</p>
-              <p className="text-[11px] text-red-600 mt-0.5">{error}</p>
+          <div className="bg-red-50 border border-red-150 text-red-700 rounded-2xl p-4 text-xs flex flex-col gap-3 animate-slide-up">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5 text-red-500" />
+              <div>
+                <p className="font-bold text-red-800">Terjadi Kesalahan</p>
+                <p className="text-[11px] text-red-650 mt-0.5">{error}</p>
+              </div>
             </div>
           </div>
         )}
@@ -934,6 +1238,7 @@ export default function App() {
             onLoginSuccess={handleAppLoginSuccess}
             isLoading={isLoading}
             onResetGoogle={handleResetGoogleConnection}
+            onLoginWithCredentials={handleAppLoginWithCredentials}
           />
         ) : activeView === 'setup-profile' ? (
           <ProfileSetup
@@ -958,6 +1263,7 @@ export default function App() {
             onSubmit={handleAddBudgetRequest}
             onClose={() => setActiveView('dashboard')}
             initialIsTalangan={initialIsTalangan}
+            sites={sites}
           />
         ) : activeView === 'report-usage' && selectedRequest && driveFolderId ? (
           <UsageReportForm
@@ -976,6 +1282,7 @@ export default function App() {
             }}
             role={activeRole}
             onAuthError={handleGoogleAuthError}
+            sites={sites}
           />
         ) : activeView === 'adjustment' && userProfile ? (
           <AdjustmentPanel
@@ -987,6 +1294,14 @@ export default function App() {
             onCreateAdjustment={handleCreateAdjustment}
             onClose={() => setActiveView('dashboard')}
             onAuthError={handleGoogleAuthError}
+          />
+        ) : activeView === 'activities' && userProfile ? (
+          <ActivityLogView
+            activities={activities}
+            sites={sites}
+            userEmail={userProfile.email}
+            onSaveActivity={handleSaveActivity}
+            onBack={() => setActiveView('dashboard')}
           />
         ) : (
           /* Dashboard Main Section */
@@ -1032,6 +1347,8 @@ export default function App() {
                   onManageUsers={() => setActiveView('setup-profile')}
                   onOpenAdjustment={() => setActiveView('adjustment')}
                   profiles={profiles}
+                  activities={activities}
+                  onOpenActivities={() => setActiveView('activities')}
                 />
               </>
             ) : (
@@ -1079,6 +1396,11 @@ export default function App() {
                     googleToken={token!}
                     driveFolderId={driveFolderId}
                     onAuthError={handleGoogleAuthError}
+                    approvedUsageAmount={
+                      usageItems
+                        .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
+                        .reduce((sum, item) => sum + item.nominal, 0)
+                    }
                   />
                 )}
 
@@ -1125,6 +1447,7 @@ export default function App() {
                           {statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Transferred & Reporting)' :
                            statusFilter === 'REPORTING' && activeRole === Role.MANAGER ? 'Review Penggunaan Anggaran (Termasuk Dana Talangan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.ADMIN ? 'Review Finansial' :
+                           statusFilter === 'CLOSED' ? 'Arsip / UID Selesai (Closed)' :
                            getStatusLabel(statusFilter as RequestStatus) || statusFilter}
                         </span>
                       </h3>
@@ -1142,6 +1465,110 @@ export default function App() {
                         />
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                       </div>
+
+                      {statusFilter === 'CLOSED' && activeRole === Role.ADMIN && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3 mt-2 animate-slide-up">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                              <Filter className="w-3.5 h-3.5 text-indigo-500" />
+                              Filter Arsip Selesai
+                            </span>
+                            {(closedUserFilter !== 'ALL' || closedDivisiFilter !== 'ALL' || closedStartDateFilter || closedEndDateFilter) && (
+                              <button
+                                onClick={() => {
+                                  setClosedUserFilter('ALL');
+                                  setClosedDivisiFilter('ALL');
+                                  setClosedStartDateFilter('');
+                                  setClosedEndDateFilter('');
+                                }}
+                                className="text-[9px] text-indigo-600 hover:text-indigo-800 font-bold transition-colors cursor-pointer bg-transparent border-none p-0"
+                              >
+                                Bersihkan Filter
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            {/* User Filter */}
+                            <div className="space-y-1">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase">Pemohon (User)</label>
+                              <select
+                                value={closedUserFilter}
+                                onChange={(e) => setClosedUserFilter(e.target.value)}
+                                className="w-full text-[11px] bg-white border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
+                              >
+                                <option value="ALL">Semua Pemohon</option>
+                                {Array.from(
+                                  new Set<string>(
+                                    requests
+                                      .filter(r => r.status === RequestStatus.CLOSED)
+                                      .map(r => r.userEmail)
+                                  )
+                                ).map(email => {
+                                  const emailStr = String(email);
+                                  const p = profiles.find(prof => prof.email.toLowerCase() === emailStr.toLowerCase());
+                                  const name = p?.nama || emailStr;
+                                  return (
+                                    <option key={emailStr} value={emailStr}>
+                                      {name} ({emailStr})
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+
+                            {/* Divisi Filter */}
+                            <div className="space-y-1">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase">Divisi</label>
+                              <select
+                                value={closedDivisiFilter}
+                                onChange={(e) => setClosedDivisiFilter(e.target.value)}
+                                className="w-full text-[11px] bg-white border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
+                              >
+                                <option value="ALL">Semua Divisi</option>
+                                {Array.from(
+                                  new Set<string>(
+                                    requests
+                                      .filter(r => r.status === RequestStatus.CLOSED)
+                                      .map(r => {
+                                        const p = profiles.find(prof => prof.email.toLowerCase() === r.userEmail.toLowerCase());
+                                        return p?.divisi || '';
+                                      })
+                                      .filter(Boolean)
+                                  )
+                                ).map(divisi => {
+                                  const divisiStr = String(divisi);
+                                  return (
+                                    <option key={divisiStr} value={divisiStr}>
+                                      {divisiStr}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+
+                            {/* Date Range Filter */}
+                            <div className="space-y-1">
+                              <label className="block text-[9px] font-bold text-slate-400 uppercase">Tanggal Closing (Rentang)</label>
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="date"
+                                  value={closedStartDateFilter}
+                                  onChange={(e) => setClosedStartDateFilter(e.target.value)}
+                                  className="w-full text-[11px] bg-white border border-slate-200 rounded-lg p-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
+                                />
+                                <span className="text-[10px] text-slate-400 font-bold">s/d</span>
+                                <input
+                                  type="date"
+                                  value={closedEndDateFilter}
+                                  onChange={(e) => setClosedEndDateFilter(e.target.value)}
+                                  className="w-full text-[11px] bg-white border border-slate-200 rounded-lg p-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Action buttons moved here for USER role */}
                       {activeRole === Role.USER && (
@@ -1196,6 +1623,7 @@ export default function App() {
                             RequestStatus.PENDING_APPROVAL,
                             RequestStatus.APPROVED,
                             RequestStatus.PARTIALLY_APPROVED,
+                            RequestStatus.PENDING_TALANGAN_TRANSFER,
                             RequestStatus.REJECTED
                           ].includes(req.status)
                             ? 0
@@ -1226,6 +1654,20 @@ export default function App() {
                                     <span>Tgl Penggunaan: <strong className="text-indigo-600">{req.tanggalPemakaian}</strong></span>
                                     <span>•</span>
                                     <span>Pemohon: <strong>{requesterName}</strong></span>
+                                    {requesterProfile?.divisi && (
+                                      <>
+                                        <span>•</span>
+                                        <span>Divisi: <strong>{requesterProfile.divisi}</strong></span>
+                                      </>
+                                    )}
+                                    {req.status === RequestStatus.CLOSED && (
+                                      <>
+                                        <span>•</span>
+                                        <span className="bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded border border-emerald-100 text-[9px] font-bold">
+                                          Closed: {getClosingDate(req) ? getClosingDate(req)!.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : req.createdAt.split(',')[0]}
+                                        </span>
+                                      </>
+                                    )}
                                   </p>
                                 </div>
                                 <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${getStatusBadgeStyles(req.status)}`}>
@@ -1252,7 +1694,13 @@ export default function App() {
                                 <div>
                                   <span className="block text-[8px] font-bold text-slate-400 uppercase">Ditransfer</span>
                                   <span className="font-semibold text-indigo-600">
-                                    {[RequestStatus.PENDING_APPROVAL, RequestStatus.APPROVED, RequestStatus.PARTIALLY_APPROVED, RequestStatus.REJECTED].includes(req.status)
+                                    {[
+                                      RequestStatus.PENDING_APPROVAL, 
+                                      RequestStatus.APPROVED, 
+                                      RequestStatus.PARTIALLY_APPROVED, 
+                                      RequestStatus.PENDING_TALANGAN_TRANSFER,
+                                      RequestStatus.REJECTED
+                                    ].includes(req.status)
                                       ? '-'
                                       : formatIDR(req.adminActionAmount)}
                                   </span>
@@ -1294,6 +1742,51 @@ export default function App() {
                                 </div>
                               )}
 
+                              {/* Expanded Report Items List for Menunggu Transfer Dana Talangan */}
+                              {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER && expandedReportReqIds[req.id] && (
+                                <div className="bg-indigo-50/30 rounded-xl p-3.5 border border-indigo-100/80 space-y-2.5 animate-slide-up mt-2">
+                                  <div className="flex items-center justify-between border-b border-indigo-100 pb-1.5 mb-1.5">
+                                    <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Item Laporan Penggunaan</span>
+                                    <span className="text-[9px] bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded-md">
+                                      {reqItems.length} Item
+                                    </span>
+                                  </div>
+                                  {reqItems.length === 0 ? (
+                                    <p className="text-[10px] text-slate-400 italic text-center py-2">Tidak ada item laporan ditemukan.</p>
+                                  ) : (
+                                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                                      {reqItems.map((item, idx) => (
+                                        <div key={item.id} className="bg-white border border-slate-100 rounded-xl p-3 space-y-1.5 shadow-sm">
+                                          <div className="flex items-start justify-between gap-2">
+                                            <div className="space-y-0.5">
+                                              <span className="text-[8px] text-slate-400 font-bold block">ITEM #{idx + 1}</span>
+                                              <h5 className="text-[11px] font-bold text-slate-800 leading-tight">{item.keterangan}</h5>
+                                              <p className="text-[9px] text-slate-500 font-medium mt-0.5">
+                                                Tanggal: {item.tanggalPenggunaan} • Nominal: <strong className="text-slate-700">{formatIDR(item.nominal)}</strong>
+                                              </p>
+                                            </div>
+                                            {item.buktiUrl && (
+                                              <button
+                                                type="button"
+                                                onClick={() => setPreviewDocument({
+                                                  url: item.buktiUrl,
+                                                  fileId: item.buktiFileId || undefined,
+                                                  title: `Bukti Nota: ${item.keterangan}`
+                                                })}
+                                                className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-[9px] font-bold shrink-0 flex items-center gap-1 transition-all cursor-pointer"
+                                              >
+                                                <Paperclip className="w-3 h-3" />
+                                                <span>Bukti</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
                               {/* Comments if any */}
                               {req.status === RequestStatus.REJECTED && req.managerComment && (
                                 <div className="bg-red-50 text-red-700 p-2.5 rounded-xl text-[10px] border border-red-100">
@@ -1320,6 +1813,22 @@ export default function App() {
                                           className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all"
                                         >
                                           Laporkan Penggunaan
+                                        </button>
+                                      )}
+
+                                      {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setExpandedReportReqIds(prev => ({
+                                              ...prev,
+                                              [req.id]: !prev[req.id]
+                                            }));
+                                          }}
+                                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <ClipboardList className="w-3.5 h-3.5 text-indigo-500" />
+                                          <span>{expandedReportReqIds[req.id] ? 'Sembunyikan Item Laporan' : 'Lihat Item Laporan'}</span>
                                         </button>
                                       )}
 
@@ -1375,7 +1884,9 @@ export default function App() {
                                   {/* ADMIN ACTIONS */}
                                   {activeRole === Role.ADMIN && (
                                     <>
-                                      {(req.status === RequestStatus.APPROVED || req.status === RequestStatus.PARTIALLY_APPROVED) && (
+                                      {(req.status === RequestStatus.APPROVED || 
+                                         req.status === RequestStatus.PARTIALLY_APPROVED ||
+                                         req.status === RequestStatus.PENDING_TALANGAN_TRANSFER) && (
                                         <button
                                           onClick={() => setTransferReq(req)}
                                           className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm"

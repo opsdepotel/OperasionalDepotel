@@ -4,8 +4,8 @@
  */
 
 import React from 'react';
-import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile } from '../types';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck } from 'lucide-react';
+import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity } from '../types';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck } from 'lucide-react';
 
 interface DashboardStatsProps {
   role: Role;
@@ -17,6 +17,8 @@ interface DashboardStatsProps {
   onManageUsers?: () => void;
   onOpenAdjustment?: () => void;
   profiles?: UserProfile[];
+  activities?: UserActivity[];
+  onOpenActivities?: () => void;
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -28,7 +30,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onSelectFilter,
   onManageUsers,
   onOpenAdjustment,
-  profiles = []
+  profiles = [],
+  activities = [],
+  onOpenActivities
 }) => {
   // Format Currency
   const formatIDR = (num: number) => {
@@ -52,13 +56,15 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const myReqIds = myReqs.map(r => r.id);
     const myUsage = usageItems.filter(item => myReqIds.includes(item.requestId));
 
-    const totalRequested = myReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
-    const totalTransferred = myReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalRequested = myReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.jumlahPengajuan, 0);
+    const totalTransferred = myReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalAdjustments = myReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
 
-    // Saldo Operasional: jumlah semua uang yang ditransfer dikurangi jumlah uang yang telah dilaporkan itemnya dan UID telah dalam posisi Closed
-    const closedReqIds = myReqs.filter(r => r.status === RequestStatus.CLOSED).map(r => r.id);
-    const totalReportedClosed = myUsage.filter(item => closedReqIds.includes(item.requestId)).reduce((sum, item) => sum + item.nominal, 0);
-    const saldoOperasional = totalTransferred - totalReportedClosed;
+    // Saldo Operasional: Jumlah seluruh transfer + total adjustment dikurangi jumlah item laporan yang telah mendapatkan persetujuan Manager dan Admin (termasuk item dana talangan)
+    const totalReportedApproved = myUsage
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+      .reduce((sum, item) => sum + item.nominal, 0);
+    const saldoOperasional = totalTransferred + totalAdjustments - totalReportedApproved;
 
     // Active tasks for User:
     // 1. Rejected requests (need adjustment/resubmit - or just awareness)
@@ -71,7 +77,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
     // UID count by status
     const pendingApprCount = myReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
-    const approvedWaitingTransfer = myReqs.filter(r => r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED).length;
+    const approvedWaitingTransfer = myReqs.filter(r => 
+      r.status === RequestStatus.APPROVED || 
+      r.status === RequestStatus.PARTIALLY_APPROVED || 
+      r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+    ).length;
     const reportingCount = myReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING).length;
     const closedCount = myReqs.filter(r => r.status === RequestStatus.CLOSED).length;
 
@@ -135,7 +145,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Pencairan</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Disetujui Manager siap ditransfer</p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Disetujui Manager & Menunggu Transfer Dana Talangan</p>
           </div>
 
           <div 
@@ -189,6 +199,41 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </p>
           )}
         </div>
+
+        {/* Kartu Activity */}
+        {(() => {
+          const getTodayStr = () => {
+            const d = new Date();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          };
+          const todayStr = getTodayStr();
+          const todayActivitiesCount = activities.filter(act => 
+            act.userEmail.toLowerCase() === email.toLowerCase() && act.tanggal === todayStr
+          ).length;
+
+          return (
+            <div 
+              onClick={onOpenActivities}
+              className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+              id="activity-dashboard-card"
+            >
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">KEGIATAN HARI INI</p>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-3xl font-display font-bold text-slate-900">{todayActivitiesCount}</span>
+                  <span className="text-xs text-slate-500 font-medium">Log Kegiatan</span>
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat list & catat kegiatan baru</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                <CalendarCheck className="w-6 h-6" />
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
@@ -202,15 +247,29 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     // 1. Initial approval needed: requests in PENDING_APPROVAL
     const pendingBudgetReview = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
 
-    // 2. Report reviews needed: requests in REVIEW_MANAGER
-    const pendingReportReview = managerReqs.filter(r => r.status === RequestStatus.REVIEW_MANAGER).length;
+    // 2. Report reviews needed: requests in REVIEW_MANAGER, excluding those where all items are approved by manager
+    const pendingReportReview = managerReqs.filter(r => {
+      if (r.status !== RequestStatus.REVIEW_MANAGER) return false;
+      const reqItems = usageItems.filter(item => item.requestId === r.id);
+      if (reqItems.length > 0 && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
+        return false;
+      }
+      return true;
+    }).length;
 
     const totalTasks = pendingBudgetReview + pendingReportReview;
 
     // Request Stats for Manager's Team
     const teamPendingAppr = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
     const teamReporting = managerReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING).length;
-    const teamUnderReview = managerReqs.filter(r => r.status === RequestStatus.REPORTING || r.status === RequestStatus.REVIEW_MANAGER || r.status === RequestStatus.REVIEW_ADMIN).length;
+    const teamUnderReview = managerReqs.filter(r => {
+      if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
+      const reqItems = usageItems.filter(item => item.requestId === r.id);
+      if (reqItems.length > 0 && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
+        return false;
+      }
+      return true;
+    }).length;
     const teamClosed = managerReqs.filter(r => r.status === RequestStatus.CLOSED).length;
 
     return (
@@ -289,7 +348,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   // Admin stats
   if (role === Role.ADMIN) {
     // Admin reviews ALL requests and manages ALL transfers
-    const pendingTransfer = requests.filter(r => r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED).length;
+    const pendingTransfer = requests.filter(r => 
+      r.status === RequestStatus.APPROVED || 
+      r.status === RequestStatus.PARTIALLY_APPROVED || 
+      r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+    ).length;
     const pendingAdminReportReview = requests.filter(r => {
       if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
       const reqItems = usageItems.filter(i => i.requestId === r.id);
@@ -301,11 +364,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     // 1. Pending cash transfers
     // 2. Pending admin report reviews
     const totalTasks = pendingTransfer + pendingAdminReportReview;
+    const closedCount = requests.filter(r => r.status === RequestStatus.CLOSED).length;
 
     const totalTransferred = requests.reduce((sum, r) => sum + r.adminActionAmount, 0);
-    const closedRequestIds = requests.filter(r => r.status === RequestStatus.CLOSED).map(r => r.id);
     const totalClosed = usageItems
-      .filter(item => closedRequestIds.includes(item.requestId))
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
       .reduce((sum, item) => sum + item.nominal, 0);
 
     const unbalancedUsersCount = profiles.filter(user => {
@@ -313,11 +376,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       const userReqIds = userReqs.map(r => r.id);
       const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId));
 
-      const totalTransferredVal = userReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
-      const closedReqIds = userReqs.filter(r => r.status === RequestStatus.CLOSED).map(r => r.id);
-      const totalReportedClosed = userUsage.filter(item => closedReqIds.includes(item.requestId)).reduce((sum, item) => sum + item.nominal, 0);
+      const totalTransferredVal = userReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+      const totalAdjustmentsVal = userReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+      const totalReportedApproved = userUsage
+        .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+        .reduce((sum, item) => sum + item.nominal, 0);
       
-      const balance = totalTransferredVal - totalReportedClosed;
+      const balance = totalTransferredVal + totalAdjustmentsVal - totalReportedApproved;
       return Math.abs(balance) > 0.01;
     }).length;
 
@@ -375,6 +440,19 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <div className="flex items-end justify-between mt-2">
               <span className="text-3xl font-display font-bold text-slate-900">{pendingAdminReportReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
               <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Review</span>
+            </div>
+          </div>
+
+          <div 
+            onClick={() => handleCardClick('CLOSED')}
+            className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md col-span-2 ${
+              activeFilter === 'CLOSED' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">UID CLOSED</p>
+            <div className="flex items-end justify-between mt-2">
+              <span className="text-3xl font-display font-bold text-slate-900">{closedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Arsip / Selesai</span>
             </div>
           </div>
 

@@ -12,13 +12,15 @@ interface AppLoginFormProps {
   onLoginSuccess: (profile: UserProfile) => void;
   isLoading: boolean;
   onResetGoogle?: () => void;
+  onLoginWithCredentials?: (userId: string, password: string, onError: (msg: string) => void) => void;
 }
 
 export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   profiles,
   onLoginSuccess,
   isLoading,
-  onResetGoogle
+  onResetGoogle,
+  onLoginWithCredentials
 }) => {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
@@ -38,32 +40,21 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
       return;
     }
 
-    // Find user by matching UserID and Password
-    const matched = profiles.find(
-      (p) =>
-        p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
-        p.password === password
-    );
-
-    if (matched) {
-      onLoginSuccess(matched);
+    if (onLoginWithCredentials) {
+      onLoginWithCredentials(userId, password, (msg) => setError(msg));
     } else {
-      setError('User ID atau Password salah. Silakan coba lagi.');
-    }
-  };
+      // Find user by matching UserID and Password
+      const matched = profiles.find(
+        (p) =>
+          p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
+          p.password === password
+      );
 
-  const handleQuickLogin = (quickId: string, quickPass: string) => {
-    setUserId(quickId);
-    setPassword(quickPass);
-    setError(null);
-    
-    const matched = profiles.find(
-      (p) =>
-        p.userId?.toLowerCase() === quickId.toLowerCase() &&
-        p.password === quickPass
-    );
-    if (matched) {
-      onLoginSuccess(matched);
+      if (matched) {
+        onLoginSuccess(matched);
+      } else {
+        setError('User ID atau Password salah. Silakan coba lagi.');
+      }
     }
   };
 
@@ -75,7 +66,9 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           <ShieldCheck className="w-6 h-6 text-indigo-600" />
         </div>
         <h2 className="font-display font-bold text-slate-800 text-base mt-2">Login Aplikasi</h2>
-        <p className="text-xs text-slate-400 font-medium">Masuk menggunakan User ID & Password Anda</p>
+        <p className="text-xs text-slate-400 font-medium">
+          Masuk menggunakan User ID &amp; Password Anda
+        </p>
       </div>
 
       <form onSubmit={handleLogin} className="space-y-4">
@@ -134,6 +127,19 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           <span>{isLoading ? 'Memproses...' : 'Masuk Aplikasi'}</span>
         </button>
       </form>
+
+      {/* Switch Google Account Option */}
+      {onResetGoogle && (
+        <div className="pt-4 border-t border-slate-100">
+          <button
+            type="button"
+            onClick={onResetGoogle}
+            className="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 font-semibold text-[10px] rounded-xl transition-all cursor-pointer text-center uppercase tracking-wider"
+          >
+            Switch Google Account
+          </button>
+        </div>
+      )}
     </div>
   );
 };

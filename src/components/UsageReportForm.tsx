@@ -4,12 +4,12 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role } from '../types';
+import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo } from '../types';
 import { uploadReceiptFile } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare
+  MessageSquare, MapPin
 } from 'lucide-react';
 
 interface UsageReportFormProps {
@@ -29,6 +29,7 @@ interface UsageReportFormProps {
   onClose: () => void;
   role?: Role;
   onAuthError?: () => void;
+  sites?: SiteInfo[];
 }
 
 export const UsageReportForm: React.FC<UsageReportFormProps> = ({
@@ -43,8 +44,27 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   onSubmitReview,
   onClose,
   role = Role.USER,
-  onAuthError
+  onAuthError,
+  sites = []
 }) => {
+  // Extract and match site IDs from request.siteId. Format is "XXXNNN" (3 letters, 3 digits)
+  const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
+  const regexMatches = request.siteId.match(siteIdRegex) || [];
+  const uniqueMatches = Array.from(new Set(regexMatches.map(m => m.toUpperCase())));
+  const parsedIds = uniqueMatches.length > 0 ? uniqueMatches : (request.siteId.trim() ? [request.siteId.trim().toUpperCase()] : []);
+  const isMultipleSites = parsedIds.length > 1;
+
+  const siteResults = parsedIds.map(id => {
+    const found = sites.find(s => s.siteId.toUpperCase().trim() === id);
+    return {
+      id,
+      found: !!found,
+      siteName: found ? found.siteName : null,
+      coordinates: found ? found.coordinates : null
+    };
+  });
+  const someFound = siteResults.some(r => r.found);
+
   // Filter items for this request UID
   const currentItems = items.filter(item => item.requestId === request.id);
 
@@ -125,6 +145,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       return dec?.status === ItemStatus.REJECTED;
     });
 
+    const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
     let nextRequestStatus: RequestStatus;
 
     if (role === Role.MANAGER) {
@@ -138,7 +159,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       if (hasRejections) {
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        nextRequestStatus = RequestStatus.REPORTING;
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
       }
     }
 
@@ -412,6 +433,65 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         </button>
       </div>
 
+      {/* Site ID / Lokasi Details block */}
+      {parsedIds.length > 0 && (
+        <div className="bg-white border border-slate-100 p-4 rounded-2xl shadow-sm space-y-2">
+          <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 tracking-wider">
+            <MapPin className="w-3.5 h-3.5 text-slate-400" />
+            <span>SITE ID / LOKASI TERVERIFIKASI</span>
+          </div>
+          {isMultipleSites ? (
+            someFound ? (
+              <div className="space-y-1.5 pl-5">
+                {siteResults.map((res, idx) => (
+                  <div key={idx} className="text-xs flex flex-wrap gap-x-1 items-baseline">
+                    <span className="font-mono font-bold text-slate-500">{res.id}:</span>
+                    {res.found ? (
+                      <span className="text-slate-800 font-semibold">{res.siteName}</span>
+                    ) : (
+                      <span className="text-rose-500 italic text-[10px] font-medium">Tidak ditemukan/tidak terdaftar</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-rose-500 font-semibold pl-5">
+                * Site ID tidak ditemukan/tidak terdaftar
+              </p>
+            )
+          ) : (
+            siteResults[0]?.found ? (
+              <div className="pl-5 space-y-1">
+                <p className="text-xs font-semibold text-slate-800">
+                  Site: <span className="text-indigo-600 font-bold">{siteResults[0].id}</span> - {siteResults[0].siteName}
+                </p>
+                {siteResults[0].coordinates && (
+                  <p className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                    Koord:{" "}
+                    <a
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(siteResults[0].coordinates.trim())}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-0.5 transition-colors"
+                      title="Buka di Google Maps"
+                    >
+                      <span>{siteResults[0].coordinates}</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </p>
+                )}
+              </div>
+            ) : (
+              request.siteId.trim() && (
+                <p className="text-xs text-rose-500 font-semibold pl-5">
+                  * Site ID tidak ditemukan/tidak terdaftar
+                </p>
+              )
+            )
+          )}
+        </div>
+      )}
+
       {/* Financial Comparison Summary Card */}
       <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-sm">
         <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">
@@ -547,7 +627,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   )}
 
                   {/* Decision Buttons for Manager and Admin */}
-                  {(role === Role.MANAGER || role === Role.ADMIN) && (
+                  {(role === Role.MANAGER || role === Role.ADMIN) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 space-y-2 mt-2">
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">
                         Review Keputusan ({role === Role.MANAGER ? 'Manager' : 'Admin / Finansial'})
@@ -702,31 +782,10 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         )
       )}
 
-      {/* Submit Report Button for User */}
-      {role === Role.USER && onSubmitReport && [RequestStatus.TRANSFERRED, RequestStatus.REPORTING].includes(request.status) && currentItems.length > 0 && (
-        <button
-          onClick={async () => {
-            if (window.confirm('Kirim seluruh laporan penggunaan ini untuk direview oleh Manager?')) {
-              setIsSubmittingReport(true);
-              try {
-                await onSubmitReport(request);
-              } catch (e: any) {
-                setActionError(e.message);
-              } finally {
-                setIsSubmittingReport(false);
-              }
-            }
-          }}
-          disabled={isSubmittingReport}
-          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer mt-2"
-        >
-          <Send className="w-4 h-4" />
-          <span>{isSubmittingReport ? 'Mengirim...' : 'Kirim Laporan ke Manager'}</span>
-        </button>
-      )}
+
 
       {/* Submit Review Button for Manager/Admin */}
-      {(role === Role.MANAGER || role === Role.ADMIN) && onSubmitReview && currentItems.length > 0 && (
+      {(role === Role.MANAGER || role === Role.ADMIN) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && onSubmitReview && currentItems.length > 0 && (
         <div className="space-y-2">
           {actionError && (
             <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2">
