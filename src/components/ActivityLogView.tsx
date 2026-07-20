@@ -5,7 +5,41 @@
 
 import React, { useState, useEffect } from 'react';
 import { SiteInfo, UserActivity } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle } from 'lucide-react';
+
+// Helper to parse coordinate string and calculate Haversine distance
+function parseCoords(coordStr: string): { lat: number; lng: number } | null {
+  if (!coordStr) return null;
+  const clean = coordStr.replace(/[()\[\]]/g, '').trim();
+  const parts = clean.split(/[\s,]+/);
+  if (parts.length >= 2) {
+    const lat = parseFloat(parts[0]);
+    const lng = parseFloat(parts[1]);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      return { lat, lng };
+    }
+  }
+  return null;
+}
+
+function getDistanceInMeters(coordStr1: string, coordStr2: string): number | null {
+  const c1 = parseCoords(coordStr1);
+  const c2 = parseCoords(coordStr2);
+  if (!c1 || !c2) return null;
+
+  const R = 6371e3; // Earth radius in meters
+  const phi1 = (c1.lat * Math.PI) / 180;
+  const phi2 = (c2.lat * Math.PI) / 180;
+  const deltaPhi = ((c2.lat - c1.lat) * Math.PI) / 180;
+  const deltaLambda = ((c2.lng - c1.lng) * Math.PI) / 180;
+
+  const a =
+    Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
+    Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) * Math.sin(deltaLambda / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return R * c; // in meters
+}
 
 interface ActivityLogViewProps {
   activities: UserActivity[];
@@ -607,20 +641,58 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                       <p className="text-xs text-slate-600 mt-1 font-normal whitespace-pre-wrap leading-relaxed">{act.keterangan}</p>
                     </div>
 
-                    {act.coordinatesActual && (
+                    {(act.coordinatesActual || act.coordinatesDb) && (
                       <div className="flex flex-col gap-1.5 text-[10px] text-slate-500 font-mono pt-2 border-t border-slate-100 bg-slate-50/50 -mx-4 -mb-4 px-4 py-2">
-                        <div className="flex items-center gap-1.5">
-                          <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                          <span className="font-semibold text-slate-700 font-bold">Aktual:</span>
-                          <a 
-                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-indigo-600 hover:underline font-bold"
-                          >
-                            {act.coordinatesActual}
-                          </a>
-                        </div>
+                        {act.coordinatesActual && (
+                          <div className="flex items-center gap-1.5">
+                            <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                            <span className="font-bold text-slate-700">GPS Aktual:</span>
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-indigo-600 hover:underline font-bold"
+                            >
+                              {act.coordinatesActual}
+                            </a>
+                          </div>
+                        )}
+                        {act.coordinatesDb && (
+                          <div className="flex items-center gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                            <span className="font-bold text-slate-700">Koordinat DB:</span>
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-indigo-600 hover:underline font-bold"
+                            >
+                              {act.coordinatesDb}
+                            </a>
+                          </div>
+                        )}
+                        {(() => {
+                          const dist = getDistanceInMeters(act.coordinatesDb, act.coordinatesActual);
+                          if (dist === null) return null;
+                          const isWarning = dist > 500;
+                          return (
+                            <div className="space-y-1.5 pt-1.5 border-t border-slate-200/50">
+                              <div className="flex items-center gap-1.5">
+                                <span className={`inline-block w-2 h-2 rounded-full ${isWarning ? 'bg-rose-500' : 'bg-emerald-500'} animate-pulse`}></span>
+                                <span className="font-bold text-slate-700">Jarak ke DB:</span>
+                                <span className={`font-bold px-1.5 py-0.5 rounded-md ${isWarning ? 'text-rose-600 bg-rose-50' : 'text-indigo-600 bg-indigo-50/50'}`}>
+                                  {Math.round(dist).toLocaleString('id-ID')} meter
+                                </span>
+                              </div>
+                              {isWarning && (
+                                <div className="mt-1.5 p-2 bg-rose-50 border border-rose-100 rounded-xl text-[9px] font-bold text-rose-600 flex items-start gap-1 leading-relaxed">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
+                                  <span>Jarak aktual melebihi 500 meter dari data koordinat site. Ada indikasi aktivitas tidak dilakukan di tempat yang sesuai.</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>

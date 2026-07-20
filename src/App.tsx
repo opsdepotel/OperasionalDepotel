@@ -1283,6 +1283,7 @@ export default function App() {
             role={activeRole}
             onAuthError={handleGoogleAuthError}
             sites={sites}
+            activities={activities}
           />
         ) : activeView === 'adjustment' && userProfile ? (
           <AdjustmentPanel
@@ -1384,6 +1385,7 @@ export default function App() {
                     onSubmitReview={handleReviewUsageItems}
                     onClose={() => setReviewReportReq(null)}
                     onPreviewDocument={setPreviewDocument}
+                    activities={activities}
                   />
                 )}
 
