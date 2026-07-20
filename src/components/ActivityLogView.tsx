@@ -244,6 +244,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
   // Handle Photo input
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedSiteId.trim() || !keterangan.trim()) {
+      setErrorMsg('Wajib mengisi SiteID dan Keterangan Kegiatan terlebih dahulu.');
+      return;
+    }
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setOriginalPhotoFile(file);
@@ -443,7 +447,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               {/* Camera Capture Only input */}
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">AMBIL FOTO BUKTI (KAMERA HP LANGSUNG)</label>
-                <div className="flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 bg-slate-50 hover:bg-slate-100 transition-colors relative">
+                <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim())) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
                   {photoPreview ? (
                     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100">
                       <img 
@@ -462,6 +466,14 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                       >
                         Ulangi Foto
                       </button>
+                    </div>
+                  ) : (!selectedSiteId.trim() || !keterangan.trim()) ? (
+                    <div className="flex flex-col items-center justify-center py-5 w-full text-slate-400 select-none">
+                      <Camera className="w-8 h-8 text-slate-300 mb-2" />
+                      <span className="text-xs font-bold text-slate-400">Buka Kamera HP (Terkunci)</span>
+                      <span className="text-[10px] text-slate-400 mt-1.5 font-medium text-center px-4 leading-relaxed">
+                        Silakan pilih <strong className="text-slate-500 font-bold">Site ID</strong> dan isi <strong className="text-slate-500 font-bold">Keterangan Kegiatan</strong> terlebih dahulu untuk mengaktifkan kamera.
+                      </span>
                     </div>
                   ) : (
                     <label className="cursor-pointer flex flex-col items-center justify-center py-5 w-full">
