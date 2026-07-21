@@ -241,36 +241,6 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                   <h4 className="text-xs font-bold text-slate-800">{item.keterangan}</h4>
                   <p className="text-[10px] text-slate-500 font-medium">Tanggal: {item.tanggalPenggunaan} | Nominal: <strong>{formatIDR(item.nominal)}</strong></p>
                 </div>
-                <div className="flex flex-col gap-1.5 shrink-0 items-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (onPreviewDocument) {
-                        onPreviewDocument({
-                          url: item.buktiUrl,
-                          fileId: item.buktiFileId,
-                          title: `Bukti Nota: ${item.keterangan}`
-                        });
-                      } else {
-                        window.open(item.buktiUrl, '_blank');
-                      }
-                    }}
-                    className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-xs font-bold flex items-center justify-center gap-1 w-24 cursor-pointer"
-                  >
-                    <span>Bukti</span>
-                    <Eye className="w-3.5 h-3.5" />
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setViewingActivityItem({ item, date: item.tanggalPenggunaan })}
-                    className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 w-24 cursor-pointer"
-                    title="Lihat Aktivitas Lapangan User"
-                  >
-                    <span>Aktivitas</span>
-                    <Compass className="w-3.5 h-3.5" />
-                  </button>
-                </div>
               </div>
 
               {/* Display partner's status for context */}
@@ -284,57 +254,124 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                 </div>
               )}
 
+              {/* Buttons as a single bar under the status bar for both ADMIN and MANAGER */}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onPreviewDocument) {
+                      onPreviewDocument({
+                        url: item.buktiUrl,
+                        fileId: item.buktiFileId,
+                        title: `Bukti Nota: ${item.keterangan}`
+                      });
+                    } else {
+                      window.open(item.buktiUrl, '_blank');
+                    }
+                  }}
+                  className="flex-1 py-1.5 bg-indigo-55/10 hover:bg-indigo-55/20 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-150"
+                  style={{ backgroundColor: 'rgba(99, 102, 241, 0.08)', borderColor: 'rgba(99, 102, 241, 0.15)' }}
+                >
+                  <span>Bukti</span>
+                  <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setViewingActivityItem({ item, date: item.tanggalPenggunaan })}
+                  className="flex-1 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200"
+                  title="Lihat Aktivitas Lapangan User"
+                >
+                  <span>Aktivitas</span>
+                  <Compass className="w-3.5 h-3.5 text-slate-500" />
+                </button>
+              </div>
+
               {/* Reviewer Action selectors */}
               <div className="space-y-2 pt-2 border-t border-slate-50">
-                <span className="block text-[10px] font-bold text-slate-400 uppercase">Keputusan Anda</span>
-                {role === Role.ADMIN && item.statusAdmin === ItemStatus.APPROVED ? (
-                  <div className="text-xs font-bold text-emerald-600 bg-emerald-50/50 border border-emerald-100 rounded-lg py-1.5 px-3 flex items-center gap-1.5 w-fit">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                    <span>Disetujui</span>
+                {request.status === RequestStatus.CLOSED ? (
+                  <div>
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Keputusan Admin (Selesai/Closed)</span>
+                    <div className="mt-1 flex flex-col gap-1">
+                      <div className={`text-xs font-bold px-3 py-1.5 rounded-lg border w-fit flex items-center gap-1.5 ${
+                        item.statusAdmin === ItemStatus.APPROVED 
+                          ? 'text-emerald-600 bg-emerald-50/50 border-emerald-100' 
+                          : item.statusAdmin === ItemStatus.REJECTED 
+                            ? 'text-red-600 bg-red-50/50 border-red-100'
+                            : 'text-slate-600 bg-slate-50/50 border-slate-100'
+                      }`}>
+                        {item.statusAdmin === ItemStatus.APPROVED ? (
+                          <>
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                            <span>Disetujui</span>
+                          </>
+                        ) : item.statusAdmin === ItemStatus.REJECTED ? (
+                          <>
+                            <X className="w-3.5 h-3.5 text-red-500" />
+                            <span>Revisi</span>
+                          </>
+                        ) : (
+                          <span>Belum Ditentukan</span>
+                        )}
+                      </div>
+                      {item.adminComment && (
+                        <p className="text-[10px] text-slate-500 italic mt-0.5">"{item.adminComment}"</p>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => handleDecisionChange(item.id, ItemStatus.APPROVED)}
-                        className={`py-1.5 px-3 text-xs font-semibold rounded-lg border text-center flex items-center justify-center gap-1.5 transition-all ${
-                          decision.status === ItemStatus.APPROVED
-                            ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
-                            : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Setujui</span>
-                      </button>
-                      <button
-                        onClick={() => handleDecisionChange(item.id, ItemStatus.REJECTED)}
-                        className={`py-1.5 px-3 text-xs font-semibold rounded-lg border text-center flex items-center justify-center gap-1.5 transition-all ${
-                          decision.status === ItemStatus.REJECTED
-                            ? 'border-red-500 bg-red-50 text-red-700 font-bold'
-                            : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        <X className="w-3.5 h-3.5" />
-                        <span>Revisi</span>
-                      </button>
-                    </div>
-
-                    {/* If rejected, reason is required */}
-                    {decision.status === ItemStatus.REJECTED && (
-                      <div className="space-y-1">
-                        <label className="block text-[9px] font-bold text-red-500 uppercase">Alasan Revisi (Wajib)</label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            value={decision.comment}
-                            onChange={(e) => handleCommentChange(item.id, e.target.value)}
-                            placeholder="Contoh: Bukti buram, Nominal tidak sesuai nota"
-                            className="w-full pl-8 pr-2 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                            required
-                          />
-                          <MessageSquare className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-                        </div>
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Keputusan Anda</span>
+                    {role === Role.ADMIN && item.statusAdmin === ItemStatus.APPROVED ? (
+                      <div className="text-xs font-bold text-emerald-600 bg-emerald-50/50 border border-emerald-100 rounded-lg py-1.5 px-3 flex items-center gap-1.5 w-fit">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        <span>Disetujui</span>
                       </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            onClick={() => handleDecisionChange(item.id, ItemStatus.APPROVED)}
+                            className={`py-1.5 px-3 text-xs font-semibold rounded-lg border text-center flex items-center justify-center gap-1.5 transition-all ${
+                              decision.status === ItemStatus.APPROVED
+                                ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
+                                : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Setujui</span>
+                          </button>
+                          <button
+                            onClick={() => handleDecisionChange(item.id, ItemStatus.REJECTED)}
+                            className={`py-1.5 px-3 text-xs font-semibold rounded-lg border text-center flex items-center justify-center gap-1.5 transition-all ${
+                              decision.status === ItemStatus.REJECTED
+                                ? 'border-red-500 bg-red-50 text-red-700 font-bold'
+                                : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Revisi</span>
+                          </button>
+                        </div>
+
+                        {/* If rejected, reason is required */}
+                        {decision.status === ItemStatus.REJECTED && (
+                          <div className="space-y-1">
+                            <label className="block text-[9px] font-bold text-red-500 uppercase">Alasan Revisi (Wajib)</label>
+                            <div className="relative">
+                              <input
+                                type="text"
+                                value={decision.comment}
+                                onChange={(e) => handleCommentChange(item.id, e.target.value)}
+                                placeholder="Contoh: Bukti buram, Nominal tidak sesuai nota"
+                                className="w-full pl-8 pr-2 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                                required
+                              />
+                              <MessageSquare className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                            </div>
+                          </div>
+                        )}
+                      </>
                     )}
                   </>
                 )}
@@ -345,14 +382,16 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       </div>
 
       {/* Submit Decision Button */}
-      <button
-        onClick={handleSubmit}
-        disabled={isSubmitting}
-        className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
-      >
-        <Send className="w-4 h-4" />
-        <span>{isSubmitting ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
-      </button>
+      {request.status !== RequestStatus.CLOSED && (
+        <button
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
+        >
+          <Send className="w-4 h-4" />
+          <span>{isSubmitting ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
+        </button>
+      )}
 
       {/* Activities Popup Modal */}
       {viewingActivityItem && (
@@ -366,12 +405,6 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                   User: <span className="font-bold text-slate-700">{requesterName || request.userEmail}</span> | Tanggal: <span className="font-semibold text-indigo-600">{viewingActivityItem.date}</span>
                 </p>
               </div>
-              <button
-                onClick={() => setViewingActivityItem(null)}
-                className="text-xs font-semibold text-slate-400 hover:text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-50 font-mono"
-              >
-                TUTUP [X]
-              </button>
             </div>
 
             {/* Modal Content - List of Activities */}
@@ -436,34 +469,47 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
 
                     {(act.coordinatesActual || act.coordinatesDb) && (
                       <div className="space-y-1.5 text-[10px] text-slate-500 font-mono bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-100/30">
-                        {act.coordinatesActual && (
-                          <div className="flex items-center gap-1.5">
-                            <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                            <span className="font-bold text-slate-700">GPS Aktual:</span>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-indigo-600 hover:underline font-bold"
-                            >
-                              {act.coordinatesActual}
-                            </a>
-                          </div>
-                        )}
-                        {act.coordinatesDb && (
-                          <div className="flex items-center gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            <span className="font-bold text-slate-700">Koordinat DB:</span>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-indigo-600 hover:underline font-bold"
-                            >
-                              {act.coordinatesDb}
-                            </a>
-                          </div>
-                        )}
+                        {(() => {
+                          const siteIdLabel = act.siteId || 'SiteID';
+                          const gmapsUrl = act.coordinatesDb && act.coordinatesActual
+                            ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(act.coordinatesDb.trim())}&destination=${encodeURIComponent(act.coordinatesActual.trim())}`
+                            : act.coordinatesActual
+                              ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`
+                              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`;
+
+                          return (
+                            <>
+                              {act.coordinatesActual && (
+                                <div className="flex items-center gap-1.5">
+                                  <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                  <span className="font-bold text-slate-700 font-sans">Aktual:</span>
+                                  <a
+                                    href={gmapsUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-600 hover:underline font-bold"
+                                  >
+                                    {act.coordinatesActual}
+                                  </a>
+                                </div>
+                              )}
+                              {act.coordinatesDb && (
+                                <div className="flex items-center gap-1.5">
+                                  <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  <span className="font-bold text-slate-700 font-sans">{siteIdLabel}:</span>
+                                  <a
+                                    href={gmapsUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-600 hover:underline font-bold"
+                                  >
+                                    {act.coordinatesDb}
+                                  </a>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         {(() => {
                           const dist = getDistanceInMeters(act.coordinatesDb, act.coordinatesActual);
                           if (dist === null) return null;

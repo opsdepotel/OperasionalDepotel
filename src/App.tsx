@@ -934,10 +934,12 @@ export default function App() {
           if (r.status !== RequestStatus.TRANSFERRED) return false;
         }
       } else if (statusFilter === 'REPORTING') {
-        // For USER, "Proses Laporan" should display all requests that are REPORTING or TRANSFERRED as requested.
+        // For USER, "Proses Laporan" should display all requests that are REPORTING, TRANSFERRED, REVIEW_MANAGER, or REVIEW_ADMIN.
         if (activeRole === Role.USER) {
           if (r.status !== RequestStatus.TRANSFERRED &&
-              r.status !== RequestStatus.REPORTING) return false;
+              r.status !== RequestStatus.REPORTING &&
+              r.status !== RequestStatus.REVIEW_MANAGER &&
+              r.status !== RequestStatus.REVIEW_ADMIN) return false;
         } else if (activeRole === Role.MANAGER) {
           if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
@@ -1446,7 +1448,7 @@ export default function App() {
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                       <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                         Daftar Pengajuan: <span className="text-indigo-600 font-bold">
-                          {statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Transferred & Reporting)' :
+                          {statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Pengisian & Review Laporan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.MANAGER ? 'Review Penggunaan Anggaran (Termasuk Dana Talangan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.ADMIN ? 'Review Finansial' :
                            statusFilter === 'CLOSED' ? 'Arsip / UID Selesai (Closed)' :
@@ -1814,7 +1816,7 @@ export default function App() {
                                           }}
                                           className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all"
                                         >
-                                          Laporkan Penggunaan
+                                          {[RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status) ? 'Lihat Laporan (Dalam Review)' : 'Laporkan Penggunaan'}
                                         </button>
                                       )}
 

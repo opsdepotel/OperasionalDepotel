@@ -643,34 +643,47 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
                     {(act.coordinatesActual || act.coordinatesDb) && (
                       <div className="flex flex-col gap-1.5 text-[10px] text-slate-500 font-mono pt-2 border-t border-slate-100 bg-slate-50/50 -mx-4 -mb-4 px-4 py-2">
-                        {act.coordinatesActual && (
-                          <div className="flex items-center gap-1.5">
-                            <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                            <span className="font-bold text-slate-700">GPS Aktual:</span>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-indigo-600 hover:underline font-bold"
-                            >
-                              {act.coordinatesActual}
-                            </a>
-                          </div>
-                        )}
-                        {act.coordinatesDb && (
-                          <div className="flex items-center gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            <span className="font-bold text-slate-700">Koordinat DB:</span>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-indigo-600 hover:underline font-bold"
-                            >
-                              {act.coordinatesDb}
-                            </a>
-                          </div>
-                        )}
+                        {(() => {
+                          const siteIdLabel = act.siteId || 'SiteID';
+                          const gmapsUrl = act.coordinatesDb && act.coordinatesActual
+                            ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(act.coordinatesDb.trim())}&destination=${encodeURIComponent(act.coordinatesActual.trim())}`
+                            : act.coordinatesActual
+                              ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`
+                              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`;
+
+                          return (
+                            <>
+                              {act.coordinatesActual && (
+                                <div className="flex items-center gap-1.5">
+                                  <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                  <span className="font-bold text-slate-700">Aktual:</span>
+                                  <a
+                                    href={gmapsUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-600 hover:underline font-bold"
+                                  >
+                                    {act.coordinatesActual}
+                                  </a>
+                                </div>
+                              )}
+                              {act.coordinatesDb && (
+                                <div className="flex items-center gap-1.5">
+                                  <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  <span className="font-bold text-slate-700">{siteIdLabel}:</span>
+                                  <a
+                                    href={gmapsUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-600 hover:underline font-bold"
+                                  >
+                                    {act.coordinatesDb}
+                                  </a>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         {(() => {
                           const dist = getDistanceInMeters(act.coordinatesDb, act.coordinatesActual);
                           if (dist === null) return null;

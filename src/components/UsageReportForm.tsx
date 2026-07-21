@@ -681,58 +681,87 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         </div>
                       )}
 
-                      {role === Role.MANAGER && item.statusManager === ItemStatus.APPROVED ? (
-                        <div className="text-center py-2 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-700 font-bold text-xs flex items-center justify-center gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                          <span>Telah Disetujui Manager</span>
+                      {request.status === RequestStatus.CLOSED ? (
+                        <div className="mt-1 flex flex-col gap-1">
+                          <div className={`text-xs font-bold px-3 py-1.5 rounded-lg border w-fit flex items-center gap-1.5 ${
+                            (role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.APPROVED 
+                              ? 'text-emerald-600 bg-emerald-50/50 border-emerald-100' 
+                              : (role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.REJECTED 
+                                ? 'text-red-600 bg-red-50/50 border-red-100'
+                                : 'text-slate-600 bg-slate-50/50 border-slate-100'
+                          }`}>
+                            {(role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.APPROVED ? (
+                              <>
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                <span>Disetujui ({role === Role.MANAGER ? 'Manager' : 'Admin'})</span>
+                              </>
+                            ) : (role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.REJECTED ? (
+                              <>
+                                <XCircle className="w-3.5 h-3.5 text-red-500" />
+                                <span>Revisi ({role === Role.MANAGER ? 'Manager' : 'Admin'})</span>
+                              </>
+                            ) : (
+                              <span>Belum Ditentukan ({role === Role.MANAGER ? 'Manager' : 'Admin'})</span>
+                            )}
+                          </div>
+                          {(role === Role.MANAGER ? item.managerComment : item.adminComment) && (
+                            <p className="text-[10px] text-slate-500 italic mt-0.5">"{role === Role.MANAGER ? item.managerComment : item.adminComment}"</p>
+                          )}
                         </div>
                       ) : (
-                        <>
-                          <div className="grid grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => handleDecisionChange(item.id, ItemStatus.APPROVED)}
-                              className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                                decisions[item.id]?.status === ItemStatus.APPROVED
-                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
-                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                              }`}
-                            >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                              <span>Setujui</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDecisionChange(item.id, ItemStatus.REJECTED)}
-                              className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                                decisions[item.id]?.status === ItemStatus.REJECTED
-                                  ? 'border-red-500 bg-red-50 text-red-700 font-bold'
-                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                              }`}
-                            >
-                              <XCircle className="w-3.5 h-3.5 text-red-500" />
-                              <span>Revisi</span>
-                            </button>
+                        role === Role.MANAGER && item.statusManager === ItemStatus.APPROVED ? (
+                          <div className="text-center py-2 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-700 font-bold text-xs flex items-center justify-center gap-2">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                            <span>Telah Disetujui Manager</span>
                           </div>
-
-                          {/* If rejected/revision, reason is required */}
-                          {decisions[item.id]?.status === ItemStatus.REJECTED && (
-                            <div className="space-y-1 mt-1.5">
-                              <label className="block text-[9px] font-bold text-red-500 uppercase">Alasan Revisi (Wajib)</label>
-                              <div className="relative">
-                                <input
-                                  type="text"
-                                  value={decisions[item.id]?.comment || ''}
-                                  onChange={(e) => handleCommentChange(item.id, e.target.value)}
-                                  placeholder="Contoh: Bukti buram, Nominal tidak sesuai nota"
-                                  className="w-full pl-8 pr-2 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                                  required
-                                />
-                                <MessageSquare className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-                              </div>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleDecisionChange(item.id, ItemStatus.APPROVED)}
+                                className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                  decisions[item.id]?.status === ItemStatus.APPROVED
+                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
+                                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                              >
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                <span>Setujui</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDecisionChange(item.id, ItemStatus.REJECTED)}
+                                className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                  decisions[item.id]?.status === ItemStatus.REJECTED
+                                    ? 'border-red-500 bg-red-50 text-red-700 font-bold'
+                                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                              >
+                                <XCircle className="w-3.5 h-3.5 text-red-500" />
+                                <span>Revisi</span>
+                              </button>
                             </div>
-                          )}
-                        </>
+
+                            {/* If rejected/revision, reason is required */}
+                            {decisions[item.id]?.status === ItemStatus.REJECTED && (
+                              <div className="space-y-1 mt-1.5">
+                                <label className="block text-[9px] font-bold text-red-500 uppercase">Alasan Revisi (Wajib)</label>
+                                <div className="relative">
+                                  <input
+                                    type="text"
+                                    value={decisions[item.id]?.comment || ''}
+                                    onChange={(e) => handleCommentChange(item.id, e.target.value)}
+                                    placeholder="Contoh: Bukti buram, Nominal tidak sesuai nota"
+                                    className="w-full pl-8 pr-2 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                                    required
+                                  />
+                                  <MessageSquare className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )
                       )}
                     </div>
                   )}
@@ -836,7 +865,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
 
       {/* Submit Review Button for Manager/Admin */}
-      {(role === Role.MANAGER || role === Role.ADMIN) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && onSubmitReview && currentItems.length > 0 && (
+      {(role === Role.MANAGER || role === Role.ADMIN) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && request.status !== RequestStatus.CLOSED && onSubmitReview && currentItems.length > 0 && (
         <div className="space-y-2">
           {actionError && (
             <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2">
@@ -1224,12 +1253,6 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   User: <span className="font-bold text-slate-700">{request.userEmail}</span> | Tanggal: <span className="font-semibold text-indigo-600">{viewingActivityItem.date}</span>
                 </p>
               </div>
-              <button
-                onClick={() => setViewingActivityItem(null)}
-                className="text-xs font-semibold text-slate-400 hover:text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-50 font-mono"
-              >
-                TUTUP [X]
-              </button>
             </div>
 
             {/* Modal Content - List of Activities */}
@@ -1286,34 +1309,47 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
                     {(act.coordinatesActual || act.coordinatesDb) && (
                       <div className="space-y-1.5 text-[10px] text-slate-500 font-mono bg-indigo-50/40 p-2.5 rounded-xl border border-indigo-100/30">
-                        {act.coordinatesActual && (
-                          <div className="flex items-center gap-1.5">
-                            <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                            <span className="font-bold text-slate-700">GPS Aktual:</span>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-indigo-600 hover:underline font-bold"
-                            >
-                              {act.coordinatesActual}
-                            </a>
-                          </div>
-                        )}
-                        {act.coordinatesDb && (
-                          <div className="flex items-center gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                            <span className="font-bold text-slate-700">Koordinat DB:</span>
-                            <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-indigo-600 hover:underline font-bold"
-                            >
-                              {act.coordinatesDb}
-                            </a>
-                          </div>
-                        )}
+                        {(() => {
+                          const siteIdLabel = act.siteId || 'SiteID';
+                          const gmapsUrl = act.coordinatesDb && act.coordinatesActual
+                            ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(act.coordinatesDb.trim())}&destination=${encodeURIComponent(act.coordinatesActual.trim())}`
+                            : act.coordinatesActual
+                              ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`
+                              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`;
+
+                          return (
+                            <>
+                              {act.coordinatesActual && (
+                                <div className="flex items-center gap-1.5">
+                                  <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                                  <span className="font-bold text-slate-700 font-sans">Aktual:</span>
+                                  <a
+                                    href={gmapsUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-600 hover:underline font-bold"
+                                  >
+                                    {act.coordinatesActual}
+                                  </a>
+                                </div>
+                              )}
+                              {act.coordinatesDb && (
+                                <div className="flex items-center gap-1.5">
+                                  <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                                  <span className="font-bold text-slate-700 font-sans">{siteIdLabel}:</span>
+                                  <a
+                                    href={gmapsUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-indigo-600 hover:underline font-bold"
+                                  >
+                                    {act.coordinatesDb}
+                                  </a>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                         {(() => {
                           const dist = getDistanceInMeters(act.coordinatesDb, act.coordinatesActual);
                           if (dist === null) return null;

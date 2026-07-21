@@ -82,7 +82,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       r.status === RequestStatus.PARTIALLY_APPROVED || 
       r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
     ).length;
-    const reportingCount = myReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING).length;
+    const reportingCount = myReqs.filter(r => 
+      r.status === RequestStatus.TRANSFERRED || 
+      r.status === RequestStatus.REPORTING ||
+      r.status === RequestStatus.REVIEW_MANAGER ||
+      r.status === RequestStatus.REVIEW_ADMIN
+    ).length;
     const closedCount = myReqs.filter(r => r.status === RequestStatus.CLOSED).length;
 
     return (
@@ -161,7 +166,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Review</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Dana ditransfer, proses pelaporan penggunaan</p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Dalam pengisian oleh Anda atau sedang direview Manager/Admin</p>
           </div>
 
           <div 
