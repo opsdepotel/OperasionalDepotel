@@ -20,6 +20,7 @@ import {
   deleteUsageItem,
   saveUserProfile,
   uploadReceiptFile,
+  uploadBase64Image,
   fetchSites,
   fetchUserActivities,
   createUserActivity
@@ -593,17 +594,38 @@ export default function App() {
     const currentToken = token || 'mock_demo_token';
     const currentSheetId = spreadsheetId || 'mock_sheet_id';
 
-    const success = await runGoogleAction(
+    const savedItem = await runGoogleAction<UsageReportItem>(
       async () => {
+        let finalReportItem = { ...reportItem };
+
+        // Process uploading base64 photo to Google Drive if connected to Google Drive
+        if (reportItem.buktiUrl && reportItem.buktiUrl.startsWith('data:')) {
+          if (currentToken !== 'mock_demo_token' && driveFolderId) {
+            try {
+              const uploadRes = await uploadBase64Image(
+                currentToken,
+                driveFolderId,
+                reportItem.buktiUrl,
+                `NOTA_BBM_${req.id}.jpg`
+              );
+              finalReportItem.buktiUrl = uploadRes.viewUrl;
+              finalReportItem.buktiFileId = uploadRes.fileId;
+            } catch (err: any) {
+              console.warn('Gagal unggah foto nota ke Google Drive, menggunakan URL fallback:', err);
+            }
+          }
+        }
+
         await createBudgetRequest(currentToken, currentSheetId, req);
-        await createUsageItem(currentToken, currentSheetId, reportItem);
+        await createUsageItem(currentToken, currentSheetId, finalReportItem);
+        return finalReportItem;
       },
       'Gagal menyimpan transaksi BBM Duren Sawit.'
     );
 
-    if (success !== null) {
+    if (savedItem !== null) {
       setRequests(prev => [req, ...prev]);
-      setUsageItems(prev => [...prev, reportItem]);
+      setUsageItems(prev => [...prev, savedItem]);
       setIsBbmModalOpen(false);
     }
   };

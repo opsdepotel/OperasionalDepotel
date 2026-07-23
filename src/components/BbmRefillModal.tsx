@@ -42,7 +42,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
 
   const [siteId, setSiteId] = useState('');
   const [nominal, setNominal] = useState<string>('');
-  const [keterangan, setKeterangan] = useState('Pengisian BBM Duren Sawit');
+  const [keterangan, setKeterangan] = useState('');
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
 
   // Camera state
@@ -159,11 +159,11 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     }
   };
 
-  // Generate BBM_DurenSawit UID
+  // Generate BBMDS UID
   const generateBbmUid = () => {
     const todayStr = tanggal.replace(/-/g, '');
     const randomHex = Math.floor(1000 + Math.random() * 9000);
-    return `BBM_DurenSawit-${todayStr}-${randomHex}`;
+    return `BBMDS-${todayStr}-${randomHex}`;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -204,7 +204,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
         tanggalPemakaian: tanggal,
         siteId: siteId.trim().toUpperCase(),
         jumlahPengajuan: amount,
-        keterangan: `[Pengisian BBM Duren Sawit] ${keterangan.trim()}`,
+        keterangan: keterangan.trim(),
         status: RequestStatus.CLOSED,
         managerActionAmount: amount,
         managerComment: 'Otomatis disetujui & closed oleh sistem BBM Duren Sawit.',
@@ -212,9 +212,9 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
         createdAt: nowIso
       };
 
-      // 2. UsageReportItem (Laporan) -> Approved directly
+      // 2. UsageReportItem (Laporan) -> ItemID prefix "BBMDS" bersesuaian dengan UID
       const reportItem: UsageReportItem = {
-        id: `REP_BBM_${Date.now()}`,
+        id: `${uid}-1`,
         requestId: uid,
         tanggalPenggunaan: tanggal,
         nominal: amount,
@@ -402,7 +402,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
               type="text"
               value={keterangan}
               onChange={(e) => setKeterangan(e.target.value)}
-              placeholder="Keterangan pengisian BBM Duren Sawit..."
+              placeholder="Isikan plat nomor kendaraan..."
               required
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
             />

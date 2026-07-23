@@ -393,6 +393,30 @@ export async function uploadReceiptFile(
   };
 }
 
+// Upload base64 image data URL to Google Drive
+export async function uploadBase64Image(token: string, folderId: string, base64DataUrl: string, fileName?: string): Promise<{ fileId: string; viewUrl: string }> {
+  try {
+    const parts = base64DataUrl.split(',');
+    if (parts.length < 2) {
+      throw new Error('Format Data URL base64 tidak valid.');
+    }
+    const mimeMatch = parts[0].match(/:(.*?);/);
+    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const bstr = atob(parts[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    const blob = new Blob([u8arr], { type: mime });
+    const file = new File([blob], fileName || `nota_bbm_${Date.now()}.jpg`, { type: mime });
+    return await uploadReceiptFile(token, folderId, file);
+  } catch (err: any) {
+    console.error('Error uploading base64 image to Google Drive:', err);
+    throw new Error(`Gagal mengunggah foto nota ke Google Drive: ${err.message || err}`);
+  }
+}
+
 // Fetch Budget Requests
 export async function fetchBudgetRequests(token: string, spreadsheetId: string): Promise<BudgetRequest[]> {
   if (token === 'mock_demo_token') {
@@ -545,7 +569,7 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     const list = getMockData<BudgetRequest[]>('mock_db_pengajuan', []);
     const todayStr = req.tanggalPemakaian.replace(/-/g, '');
     let finalUid = req.id;
-    const prefix = req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : 'OP';
+    const prefix = req.id.startsWith('BBMDS') ? 'BBMDS' : req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : 'OP';
     let isUnique = !list.some(r => r.id.toUpperCase() === finalUid.toUpperCase());
     while (!isUnique) {
       const randomDigits = Math.floor(1000 + Math.random() * 9000);
@@ -580,7 +604,7 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     const todayStr = req.tanggalPemakaian.replace(/-/g, '');
     let finalUid = req.id;
     let isUnique = !existingUIDs.includes(finalUid.toUpperCase());
-    const prefix = req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : req.id.startsWith('ADJ') ? 'ADJ' : 'OP';
+    const prefix = req.id.startsWith('BBMDS') ? 'BBMDS' : req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : req.id.startsWith('ADJ') ? 'ADJ' : 'OP';
     
     // Regenerate until we find a completely unused ID
     while (!isUnique) {
