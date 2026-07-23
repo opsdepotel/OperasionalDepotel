@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { UserProfile, Role, BudgetRequest } from '../types';
-import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock } from 'lucide-react';
+import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel } from 'lucide-react';
 
 interface ProfileSetupProps {
   profiles: UserProfile[];
@@ -32,6 +32,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   const [role, setRole] = useState<Role>(Role.USER);
   const [managerEmail, setManagerEmail] = useState('');
   const [divisi, setDivisi] = useState('');
+  const [aksesBBM, setAksesBBM] = useState<boolean>(false);
   
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -68,6 +69,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setRole(p.role);
     setManagerEmail(p.managerEmail || '');
     setDivisi(p.divisi || '');
+    setAksesBBM(!!p.aksesBBM);
     setError(null);
   };
 
@@ -81,6 +83,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setRole(Role.USER);
     setManagerEmail('');
     setDivisi('');
+    setAksesBBM(false);
     setError(null);
   };
 
@@ -131,7 +134,8 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
         email: email.trim(),
         role,
         managerEmail: role === Role.USER ? managerEmail.trim() : '',
-        divisi: divisi.trim().toUpperCase()
+        divisi: divisi.trim().toUpperCase(),
+        aksesBBM
       });
       // Reset form states
       setEditingProfile(null);
@@ -312,6 +316,27 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
             </div>
           )}
 
+          {/* Checkmark Pengisian BBM Duren Sawit */}
+          <div className="pt-2 border-t border-slate-100">
+            <label className="flex items-center gap-3 p-2.5 bg-slate-50/80 hover:bg-slate-100/80 border border-slate-200 rounded-xl transition-all cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={aksesBBM}
+                onChange={(e) => setAksesBBM(e.target.checked)}
+                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0"
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                  <Fuel className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Pengisian BBM Duren Sawit</span>
+                </div>
+                <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                  Berikan hak akses untuk pengisian BBM di lokasi Duren Sawit.
+                </p>
+              </div>
+            </label>
+          </div>
+
           {/* Action buttons */}
           <div className="flex items-center gap-2.5 pt-3 border-t border-slate-100">
             <button
@@ -359,7 +384,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   className="p-3 border border-slate-150 rounded-xl hover:border-slate-300 hover:bg-slate-50/40 transition-all flex items-start justify-between gap-3"
                 >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-xs text-slate-800">{p.nama || p.userId || 'No ID'}</span>
                       <span className="text-[10px] text-slate-400">({p.userId})</span>
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
@@ -374,6 +399,12 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                       {p.divisi && (
                         <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 uppercase font-mono">
                           {p.divisi}
+                        </span>
+                      )}
+                      {p.aksesBBM && (
+                        <span className="text-[9px] font-bold bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200/60 flex items-center gap-1">
+                          <Fuel className="w-2.5 h-2.5 text-amber-600" />
+                          BBM Duren Sawit
                         </span>
                       )}
                     </div>

@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity } from '../types';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel } from 'lucide-react';
 
 interface DashboardStatsProps {
   role: Role;
@@ -19,6 +19,8 @@ interface DashboardStatsProps {
   profiles?: UserProfile[];
   activities?: UserActivity[];
   onOpenActivities?: () => void;
+  userProfile?: UserProfile | null;
+  onOpenBbmModal?: () => void;
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -32,7 +34,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onOpenAdjustment,
   profiles = [],
   activities = [],
-  onOpenActivities
+  onOpenActivities,
+  userProfile,
+  onOpenBbmModal
 }) => {
   // Format Currency
   const formatIDR = (num: number) => {
@@ -48,6 +52,30 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     if (onSelectFilter) {
       onSelectFilter(activeFilter === key ? 'ALL' : key);
     }
+  };
+
+  const renderBbmCard = () => {
+    if (!userProfile?.aksesBBM) return null;
+    return (
+      <div
+        onClick={onOpenBbmModal}
+        className="bg-gradient-to-r from-amber-500/10 via-amber-50/80 to-orange-50/80 border border-amber-200/80 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3 transition-all cursor-pointer hover:border-amber-400 hover:shadow-md active:scale-[0.99] group"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-200/60 group-hover:scale-105 transition-transform">
+            <Fuel className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="font-display font-bold text-slate-800 text-xs group-hover:text-amber-900 transition-colors">
+              Pengisian BBM Duren Sawit
+            </h3>
+            <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+              Akun ini memiliki hak akses resmi pengisian BBM operasional di pos Duren Sawit.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   // Compute stats based on roles
@@ -239,6 +267,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
           );
         })()}
+        {renderBbmCard()}
       </div>
     );
   }
@@ -346,6 +375,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
           </div>
         </div>
+        {renderBbmCard()}
       </div>
     );
   }
@@ -529,6 +559,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
           )}
         </div>
+        {renderBbmCard()}
       </div>
     );
   }

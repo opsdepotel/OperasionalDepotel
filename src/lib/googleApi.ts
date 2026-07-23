@@ -43,7 +43,7 @@ const LAPORAN_HEADERS = [
 ];
 
 const USERS_HEADERS = [
-  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi'
+  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'AksesBBM'
 ];
 
 const ACTIVITY_HEADERS = [
@@ -106,6 +106,7 @@ function mapToUsageItem(row: Record<string, any>): UsageReportItem {
 
 // Map row map to UserProfile
 function mapToUserProfile(row: Record<string, any>): UserProfile {
+  const bbmVal = row.AksesBBM !== undefined ? String(row.AksesBBM).trim().toUpperCase() : '';
   return {
     userId: String(row.UserID),
     password: String(row.Password),
@@ -113,7 +114,8 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
     email: String(row.Email),
     role: (row.Role as Role) || Role.USER,
     managerEmail: String(row.ManagerEmail),
-    divisi: String(row.Divisi)
+    divisi: String(row.Divisi),
+    aksesBBM: bbmVal === 'TRUE' || bbmVal === 'YA' || bbmVal === '1' || row.AksesBBM === true
   };
 }
 
@@ -194,7 +196,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
       data: [
         { range: 'Pengajuan!A1:N1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:L1', values: [LAPORAN_HEADERS] },
-        { range: 'Users!A1:G1', values: [USERS_HEADERS] },
+        { range: 'Users!A1:H1', values: [USERS_HEADERS] },
         { range: 'Activity!A1:K1', values: [ACTIVITY_HEADERS] }
       ]
     })
@@ -204,7 +206,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
   }
 
   // Check if Users sheet has any data (besides headers). If not, seed default users
-  const usersRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Users!A1:G10`, {
+  const usersRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Users!A1:H10`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (usersRes.ok) {
@@ -212,11 +214,11 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
     if (!usersData.values || usersData.values.length <= 1) {
       // Seed default users
       const defaultUsers = [
-        ['admin', 'admin123', 'Administrator Depotel', 'ops.depotel@gmail.com', 'ADMIN', '', 'HQ-CENTRAL'],
-        ['manager', 'manager123', 'Manager Keuangan', 'manager@company.com', 'MANAGER', '', 'JKT-SOUTH-02'],
-        ['staff', 'staff123', 'Staff Lapangan', 'staff@company.com', 'USER', 'manager@company.com', 'JKT-SOUTH-02']
+        ['admin', 'admin123', 'Administrator Depotel', 'ops.depotel@gmail.com', 'ADMIN', '', 'HQ-CENTRAL', 'TRUE'],
+        ['manager', 'manager123', 'Manager Keuangan', 'manager@company.com', 'MANAGER', '', 'JKT-SOUTH-02', 'FALSE'],
+        ['staff', 'staff123', 'Staff Lapangan', 'staff@company.com', 'USER', 'manager@company.com', 'JKT-SOUTH-02', 'TRUE']
       ];
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Users!A2:G4?valueInputOption=USER_ENTERED`, {
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Users!A2:H4?valueInputOption=USER_ENTERED`, {
         method: 'PUT',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -247,9 +249,9 @@ const setMockData = <T>(key: string, data: T): void => {
 };
 
 const defaultUsers: UserProfile[] = [
-  { userId: 'admin', password: 'admin123', nama: 'Administrator Depotel', email: 'ops.depotel@gmail.com', role: Role.ADMIN, managerEmail: '', divisi: 'HQ-CENTRAL' },
-  { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: '', divisi: 'JKT-SOUTH-02' },
-  { userId: 'staff', password: 'staff123', nama: 'Staff Lapangan', email: 'staff@company.com', role: Role.USER, managerEmail: 'manager@company.com', divisi: 'JKT-SOUTH-02' }
+  { userId: 'admin', password: 'admin123', nama: 'Administrator Depotel', email: 'ops.depotel@gmail.com', role: Role.ADMIN, managerEmail: '', divisi: 'HQ-CENTRAL', aksesBBM: true },
+  { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: '', divisi: 'JKT-SOUTH-02', aksesBBM: false },
+  { userId: 'staff', password: 'staff123', nama: 'Staff Lapangan', email: 'staff@company.com', role: Role.USER, managerEmail: 'manager@company.com', divisi: 'JKT-SOUTH-02', aksesBBM: true }
 ];
 
 const defaultRequests: BudgetRequest[] = [
@@ -422,7 +424,7 @@ export async function fetchProfiles(token: string, spreadsheetId: string): Promi
   if (token === 'mock_demo_token') {
     return getMockData<UserProfile[]>('mock_db_users', defaultUsers);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:G1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:H1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) return [];
@@ -543,7 +545,7 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     const list = getMockData<BudgetRequest[]>('mock_db_pengajuan', []);
     const todayStr = req.tanggalPemakaian.replace(/-/g, '');
     let finalUid = req.id;
-    const prefix = req.id.startsWith('OPT') ? 'OPT' : 'OP';
+    const prefix = req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : 'OP';
     let isUnique = !list.some(r => r.id.toUpperCase() === finalUid.toUpperCase());
     while (!isUnique) {
       const randomDigits = Math.floor(1000 + Math.random() * 9000);
@@ -578,7 +580,7 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     const todayStr = req.tanggalPemakaian.replace(/-/g, '');
     let finalUid = req.id;
     let isUnique = !existingUIDs.includes(finalUid.toUpperCase());
-    const prefix = req.id.startsWith('OPT') ? 'OPT' : req.id.startsWith('ADJ') ? 'ADJ' : 'OP';
+    const prefix = req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : req.id.startsWith('ADJ') ? 'ADJ' : 'OP';
     
     // Regenerate until we find a completely unused ID
     while (!isUnique) {
@@ -910,6 +912,7 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
       ...profile,
       userId: profile.userId || (profile.email ? profile.email.split('@')[0] : `user_${Date.now()}`),
       password: profile.password || '123456',
+      aksesBBM: !!profile.aksesBBM
     };
     if (idx !== -1) {
       list[idx] = updatedProfile;
@@ -930,13 +933,14 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
     Email: profile.email,
     Role: profile.role,
     ManagerEmail: profile.managerEmail,
-    Divisi: profile.divisi
+    Divisi: profile.divisi,
+    AksesBBM: profile.aksesBBM ? 'TRUE' : 'FALSE'
   });
 
   if (existingIdx !== -1) {
     // Row is at existingIdx + 2 (since header is row 1, and index is 0-based index of slice(1))
     const sheetRowIdx = existingIdx + 2;
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:G${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:H${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,

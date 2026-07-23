@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { UserProfile, Role } from '../types';
 import {
-  User, Mail, Shield, Tag, Lock, ArrowLeft, Key, Eye, EyeOff, AlertCircle, CheckCircle2
+  User, Mail, Shield, Tag, Lock, ArrowLeft, Key, Eye, EyeOff, AlertCircle, CheckCircle2, Fuel
 } from 'lucide-react';
 
 interface ProfileSettingsProps {
@@ -143,6 +143,16 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                 </span>
               </div>
             </div>
+
+            {userProfile.aksesBBM && (
+              <div className="bg-amber-50/70 p-2.5 rounded-2xl border border-amber-200/60 flex items-center gap-2">
+                <Fuel className="w-4 h-4 text-amber-600 shrink-0" />
+                <div>
+                  <span className="text-xs font-bold text-amber-800 block">Pengisian BBM Duren Sawit</span>
+                  <span className="text-[10px] text-amber-700 font-medium">Akses pengisian BBM aktif untuk akun ini.</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Pilihan Tema */}

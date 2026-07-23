@@ -68,6 +68,7 @@ export interface UserProfile {
   role: Role;
   managerEmail: string;
   divisi: string;
+  aksesBBM?: boolean;
 }
 
 export interface SiteInfo {

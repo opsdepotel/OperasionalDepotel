@@ -39,13 +39,14 @@ import { ReviewReportModal } from './components/ReviewReportModal';
 import { AppLoginForm } from './components/AppLoginForm';
 import { AdjustmentPanel } from './components/AdjustmentPanel';
 import { ActivityLogView } from './components/ActivityLogView';
+import { BbmRefillModal } from './components/BbmRefillModal';
 
 // Icons
 import {
   Coins, ClipboardList, CheckCircle2, AlertCircle, Clock, Plus, LogIn,
   RefreshCw, FileSpreadsheet, Eye, Search, AlertTriangle, Check, CreditCard,
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight,
-  Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter
+  Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel
 } from 'lucide-react';
 
 export default function App() {
@@ -115,6 +116,7 @@ export default function App() {
   const [reviewReportReq, setReviewReportReq] = useState<BudgetRequest | null>(null);
   const [transferReq, setTransferReq] = useState<BudgetRequest | null>(null);
   const [closingConfirmReq, setClosingConfirmReq] = useState<BudgetRequest | null>(null);
+  const [isBbmModalOpen, setIsBbmModalOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<{ url: string; fileId?: string; title: string } | null>(null);
 
   // Search/Filter state
@@ -583,6 +585,26 @@ export default function App() {
     if (success !== null) {
       setActiveView('dashboard');
       await handleManualRefresh();
+    }
+  };
+
+  // Workflow Action 1.5: Submit BBM Refill (BBM Duren Sawit)
+  const handleBbmRefillSubmit = async (req: BudgetRequest, reportItem: UsageReportItem) => {
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+
+    const success = await runGoogleAction(
+      async () => {
+        await createBudgetRequest(currentToken, currentSheetId, req);
+        await createUsageItem(currentToken, currentSheetId, reportItem);
+      },
+      'Gagal menyimpan transaksi BBM Duren Sawit.'
+    );
+
+    if (success !== null) {
+      setRequests(prev => [req, ...prev]);
+      setUsageItems(prev => [...prev, reportItem]);
+      setIsBbmModalOpen(false);
     }
   };
 
@@ -1312,9 +1334,9 @@ export default function App() {
             {statusFilter === 'ALL' ? (
               <>
                 {/* Quick Profile/Role indicator banner */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold font-display text-sm border border-slate-200 overflow-hidden">
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold font-display text-sm border border-slate-200 overflow-hidden shrink-0">
                       {userProfile?.nama ? (
                         <span className="text-indigo-600">{userProfile.nama.charAt(0).toUpperCase()}</span>
                       ) : userProfile?.userId ? (
@@ -1325,11 +1347,11 @@ export default function App() {
                         userProfile?.email?.charAt(0).toUpperCase() || 'U'
                       )}
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <h2 className="font-display font-bold text-slate-800 text-xs truncate max-w-[180px]">
                         {userProfile?.nama || userProfile?.userId || userProfile?.email}
                       </h2>
-                      <p className="text-[10px] text-slate-400 font-semibold flex items-center gap-1 mt-0.5">
+                      <p className="text-[10px] text-slate-400 font-semibold flex items-center gap-1 mt-0.5 truncate">
                         Role Aktif: <span className="text-indigo-600 font-bold">{activeRole}</span>
                         {userProfile && userProfile.divisi && (
                           <span>| Divisi: {userProfile.divisi}</span>
@@ -1337,6 +1359,8 @@ export default function App() {
                       </p>
                     </div>
                   </div>
+
+
                 </div>
 
                 {/* Core Stats Section */}
@@ -1352,6 +1376,8 @@ export default function App() {
                   profiles={profiles}
                   activities={activities}
                   onOpenActivities={() => setActiveView('activities')}
+                  userProfile={userProfile}
+                  onOpenBbmModal={() => setIsBbmModalOpen(true)}
                 />
               </>
             ) : (
@@ -2027,6 +2053,17 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {/* Modal BbmRefillModal */}
+      {isBbmModalOpen && userProfile && (
+        <BbmRefillModal
+          userEmail={userProfile.email}
+          managerEmail={userProfile.managerEmail}
+          defaultSiteId={userProfile.divisi || 'DUREN-SAWIT'}
+          sites={sites}
+          onSubmit={handleBbmRefillSubmit}
+          onClose={() => setIsBbmModalOpen(false)}
+        />
       )}
     </div>
   );
