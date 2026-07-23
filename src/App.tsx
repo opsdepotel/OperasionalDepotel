@@ -2099,6 +2099,7 @@ export default function App() {
         requests={requests}
         usageItems={usageItems}
         profiles={profiles}
+        activities={activities}
         onOpenBbmRefillModal={userProfile?.aksesBBM ? () => setIsBbmModalOpen(true) : undefined}
         onPreviewDocument={(rawUrl) => {
           const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);

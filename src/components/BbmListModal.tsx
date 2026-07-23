@@ -4,8 +4,8 @@
  */
 
 import React, { useState } from 'react';
-import { BudgetRequest, UsageReportItem, UserProfile } from '../types';
-import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, ExternalLink, RefreshCw } from 'lucide-react';
+import { BudgetRequest, UsageReportItem, UserProfile, UserActivity } from '../types';
+import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User } from 'lucide-react';
 
 interface BbmListModalProps {
   isOpen: boolean;
@@ -13,6 +13,7 @@ interface BbmListModalProps {
   requests: BudgetRequest[];
   usageItems: UsageReportItem[];
   profiles?: UserProfile[];
+  activities?: UserActivity[];
   onOpenBbmRefillModal?: () => void;
   onPreviewDocument?: (url: string) => void;
 }
@@ -51,6 +52,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   requests,
   usageItems,
   profiles = [],
+  activities = [],
   onOpenBbmRefillModal,
   onPreviewDocument
 }) => {
@@ -82,6 +84,30 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
   const [imageErrorMap, setImageErrorMap] = useState<Record<string, boolean>>({});
 
+  // Selected User Activity popup modal
+  const [selectedUserActivityModal, setSelectedUserActivityModal] = useState<{
+    userEmail: string;
+    userName: string;
+    tanggal: string;
+  } | null>(null);
+
+  // Helper date normalizer
+  const getNormalizedYmd = (dateStr?: string): string => {
+    if (!dateStr) return '';
+    if (dateStr.includes('T')) return dateStr.split('T')[0];
+    if (dateStr.length >= 10) return dateStr.substring(0, 10);
+    return dateStr;
+  };
+
+  // User activities matching target user and date
+  const userActivitiesForDate = (activities || []).filter(act => {
+    if (!selectedUserActivityModal) return false;
+    const matchesUser = act.userEmail.toLowerCase() === selectedUserActivityModal.userEmail.toLowerCase();
+    const actDate = getNormalizedYmd(act.tanggal);
+    const targetDate = getNormalizedYmd(selectedUserActivityModal.tanggal);
+    return matchesUser && actDate === targetDate;
+  });
+
   // Format Currency
   const formatIDR = (num: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -101,6 +127,22 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
         weekday: 'long',
         day: 'numeric',
         month: 'long',
+        year: 'numeric'
+      }).format(d);
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Helper short date display e.g. "23 Jul 2026"
+  const formatShortDateDisplay = (dateStr: string) => {
+    if (!dateStr) return '';
+    try {
+      const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr.substring(0, 10);
+      const d = new Date(cleanDate + 'T00:00:00');
+      return new Intl.DateTimeFormat('id-ID', {
+        day: 'numeric',
+        month: 'short',
         year: 'numeric'
       }).format(d);
     } catch {
@@ -340,12 +382,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                       </div>
                       <p className="text-[11px] text-slate-500 font-medium flex items-center gap-1 pt-0.5">
                         <Calendar className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span>Tanggal Pengisian: {formatDateDisplay(req.tanggalPemakaian)}</span>
-                        {req.createdAt && (
-                          <span className="text-slate-400 font-normal">
-                            • {req.createdAt}
-                          </span>
-                        )}
+                        <span>Tanggal Pengisian : {formatShortDateDisplay(req.tanggalPemakaian)}</span>
                       </p>
                     </div>
 
@@ -388,40 +425,35 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                     </div>
                   </div>
 
-                  {/* Nota Photo Preview Section */}
-                  {rawBuktiPhoto && (
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-bold text-slate-800 flex items-center gap-1">
-                          <FileText className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Foto Nota BBM</span>
-                        </p>
-                        <p className="text-[10px] text-slate-400">
-                          Tersimpan di Google Drive / Cloud
-                        </p>
-                      </div>
+                  {/* Action Buttons Row */}
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2 flex-wrap">
+                    {rawBuktiPhoto && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPhotoUrl(displayImgUrl || rawBuktiPhoto)}
+                        className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Lihat Nota</span>
+                      </button>
+                    )}
 
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => setSelectedPhotoUrl(displayImgUrl || rawBuktiPhoto)}
-                          className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
-                        >
-                          <ImageIcon className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Lihat Nota</span>
-                        </button>
-
-                        {onPreviewDocument && (
-                          <button
-                            onClick={() => onPreviewDocument(displayImgUrl || rawBuktiPhoto)}
-                            className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
-                            title="Buka Dokumen"
-                          >
-                            <ExternalLink className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetDate = req.tanggalPemakaian ? req.tanggalPemakaian.substring(0, 10) : '';
+                        setSelectedUserActivityModal({
+                          userEmail: req.userEmail,
+                          userName,
+                          tanggal: targetDate
+                        });
+                      }}
+                      className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/80 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                    >
+                      <Activity className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Aktivitas</span>
+                    </button>
+                  </div>
                 </div>
               );
             })
@@ -465,6 +497,130 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
               className="max-h-[80vh] w-auto object-contain rounded-xl mx-auto"
               referrerPolicy="no-referrer"
             />
+          </div>
+        </div>
+      )}
+
+      {/* User Activity List Popup Modal */}
+      {selectedUserActivityModal && (
+        <div 
+          className="fixed inset-0 z-70 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+          onClick={() => setSelectedUserActivityModal(null)}
+        >
+          <div 
+            className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[85vh] animate-scale-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-indigo-900 via-slate-900 to-indigo-950 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300 shrink-0 font-bold">
+                  <Activity className="w-5 h-5 text-indigo-300" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-sm text-white">
+                    Daftar Aktivitas User
+                  </h3>
+                  <p className="text-xs text-indigo-200/90 mt-0.5">
+                    {selectedUserActivityModal.userName} • <span className="font-mono text-[11px] opacity-80">{selectedUserActivityModal.userEmail}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedUserActivityModal(null)}
+                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Date Info Bar */}
+            <div className="bg-indigo-50/80 border-b border-indigo-100/60 px-5 py-3 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-indigo-950">
+                <Calendar className="w-4 h-4 text-indigo-600 shrink-0" />
+                <span>Tanggal Transaksi: {formatDateDisplay(selectedUserActivityModal.tanggal)}</span>
+              </div>
+              <span className="text-[10px] font-bold px-2.5 py-0.5 bg-indigo-200/60 text-indigo-800 rounded-full font-mono">
+                {userActivitiesForDate.length} Kegiatan
+              </span>
+            </div>
+
+            {/* Activity List */}
+            <div className="p-4 sm:p-5 overflow-y-auto space-y-3.5 flex-1 bg-slate-50/50">
+              {userActivitiesForDate.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center space-y-2 my-2">
+                  <Activity className="w-8 h-8 text-slate-300 mx-auto" />
+                  <p className="text-xs font-bold text-slate-700">Tidak Ada Data Aktivitas</p>
+                  <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                    Belum ada pencatatan aktivitas/kegiatan untuk <strong>{selectedUserActivityModal.userName}</strong> pada tanggal {formatDateDisplay(selectedUserActivityModal.tanggal)}.
+                  </p>
+                </div>
+              ) : (
+                userActivitiesForDate.map((act) => {
+                  const displayPhoto = act.buktiFileId?.trim()
+                    ? `https://drive.google.com/thumbnail?sz=w1000&id=${act.buktiFileId.trim()}`
+                    : act.buktiUrl;
+
+                  return (
+                    <div key={act.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-indigo-100">
+                          SITE: {act.siteId}
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400 font-semibold">
+                          {act.createdAt || ''}
+                        </span>
+                      </div>
+
+                      <h4 className="text-xs font-bold text-slate-900">{act.siteName}</h4>
+                      <p className="text-xs text-slate-600 font-normal leading-relaxed whitespace-pre-wrap">
+                        {act.keterangan}
+                      </p>
+
+                      {/* Photo & GPS */}
+                      {(act.buktiUrl || act.coordinatesActual) && (
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+                          {act.buktiUrl ? (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedPhotoUrl(displayPhoto)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold transition-all cursor-pointer"
+                            >
+                              <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Foto Bukti Kegiatan</span>
+                            </button>
+                          ) : <div />}
+
+                          {act.coordinatesActual && (
+                            <a
+                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:underline"
+                            >
+                              <MapPin className="w-3 h-3" />
+                              <span>GPS Terdeteksi</span>
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-3 bg-white border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedUserActivityModal(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
           </div>
         </div>
       )}
