@@ -642,70 +642,20 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                     </div>
 
                     {(act.coordinatesActual || act.coordinatesDb) && (
-                      <div className="flex flex-col gap-1.5 text-[10px] text-slate-500 font-mono pt-2 border-t border-slate-100 bg-slate-50/50 -mx-4 -mb-4 px-4 py-2">
-                        {(() => {
-                          const siteIdLabel = act.siteId || 'SiteID';
-                          const gmapsUrl = act.coordinatesDb && act.coordinatesActual
-                            ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(act.coordinatesDb.trim())}&destination=${encodeURIComponent(act.coordinatesActual.trim())}`
-                            : act.coordinatesActual
+                      <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono pt-2 border-t border-slate-100 bg-slate-50/50 -mx-4 -mb-4 px-4 py-2">
+                        <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        <a
+                          href={
+                            act.coordinatesActual
                               ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`
-                              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`;
-
-                          return (
-                            <>
-                              {act.coordinatesActual && (
-                                <div className="flex items-center gap-1.5">
-                                  <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                                  <span className="font-bold text-slate-700">Aktual:</span>
-                                  <a
-                                    href={gmapsUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-indigo-600 hover:underline font-bold"
-                                  >
-                                    {act.coordinatesActual}
-                                  </a>
-                                </div>
-                              )}
-                              {act.coordinatesDb && (
-                                <div className="flex items-center gap-1.5">
-                                  <MapPin className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                                  <span className="font-bold text-slate-700">{siteIdLabel}:</span>
-                                  <a
-                                    href={gmapsUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-indigo-600 hover:underline font-bold"
-                                  >
-                                    {act.coordinatesDb}
-                                  </a>
-                                </div>
-                              )}
-                            </>
-                          );
-                        })()}
-                        {(() => {
-                          const dist = getDistanceInMeters(act.coordinatesDb, act.coordinatesActual);
-                          if (dist === null) return null;
-                          const isWarning = dist > 500;
-                          return (
-                            <div className="space-y-1.5 pt-1.5 border-t border-slate-200/50">
-                              <div className="flex items-center gap-1.5">
-                                <span className={`inline-block w-2 h-2 rounded-full ${isWarning ? 'bg-rose-500' : 'bg-emerald-500'} animate-pulse`}></span>
-                                <span className="font-bold text-slate-700">Jarak ke DB:</span>
-                                <span className={`font-bold px-1.5 py-0.5 rounded-md ${isWarning ? 'text-rose-600 bg-rose-50' : 'text-indigo-600 bg-indigo-50/50'}`}>
-                                  {Math.round(dist).toLocaleString('id-ID')} meter
-                                </span>
-                              </div>
-                              {isWarning && (
-                                <div className="mt-1.5 p-2 bg-rose-50 border border-rose-100 rounded-xl text-[9px] font-bold text-rose-600 flex items-start gap-1 leading-relaxed">
-                                  <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
-                                  <span>Jarak aktual melebihi 500 meter dari data koordinat site. Ada indikasi aktivitas tidak dilakukan di tempat yang sesuai.</span>
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })()}
+                              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((act.coordinatesDb || '').trim())}`
+                          }
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-600 hover:underline font-bold"
+                        >
+                          {act.coordinatesActual || act.coordinatesDb}
+                        </a>
                       </div>
                     )}
                   </div>

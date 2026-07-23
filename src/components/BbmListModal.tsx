@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity } from '../types';
-import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User } from 'lucide-react';
+import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink } from 'lucide-react';
 
 interface BbmListModalProps {
   isOpen: boolean;
@@ -478,25 +478,31 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
       {/* Expanded Image Viewer Modal */}
       {selectedPhotoUrl && (
         <div 
-          className="fixed inset-0 z-60 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in"
           onClick={() => setSelectedPhotoUrl(null)}
         >
           <div 
             className="relative bg-slate-900 rounded-2xl max-w-2xl max-h-[85vh] overflow-hidden p-2 shadow-2xl border border-slate-800"
             onClick={(e) => e.stopPropagation()}
           >
-            <button
-              onClick={() => setSelectedPhotoUrl(null)}
-              className="absolute top-3 right-3 z-10 w-9 h-9 rounded-full bg-slate-800/80 text-white hover:bg-slate-700 flex items-center justify-center transition-all cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img
-              src={selectedPhotoUrl}
-              alt="Foto Nota BBM Terbesar"
-              className="max-h-[80vh] w-auto object-contain rounded-xl mx-auto"
-              referrerPolicy="no-referrer"
-            />
+            <div className="flex items-center justify-between p-2 pb-3 border-b border-slate-800">
+              <span className="text-xs font-bold text-slate-300 px-2">Pratinjau Foto Kegiatan</span>
+              <button
+                type="button"
+                onClick={() => setSelectedPhotoUrl(null)}
+                className="w-8 h-8 rounded-full bg-slate-800 text-white hover:bg-slate-700 flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-2 flex items-center justify-center">
+              <img
+                src={selectedPhotoUrl}
+                alt="Foto Bukti Kegiatan"
+                className="max-h-[75vh] w-auto object-contain rounded-xl mx-auto shadow-md"
+                referrerPolicy="no-referrer"
+              />
+            </div>
           </div>
         </div>
       )}
@@ -562,6 +568,14 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                     ? `https://drive.google.com/thumbnail?sz=w1000&id=${act.buktiFileId.trim()}`
                     : act.buktiUrl;
 
+                  const gmapsUrl = act.coordinatesDb && act.coordinatesActual
+                    ? `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(act.coordinatesDb.trim())}&destination=${encodeURIComponent(act.coordinatesActual.trim())}`
+                    : act.coordinatesActual
+                      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`
+                      : act.coordinatesDb
+                        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesDb.trim())}`
+                        : '';
+
                   return (
                     <div key={act.id} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-2.5">
                       <div className="flex items-center justify-between">
@@ -578,29 +592,63 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                         {act.keterangan}
                       </p>
 
-                      {/* Photo & GPS */}
-                      {(act.buktiUrl || act.coordinatesActual) && (
+                      {/* Coordinates Detail Block */}
+                      {(act.coordinatesActual || act.coordinatesDb) && (
+                        <div className="bg-slate-50 border border-slate-100 rounded-xl p-2.5 space-y-1 text-[11px] font-mono">
+                          {act.coordinatesActual && (
+                            <div className="flex items-center justify-between text-slate-700">
+                              <span className="font-sans font-semibold text-slate-500">Titik GPS Aktual:</span>
+                              <a
+                                href={gmapsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-bold text-indigo-600 hover:underline flex items-center gap-1"
+                              >
+                                <span>{act.coordinatesActual}</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
+                          )}
+                          {act.coordinatesDb && (
+                            <div className="flex items-center justify-between text-slate-700">
+                              <span className="font-sans font-semibold text-slate-500">Titik DB ({act.siteId}):</span>
+                              <a
+                                href={gmapsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-bold text-indigo-600 hover:underline flex items-center gap-1"
+                              >
+                                <span>{act.coordinatesDb}</span>
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Photo & GPS Action Buttons */}
+                      {(act.buktiUrl || gmapsUrl) && (
                         <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
                           {act.buktiUrl ? (
                             <button
                               type="button"
                               onClick={() => setSelectedPhotoUrl(displayPhoto)}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[11px] font-bold transition-all cursor-pointer"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-xl text-xs font-bold transition-all cursor-pointer border border-indigo-200/60 shadow-2xs"
                             >
                               <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
                               <span>Foto Bukti Kegiatan</span>
                             </button>
                           ) : <div />}
 
-                          {act.coordinatesActual && (
+                          {gmapsUrl && (
                             <a
-                              href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`}
+                              href={gmapsUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 hover:underline"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-xl text-xs font-bold transition-all cursor-pointer border border-emerald-200/60 shadow-2xs"
                             >
-                              <MapPin className="w-3 h-3" />
-                              <span>GPS Terdeteksi</span>
+                              <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                              <span>GPS Terdeteksi (Lihat Peta)</span>
                             </a>
                           )}
                         </div>
