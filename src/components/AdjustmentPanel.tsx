@@ -72,11 +72,14 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     }).format(num);
   };
 
+  const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+  const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+
   // Calculate user operational balance
   const getUserBalance = (userEmail: string) => {
-    const userReqs = requests.filter(r => r.userEmail.toLowerCase() === userEmail.toLowerCase());
+    const userReqs = requests.filter(r => r.userEmail.toLowerCase() === userEmail.toLowerCase() && !isBbmRequest(r));
     const userReqIds = userReqs.map(r => r.id);
-    const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId));
+    const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItem(item));
 
     const totalTransferred = userReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
     const totalAdjustments = userReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);

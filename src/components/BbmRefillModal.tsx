@@ -208,7 +208,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
         status: RequestStatus.CLOSED,
         managerActionAmount: amount,
         managerComment: 'Otomatis disetujui & closed oleh sistem BBM Duren Sawit.',
-        adminActionAmount: amount,
+        adminActionAmount: 0,
         createdAt: nowIso
       };
 

@@ -21,6 +21,7 @@ interface DashboardStatsProps {
   onOpenActivities?: () => void;
   userProfile?: UserProfile | null;
   onOpenBbmModal?: () => void;
+  onOpenBbmListModal?: () => void;
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -36,7 +37,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   activities = [],
   onOpenActivities,
   userProfile,
-  onOpenBbmModal
+  onOpenBbmModal,
+  onOpenBbmListModal
 }) => {
   // Format Currency
   const formatIDR = (num: number) => {
@@ -84,13 +86,16 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const myReqIds = myReqs.map(r => r.id);
     const myUsage = usageItems.filter(item => myReqIds.includes(item.requestId));
 
-    const totalRequested = myReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.jumlahPengajuan, 0);
-    const totalTransferred = myReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
-    const totalAdjustments = myReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+    const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
 
-    // Saldo Operasional: Jumlah seluruh transfer + total adjustment dikurangi jumlah item laporan yang telah mendapatkan persetujuan Manager dan Admin (termasuk item dana talangan)
+    const totalRequested = myReqs.filter(r => r.siteId !== 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.jumlahPengajuan, 0);
+    const totalTransferred = myReqs.filter(r => r.siteId !== 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalAdjustments = myReqs.filter(r => r.siteId === 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.adminActionAmount, 0);
+
+    // Saldo Operasional: Jumlah seluruh transfer + total adjustment dikurangi jumlah item laporan yang telah mendapatkan persetujuan Manager dan Admin (termasuk item dana talangan), tidak termasuk transaksi BBM Duren Sawit
     const totalReportedApproved = myUsage
-      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItem(item))
       .reduce((sum, item) => sum + item.nominal, 0);
     const saldoOperasional = totalTransferred + totalAdjustments - totalReportedApproved;
 
@@ -116,7 +121,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       r.status === RequestStatus.REVIEW_MANAGER ||
       r.status === RequestStatus.REVIEW_ADMIN
     ).length;
-    const closedCount = myReqs.filter(r => r.status === RequestStatus.CLOSED).length;
+    const closedCount = myReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
 
     return (
       <div className="space-y-4">
@@ -304,7 +309,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       }
       return true;
     }).length;
-    const teamClosed = managerReqs.filter(r => r.status === RequestStatus.CLOSED).length;
+    const isBbmRequestManager = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+    const teamClosed = managerReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequestManager(r)).length;
 
     return (
       <div className="space-y-4">
@@ -399,17 +405,20 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     // 1. Pending cash transfers
     // 2. Pending admin report reviews
     const totalTasks = pendingTransfer + pendingAdminReportReview;
-    const closedCount = requests.filter(r => r.status === RequestStatus.CLOSED).length;
+    const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+    const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
 
-    const totalTransferred = requests.reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const closedCount = requests.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequestAdmin(r)).length;
+
+    const totalTransferred = requests.filter(r => !isBbmRequestAdmin(r)).reduce((sum, r) => sum + r.adminActionAmount, 0);
     const totalClosed = usageItems
-      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItemAdmin(item))
       .reduce((sum, item) => sum + item.nominal, 0);
 
     const unbalancedUsersCount = profiles.filter(user => {
-      const userReqs = requests.filter(r => r.userEmail.toLowerCase() === user.email.toLowerCase());
+      const userReqs = requests.filter(r => r.userEmail.toLowerCase() === user.email.toLowerCase() && !isBbmRequestAdmin(r));
       const userReqIds = userReqs.map(r => r.id);
-      const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId));
+      const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItemAdmin(item));
 
       const totalTransferredVal = userReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
       const totalAdjustmentsVal = userReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
@@ -420,6 +429,52 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       const balance = totalTransferredVal + totalAdjustmentsVal - totalReportedApproved;
       return Math.abs(balance) > 0.01;
     }).length;
+
+    const getTodayStr = () => {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const todayStr = getTodayStr();
+
+    const todayBbmReqs = requests.filter(r => 
+      (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) &&
+      r.tanggalPemakaian === todayStr
+    );
+    const todayBbmCount = todayBbmReqs.length;
+    const todayBbmTotal = todayBbmReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
+
+    const renderAdminBbmCard = () => {
+      return (
+        <div
+          onClick={onOpenBbmListModal || onOpenBbmModal}
+          className="p-5 rounded-2xl border border-amber-200/90 bg-gradient-to-br from-amber-50/80 via-white to-orange-50/40 shadow-sm transition-all cursor-pointer hover:border-amber-400 hover:shadow-md active:scale-[0.99] group flex flex-col justify-between"
+          id="admin-bbm-card"
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold text-amber-800 uppercase tracking-widest flex items-center gap-1">
+              <Fuel className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span>BBM DUREN SAWIT</span>
+            </p>
+            <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+              Hari Ini
+            </span>
+          </div>
+
+          <div className="flex items-end justify-between mt-2">
+            <div>
+              <span className="text-3xl font-display font-bold text-slate-900">{todayBbmCount} <span className="text-xs text-slate-400 font-normal">Isi</span></span>
+              <p className="text-[10px] font-bold text-amber-700 mt-0.5">{formatIDR(todayBbmTotal)}</p>
+            </div>
+            <span className="text-[9px] font-bold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md uppercase tracking-wider group-hover:bg-amber-200 transition-colors">
+              Log Refill
+            </span>
+          </div>
+        </div>
+      );
+    };
 
     return (
       <div className="space-y-4">
@@ -480,7 +535,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
           <div 
             onClick={() => handleCardClick('CLOSED')}
-            className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md col-span-2 ${
+            className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'CLOSED' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
             }`}
           >
@@ -490,6 +545,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Arsip / Selesai</span>
             </div>
           </div>
+
+          {renderAdminBbmCard()}
 
           {onOpenAdjustment && (
             <div 
@@ -559,7 +616,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
           )}
         </div>
-        {renderBbmCard()}
       </div>
     );
   }

@@ -41,6 +41,7 @@ import { AppLoginForm } from './components/AppLoginForm';
 import { AdjustmentPanel } from './components/AdjustmentPanel';
 import { ActivityLogView } from './components/ActivityLogView';
 import { BbmRefillModal } from './components/BbmRefillModal';
+import { BbmListModal } from './components/BbmListModal';
 
 // Icons
 import {
@@ -118,6 +119,7 @@ export default function App() {
   const [transferReq, setTransferReq] = useState<BudgetRequest | null>(null);
   const [closingConfirmReq, setClosingConfirmReq] = useState<BudgetRequest | null>(null);
   const [isBbmModalOpen, setIsBbmModalOpen] = useState(false);
+  const [isBbmListModalOpen, setIsBbmListModalOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<{ url: string; fileId?: string; title: string } | null>(null);
 
   // Search/Filter state
@@ -997,6 +999,7 @@ export default function App() {
         }
       } else if (statusFilter === 'CLOSED') {
         if (r.status !== RequestStatus.CLOSED) return false;
+        if (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) return false;
 
         // User filter
         if (closedUserFilter !== 'ALL') {
@@ -1400,6 +1403,7 @@ export default function App() {
                   onOpenActivities={() => setActiveView('activities')}
                   userProfile={userProfile}
                   onOpenBbmModal={() => setIsBbmModalOpen(true)}
+                  onOpenBbmListModal={() => setIsBbmListModalOpen(true)}
                 />
               </>
             ) : (
@@ -1553,7 +1557,7 @@ export default function App() {
                                 {Array.from(
                                   new Set<string>(
                                     requests
-                                      .filter(r => r.status === RequestStatus.CLOSED)
+                                      .filter(r => r.status === RequestStatus.CLOSED && !r.id.startsWith('BBMDS') && !r.id.startsWith('BBM_DurenSawit'))
                                       .map(r => r.userEmail)
                                   )
                                 ).map(email => {
@@ -1581,7 +1585,7 @@ export default function App() {
                                 {Array.from(
                                   new Set<string>(
                                     requests
-                                      .filter(r => r.status === RequestStatus.CLOSED)
+                                      .filter(r => r.status === RequestStatus.CLOSED && !r.id.startsWith('BBMDS') && !r.id.startsWith('BBM_DurenSawit'))
                                       .map(r => {
                                         const p = profiles.find(prof => prof.email.toLowerCase() === r.userEmail.toLowerCase());
                                         return p?.divisi || '';
@@ -2087,6 +2091,24 @@ export default function App() {
           onClose={() => setIsBbmModalOpen(false)}
         />
       )}
+
+      {/* Modal BbmListModal */}
+      <BbmListModal
+        isOpen={isBbmListModalOpen}
+        onClose={() => setIsBbmListModalOpen(false)}
+        requests={requests}
+        usageItems={usageItems}
+        profiles={profiles}
+        onOpenBbmRefillModal={userProfile?.aksesBBM ? () => setIsBbmModalOpen(true) : undefined}
+        onPreviewDocument={(rawUrl) => {
+          const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+          if (match && match[1]) {
+            setPreviewDocument({ url: rawUrl, fileId: match[1], title: 'Nota Pengisian BBM Duren Sawit' });
+          } else {
+            setPreviewDocument({ url: rawUrl, title: 'Nota Pengisian BBM Duren Sawit' });
+          }
+        }}
+      />
     </div>
   );
 }
