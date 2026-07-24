@@ -183,7 +183,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Pencairan</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Disetujui Manager & Menunggu Transfer Dana Talangan</p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Pengajuan disetujui, menunggu proses transfer</p>
           </div>
 
           <div 
@@ -199,7 +199,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Review</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Dalam pengisian oleh Anda atau sedang direview Manager/Admin</p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Sedang direview</p>
           </div>
 
           <div 
@@ -215,7 +215,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Arsip</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Dinyatakan Closed oleh Admin</p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Dinyatakan Closed oleh Finance</p>
           </div>
         </div>
 
@@ -386,8 +386,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     );
   }
 
-  // Admin stats
-  if (role === Role.ADMIN) {
+  // Finance stats
+  if (role === Role.FINANCE) {
     // Admin reviews ALL requests and manages ALL transfers
     const pendingTransfer = requests.filter(r => 
       r.status === RequestStatus.APPROVED || 
@@ -468,9 +468,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <span className="text-3xl font-display font-bold text-slate-900">{todayBbmCount} <span className="text-xs text-slate-400 font-normal">Isi</span></span>
               <p className="text-[10px] font-bold text-amber-700 mt-0.5">{formatIDR(todayBbmTotal)}</p>
             </div>
-            <span className="text-[9px] font-bold text-amber-800 bg-amber-100/90 px-2 py-0.5 rounded-md uppercase tracking-wider group-hover:bg-amber-200 transition-colors">
-              Log Refill
-            </span>
           </div>
         </div>
       );
@@ -485,7 +482,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <ArrowRightLeft className="w-5.5 h-5.5" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-red-900 text-xs tracking-wide uppercase">TUGAS ADMINISTRATOR ({totalTasks})</h3>
+              <h3 className="font-display font-bold text-red-900 text-xs tracking-wide uppercase">TUGAS FINANCE ({totalTasks})</h3>
               <p className="text-xs text-red-700 font-medium mt-0.5">
                 Ada {pendingTransfer} pengajuan menunggu Transfer Dana, dan {pendingAdminReportReview} laporan operasional menunggu Tinjauan Finansial Anda.
               </p>
@@ -561,7 +558,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   <h4 className="font-display font-black text-slate-800 text-xs mt-1 group-hover:text-indigo-600 transition-colors">Adjustment Saldo User</h4>
                 </div>
                 <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
-                  Admin Direct
+                  Finance Direct
                 </span>
               </div>
               <div className="flex items-end justify-between mt-3">

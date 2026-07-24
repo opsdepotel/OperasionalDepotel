@@ -190,7 +190,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           <h2 className="font-display font-bold text-slate-800 text-sm">
             {isFinalTalanganTransfer ? 'Proses Transfer Dana Talangan (Reimbursement)' : 'Proses Transfer Anggaran'}
           </h2>
-          <p className="text-[10px] text-slate-400">Role: Admin / Finansial</p>
+          <p className="text-[10px] text-slate-400">Role: Finance</p>
         </div>
         <button
           onClick={onClose}

@@ -33,17 +33,14 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-100 shadow-sm px-4 py-3">
       <div className="max-w-md mx-auto flex items-center justify-between">
-        {/* Brand & App Name */}
+        {/* Left Side / Brand */}
         <div className="flex items-center gap-2">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center shadow-md shadow-indigo-100">
-            <span className="font-display font-bold text-white text-base tracking-wider">OP</span>
-          </div>
-          <div>
-            <h1 className="font-display font-bold text-slate-800 text-sm leading-tight">Operasional</h1>
-            <p className="text-xs text-slate-400 font-medium font-display leading-none mt-0.5">
-              {userProfile?.nama ? `User: ${userProfile.nama}` : userProfile?.userId ? `User: ${userProfile.userId}` : 'Perusahaan'}
-            </p>
-          </div>
+          <img 
+            src="/DEPOTEL_rounded22.jpg" 
+            alt="DEPOTEL Logo" 
+            className="h-8 w-auto object-contain"
+            referrerPolicy="no-referrer"
+          />
         </div>
 
         {/* Action Controls */}

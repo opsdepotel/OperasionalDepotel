@@ -49,7 +49,7 @@ interface ReviewReportModalProps {
   request: BudgetRequest;
   requesterName?: string;
   items: UsageReportItem[];
-  role: Role; // MANAGER or ADMIN
+  role: Role; // MANAGER or FINANCE
   onSubmitReview: (
     updatedItems: { itemId: string; status: ItemStatus; comment: string }[],
     nextRequestStatus: RequestStatus
@@ -88,7 +88,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
           status: item.statusManager,
           comment: item.managerComment
         };
-      } else if (role === Role.ADMIN) {
+      } else if (role === Role.FINANCE) {
         initialDecisions[item.id] = {
           status: item.statusAdmin,
           comment: item.adminComment
@@ -205,7 +205,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-slate-100">
         <div>
           <h2 className="font-display font-bold text-slate-800 text-sm">Review Laporan Penggunaan</h2>
-          <p className="text-[10px] text-indigo-600 font-semibold">Tingkat Review: {role === Role.MANAGER ? 'Manager' : 'Admin / Finansial'}</p>
+          <p className="text-[10px] text-indigo-600 font-semibold">Tingkat Review: {role === Role.MANAGER ? 'Manager' : 'Finance'}</p>
         </div>
         <button
           onClick={onClose}
@@ -244,7 +244,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
               </div>
 
               {/* Display partner's status for context */}
-              {role === Role.ADMIN && (
+              {role === Role.FINANCE && (
                 <div className="text-[10px] bg-slate-50 p-2 rounded-lg text-slate-600">
                   <span>Status Persetujuan Manager: </span>
                   <span className={`font-bold ${item.statusManager === ItemStatus.APPROVED ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -291,7 +291,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
               <div className="space-y-2 pt-2 border-t border-slate-50">
                 {request.status === RequestStatus.CLOSED ? (
                   <div>
-                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Keputusan Admin (Selesai/Closed)</span>
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Keputusan Finance (Selesai/Closed)</span>
                     <div className="mt-1 flex flex-col gap-1">
                       <div className={`text-xs font-bold px-3 py-1.5 rounded-lg border w-fit flex items-center gap-1.5 ${
                         item.statusAdmin === ItemStatus.APPROVED 
@@ -322,7 +322,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                 ) : (
                   <>
                     <span className="block text-[10px] font-bold text-slate-400 uppercase">Keputusan Anda</span>
-                    {role === Role.ADMIN && item.statusAdmin === ItemStatus.APPROVED ? (
+                    {role === Role.FINANCE && item.statusAdmin === ItemStatus.APPROVED ? (
                       <div className="text-xs font-bold text-emerald-600 bg-emerald-50/50 border border-emerald-100 rounded-lg py-1.5 px-3 flex items-center gap-1.5 w-fit">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                         <span>Disetujui</span>

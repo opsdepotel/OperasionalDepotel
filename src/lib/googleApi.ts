@@ -107,12 +107,19 @@ function mapToUsageItem(row: Record<string, any>): UsageReportItem {
 // Map row map to UserProfile
 function mapToUserProfile(row: Record<string, any>): UserProfile {
   const bbmVal = row.AksesBBM !== undefined ? String(row.AksesBBM).trim().toUpperCase() : '';
+  const rawRole = String(row.Role || '').trim().toUpperCase();
+  let roleVal = Role.USER;
+  if (rawRole === 'FINANCE' || rawRole === 'ADMIN') {
+    roleVal = Role.FINANCE;
+  } else if (rawRole === 'MANAGER') {
+    roleVal = Role.MANAGER;
+  }
   return {
     userId: String(row.UserID),
     password: String(row.Password),
     nama: String(row.Nama || ''),
     email: String(row.Email),
-    role: (row.Role as Role) || Role.USER,
+    role: roleVal,
     managerEmail: String(row.ManagerEmail),
     divisi: String(row.Divisi),
     aksesBBM: bbmVal === 'TRUE' || bbmVal === 'YA' || bbmVal === '1' || row.AksesBBM === true
@@ -214,7 +221,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
     if (!usersData.values || usersData.values.length <= 1) {
       // Seed default users
       const defaultUsers = [
-        ['admin', 'admin123', 'Administrator Depotel', 'ops.depotel@gmail.com', 'ADMIN', '', 'HQ-CENTRAL', 'TRUE'],
+        ['finance', 'finance123', 'Finance Depotel', 'ops.depotel@gmail.com', 'FINANCE', '', 'HQ-CENTRAL', 'TRUE'],
         ['manager', 'manager123', 'Manager Keuangan', 'manager@company.com', 'MANAGER', '', 'JKT-SOUTH-02', 'FALSE'],
         ['staff', 'staff123', 'Staff Lapangan', 'staff@company.com', 'USER', 'manager@company.com', 'JKT-SOUTH-02', 'TRUE']
       ];
@@ -249,7 +256,7 @@ const setMockData = <T>(key: string, data: T): void => {
 };
 
 const defaultUsers: UserProfile[] = [
-  { userId: 'admin', password: 'admin123', nama: 'Administrator Depotel', email: 'ops.depotel@gmail.com', role: Role.ADMIN, managerEmail: '', divisi: 'HQ-CENTRAL', aksesBBM: true },
+  { userId: 'finance', password: 'finance123', nama: 'Finance Depotel', email: 'ops.depotel@gmail.com', role: Role.FINANCE, managerEmail: '', divisi: 'HQ-CENTRAL', aksesBBM: true },
   { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: '', divisi: 'JKT-SOUTH-02', aksesBBM: false },
   { userId: 'staff', password: 'staff123', nama: 'Staff Lapangan', email: 'staff@company.com', role: Role.USER, managerEmail: 'manager@company.com', divisi: 'JKT-SOUTH-02', aksesBBM: true }
 ];

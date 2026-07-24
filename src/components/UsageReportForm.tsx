@@ -118,7 +118,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           status: item.statusManager,
           comment: item.managerComment || ''
         };
-      } else if (role === Role.ADMIN) {
+      } else if (role === Role.FINANCE) {
         initialDecisions[item.id] = {
           status: item.statusAdmin,
           comment: item.adminComment || ''
@@ -663,15 +663,15 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                   )}
 
-                  {/* Decision Buttons for Manager and Admin */}
-                  {(role === Role.MANAGER || role === Role.ADMIN) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                  {/* Decision Buttons for Manager and Finance */}
+                  {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 space-y-2 mt-2">
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">
-                        Review Keputusan ({role === Role.MANAGER ? 'Manager' : 'Admin / Finansial'})
+                        Review Keputusan ({role === Role.MANAGER ? 'Manager' : 'Finance'})
                       </span>
                       
-                      {/* If role is Admin, show Manager's decision for context */}
-                      {role === Role.ADMIN && (
+                      {/* If role is Finance, show Manager's decision for context */}
+                      {role === Role.FINANCE && (
                         <div className="text-[10px] bg-white border border-slate-100 p-2 rounded-xl text-slate-600 mb-1.5">
                           <span>Status Persetujuan Manager: </span>
                           <span className={`font-bold ${item.statusManager === ItemStatus.APPROVED ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -778,7 +778,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         <ExternalLink className="w-3.5 h-3.5" />
                       </button>
 
-                      {(role === Role.MANAGER || role === Role.ADMIN) && (
+                      {(role === Role.MANAGER || role === Role.FINANCE) && (
                         <button
                           type="button"
                           onClick={() => setViewingActivityItem({ item, date: item.tanggalPenggunaan })}
@@ -864,8 +864,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
 
 
-      {/* Submit Review Button for Manager/Admin */}
-      {(role === Role.MANAGER || role === Role.ADMIN) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && request.status !== RequestStatus.CLOSED && onSubmitReview && currentItems.length > 0 && (
+      {/* Submit Review Button for Manager/Finance */}
+      {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && request.status !== RequestStatus.CLOSED && onSubmitReview && currentItems.length > 0 && (
         <div className="space-y-2">
           {actionError && (
             <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2">

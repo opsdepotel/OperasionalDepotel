@@ -162,7 +162,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
           <div>
             <h2 className="font-display font-bold text-slate-800 text-sm flex items-center gap-2">
               <Shield className="w-4 h-4 text-indigo-600" />
-              Kelola Pengguna (Admin)
+              Kelola Pengguna (Finance)
             </h2>
             <p className="text-[11px] text-slate-400">Atur akun, role, divisi, dan relasi manager</p>
           </div>
@@ -273,7 +273,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Role Pekerjaan</label>
             <div className="grid grid-cols-3 gap-2">
-              {([Role.USER, Role.MANAGER, Role.ADMIN] as Role[]).map((r) => (
+              {([Role.USER, Role.MANAGER, Role.FINANCE] as Role[]).map((r) => (
                 <button
                   key={r}
                   type="button"
@@ -284,7 +284,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                       : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {r === Role.USER ? 'Staff / User' : r === Role.MANAGER ? 'Manager' : 'Admin'}
+                  {r === Role.USER ? 'Staff / User' : r === Role.MANAGER ? 'Manager' : 'Finance'}
                 </button>
               ))}
             </div>
@@ -388,7 +388,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                       <span className="font-bold text-xs text-slate-800">{p.nama || p.userId || 'No ID'}</span>
                       <span className="text-[10px] text-slate-400">({p.userId})</span>
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        p.role === Role.ADMIN
+                        p.role === Role.FINANCE
                           ? 'bg-red-50 text-red-600 border border-red-100'
                           : p.role === Role.MANAGER
                           ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'

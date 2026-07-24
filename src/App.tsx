@@ -248,10 +248,10 @@ export default function App() {
       if (user && user.email) {
         const emailLower = user.email.toLowerCase();
         if (emailLower === 'ops.depotel@gmail.com' || emailLower === 'ops.depotel.gmail.com') {
-          const adminProf = allProfs.find(p => p.role === Role.ADMIN || p.userId === 'admin');
+          const adminProf = allProfs.find(p => p.role === Role.FINANCE || p.userId === 'admin' || p.userId === 'finance');
           if (adminProf && adminProf.email !== 'ops.depotel@gmail.com') {
             adminProf.email = 'ops.depotel@gmail.com';
-            adminProf.nama = 'Administrator Depotel';
+            adminProf.nama = 'Finance Depotel';
             try {
               saveUserProfile(accessToken, sheetId, adminProf).catch(console.error);
             } catch (e) {
@@ -573,7 +573,7 @@ export default function App() {
           keterangan: `[ADJUSTMENT] ${type} - ${notes}`,
           status: RequestStatus.CLOSED,
           managerActionAmount: amount,
-          managerComment: 'Disetujui otomatis oleh Admin',
+          managerComment: 'Disetujui otomatis oleh Finance',
           adminActionAmount: amount,
           createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
           buktiTransferUrl: finalBuktiUrl || undefined,
@@ -839,8 +839,8 @@ export default function App() {
             ...original,
             statusManager: activeRole === Role.MANAGER ? dec.status : original.statusManager,
             managerComment: activeRole === Role.MANAGER ? dec.comment : original.managerComment,
-            statusAdmin: activeRole === Role.ADMIN ? dec.status : original.statusAdmin,
-            adminComment: activeRole === Role.ADMIN ? dec.comment : original.adminComment,
+            statusAdmin: activeRole === Role.FINANCE ? dec.status : original.statusAdmin,
+            adminComment: activeRole === Role.FINANCE ? dec.comment : original.adminComment,
             updatedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
           };
           await updateUsageItem(token, spreadsheetId, updatedItem);
@@ -945,8 +945,8 @@ export default function App() {
       // Manager only sees requests assigned to them
       if (r.managerEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
     }
-    // Admin sees everything!
-    if (activeRole === Role.ADMIN) {
+    // Finance sees everything!
+    if (activeRole === Role.FINANCE) {
       if (r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) {
         const reqItems = usageItems.filter(i => i.requestId === r.id);
         if (reqItems.length === 0 || !reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
@@ -992,7 +992,7 @@ export default function App() {
           if (reqItems.length > 0 && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
             return false;
           }
-        } else if (activeRole === Role.ADMIN) {
+        } else if (activeRole === Role.FINANCE) {
           if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
         } else {
           if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
@@ -1097,10 +1097,10 @@ export default function App() {
       case RequestStatus.APPROVED: return 'Disetujui Penuh Manager';
       case RequestStatus.PARTIALLY_APPROVED: return 'Disetujui Sebagian Manager';
       case RequestStatus.REJECTED: return 'Ditolak Manager';
-      case RequestStatus.TRANSFERRED: return 'Dana Ditransfer Admin';
+      case RequestStatus.TRANSFERRED: return 'Dana Ditransfer Finance';
       case RequestStatus.REPORTING: return 'Pelaporan Penggunaan';
       case RequestStatus.REVIEW_MANAGER: return 'Review Laporan (Manager)';
-      case RequestStatus.REVIEW_ADMIN: return 'Review Laporan (Admin)';
+      case RequestStatus.REVIEW_ADMIN: return 'Review Laporan (Finance)';
       case RequestStatus.PENDING_TALANGAN_TRANSFER: return 'Menunggu Transfer Dana Talangan';
       case RequestStatus.CLOSED: return 'Closing';
       default: return status;
@@ -1502,7 +1502,7 @@ export default function App() {
                         Daftar Pengajuan: <span className="text-indigo-600 font-bold">
                           {statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Pengisian & Review Laporan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.MANAGER ? 'Review Penggunaan Anggaran (Termasuk Dana Talangan)' :
-                           statusFilter === 'REPORTING' && activeRole === Role.ADMIN ? 'Review Finansial' :
+                           statusFilter === 'REPORTING' && activeRole === Role.FINANCE ? 'Review Finansial' :
                            statusFilter === 'CLOSED' ? 'Arsip / UID Selesai (Closed)' :
                            getStatusLabel(statusFilter as RequestStatus) || statusFilter}
                         </span>
@@ -1522,7 +1522,7 @@ export default function App() {
                         <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                       </div>
 
-                      {statusFilter === 'CLOSED' && activeRole === Role.ADMIN && (
+                      {statusFilter === 'CLOSED' && activeRole === Role.FINANCE && (
                         <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-3 mt-2 animate-slide-up">
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
@@ -1632,7 +1632,7 @@ export default function App() {
                           <button
                             onClick={() => {
                               if (!userProfile?.managerEmail) {
-                                alert('Email Manager Anda belum dikonfigurasi oleh Admin. Silakan hubungi Admin Anda.');
+                                alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
                               } else {
                                 setInitialIsTalangan(false);
                                 setActiveView('new-request');
@@ -1646,7 +1646,7 @@ export default function App() {
                           <button
                             onClick={() => {
                               if (!userProfile?.managerEmail) {
-                                alert('Email Manager Anda belum dikonfigurasi oleh Admin. Silakan hubungi Admin Anda.');
+                                alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
                               } else {
                                 setInitialIsTalangan(true);
                                 setActiveView('new-request');
@@ -1937,8 +1937,8 @@ export default function App() {
                                     </>
                                   )}
 
-                                  {/* ADMIN ACTIONS */}
-                                  {activeRole === Role.ADMIN && (
+                                  {/* FINANCE ACTIONS */}
+                                  {activeRole === Role.FINANCE && (
                                     <>
                                       {(req.status === RequestStatus.APPROVED || 
                                          req.status === RequestStatus.PARTIALLY_APPROVED ||

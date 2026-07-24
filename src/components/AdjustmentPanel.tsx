@@ -359,18 +359,18 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
             ) : (
               // Balance < 0 options
               <div className="grid grid-cols-1 gap-2.5">
-                <label className={`p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all ${adjustmentType === 'Transfer Adjustment dari Admin' ? 'border-indigo-500 bg-indigo-50/10 ring-2 ring-indigo-500/20' : 'border-slate-200 hover:bg-slate-50'}`}>
+                <label className={`p-3 rounded-xl border flex items-center gap-3 cursor-pointer transition-all ${adjustmentType === 'Transfer Adjustment dari Finance' ? 'border-indigo-500 bg-indigo-50/10 ring-2 ring-indigo-500/20' : 'border-slate-200 hover:bg-slate-50'}`}>
                   <input
                     type="radio"
                     name="adjustmentType"
-                    value="Transfer Adjustment dari Admin"
-                    checked={adjustmentType === 'Transfer Adjustment dari Admin'}
+                    value="Transfer Adjustment dari Finance"
+                    checked={adjustmentType === 'Transfer Adjustment dari Finance'}
                     onChange={(e) => setAdjustmentType(e.target.value)}
                     className="text-indigo-600 focus:ring-indigo-500 h-4 w-4"
                   />
                   <div>
-                    <span className="text-xs font-bold text-slate-800 block">Transfer Adjustment dari Admin</span>
-                    <span className="text-[10px] text-slate-500">Kekurangan dana (dana talangan) user diselesaikan dengan mentransfer dana dari Admin.</span>
+                    <span className="text-xs font-bold text-slate-800 block">Transfer Adjustment dari Finance</span>
+                    <span className="text-[10px] text-slate-500">Kekurangan dana (dana talangan) user diselesaikan dengan mentransfer dana dari Finance.</span>
                   </div>
                 </label>
 

@@ -644,18 +644,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                     {(act.coordinatesActual || act.coordinatesDb) && (
                       <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono pt-2 border-t border-slate-100 bg-slate-50/50 -mx-4 -mb-4 px-4 py-2">
                         <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                        <a
-                          href={
-                            act.coordinatesActual
-                              ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(act.coordinatesActual.trim())}`
-                              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((act.coordinatesDb || '').trim())}`
-                          }
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-indigo-600 hover:underline font-bold"
-                        >
+                        <span className="text-indigo-900 font-bold">
                           {act.coordinatesActual || act.coordinatesDb}
-                        </a>
+                        </span>
                       </div>
                     )}
                   </div>
