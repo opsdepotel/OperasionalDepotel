@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { UserProfile, Role } from '../types';
 import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw } from 'lucide-react';
-import { validateDeviceAccessAndBind } from '../lib/deviceUtils';
+import { validateDeviceAccessAndBind, getOrCreateDeviceId } from '../lib/deviceUtils';
 
 interface AppLoginFormProps {
   profiles: UserProfile[];
@@ -32,6 +32,11 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [deviceId, setDeviceId] = useState('');
+
+  useEffect(() => {
+    setDeviceId(getOrCreateDeviceId());
+  }, []);
 
   const activeError = externalError || error;
   const isModalOpen = (showRejectModal || !!externalError) && !!activeError;
@@ -146,6 +151,11 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+          {deviceId && (
+            <p className="mt-1.5 text-[11px] text-slate-400 font-medium truncate">
+              Device ID: <span className="font-mono text-slate-400 select-all">{deviceId}</span>
+            </p>
+          )}
         </div>
 
         <button
