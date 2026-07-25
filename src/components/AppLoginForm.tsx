@@ -81,7 +81,7 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
       );
 
       if (matched) {
-        const deviceCheck = await validateDeviceAccessAndBind(matched);
+        const deviceCheck = await validateDeviceAccessAndBind(matched, undefined, profiles);
         if (!deviceCheck.success) {
           triggerError(deviceCheck.errorMessage || 'Akses ditolak.');
           return;

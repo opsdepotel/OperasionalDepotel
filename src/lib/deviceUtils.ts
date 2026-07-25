@@ -12,8 +12,12 @@ export function isMobileDevice(): boolean {
   if (typeof window === 'undefined' || !navigator) return false;
   const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
 
-  // Check specifically for mobile User Agent strings (Android, iPhone, iPad, Mobile, etc.)
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(ua);
+  // Check specifically for mobile User Agent strings or mobile touch viewport
+  const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet|Touch/i.test(ua);
+  const isTouchScreen = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
+  const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
+
+  return isMobileUA || (isTouchScreen && isSmallScreen);
 }
 
 /**
@@ -41,7 +45,8 @@ export function getOrCreateDeviceId(): string {
  */
 export async function validateDeviceAccessAndBind(
   user: UserProfile,
-  saveProfileFn?: (updated: UserProfile) => Promise<void>
+  saveProfileFn?: (updated: UserProfile) => Promise<void>,
+  allProfiles?: UserProfile[]
 ): Promise<{ success: boolean; errorMessage?: string; updatedUser?: UserProfile }> {
   const isMobile = isMobileDevice();
 
@@ -65,7 +70,26 @@ export async function validateDeviceAccessAndBind(
     const currentDeviceId = getOrCreateDeviceId();
 
     if (!user.deviceId || !user.deviceId.trim()) {
-      // Device ID in database is empty: First time mobile access => Bind current Device ID!
+      // Device ID in database is empty:
+      // First check if currentDeviceId is already bound/registered to another user profile
+      if (allProfiles && allProfiles.length > 0) {
+        const boundOtherUser = allProfiles.find(
+          (p) =>
+            p.deviceId &&
+            p.deviceId.trim().toLowerCase() === currentDeviceId.trim().toLowerCase() &&
+            (p.userId ? p.userId.toLowerCase() !== user.userId?.toLowerCase() : p.email.toLowerCase() !== user.email?.toLowerCase())
+        );
+
+        if (boundOtherUser) {
+          const otherName = boundOtherUser.nama || boundOtherUser.userId || boundOtherUser.email;
+          return {
+            success: false,
+            errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDeviceId}) sudah terdaftar/terikat dengan akun User lain (${otherName}).`
+          };
+        }
+      }
+
+      // First time mobile access for this user and device is free => Bind current Device ID!
       const updatedUser: UserProfile = {
         ...user,
         deviceId: currentDeviceId
@@ -85,10 +109,13 @@ export async function validateDeviceAccessAndBind(
       };
     } else {
       // Device ID exists in database: Compare with current mobile device's ID
-      if (user.deviceId.trim() !== currentDeviceId.trim()) {
+      const dbDeviceId = user.deviceId.trim();
+      const currentDevId = currentDeviceId.trim();
+
+      if (dbDeviceId.toLowerCase() !== currentDevId.toLowerCase()) {
         return {
           success: false,
-          errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDeviceId.substring(0, 8)}...) tidak sesuai dengan Device ID terikat di akun Anda (${user.deviceId.substring(0, 8)}...).`
+          errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDevId}) tidak sesuai dengan Device ID yang terikat di akun Anda (${dbDeviceId}).`
         };
       }
     }

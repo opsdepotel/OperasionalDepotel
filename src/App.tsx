@@ -453,7 +453,7 @@ export default function App() {
       if (matched) {
         const deviceCheck = await validateDeviceAccessAndBind(matched, async (updated) => {
           await saveUserProfile(currentToken!, sheetId, updated);
-        });
+        }, allProfs);
 
         if (!deviceCheck.success) {
           const errMsg = deviceCheck.errorMessage || 'Akses ditolak.';
@@ -485,7 +485,7 @@ export default function App() {
           p.password === password
       );
       if (matched) {
-        const deviceCheck = await validateDeviceAccessAndBind(matched);
+        const deviceCheck = await validateDeviceAccessAndBind(matched, undefined, profiles);
         if (!deviceCheck.success) {
           const errMsg = deviceCheck.errorMessage || 'Akses ditolak.';
           setLoginRejectError(errMsg);
