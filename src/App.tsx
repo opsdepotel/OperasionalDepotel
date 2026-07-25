@@ -48,7 +48,8 @@ import {
   Coins, ClipboardList, CheckCircle2, AlertCircle, Clock, Plus, LogIn,
   RefreshCw, FileSpreadsheet, Eye, Search, AlertTriangle, Check, CreditCard,
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight,
-  Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel
+  Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel, X,
+  Settings, LogOut
 } from 'lucide-react';
 
 export default function App() {
@@ -120,6 +121,7 @@ export default function App() {
   const [closingConfirmReq, setClosingConfirmReq] = useState<BudgetRequest | null>(null);
   const [isBbmModalOpen, setIsBbmModalOpen] = useState(false);
   const [isBbmListModalOpen, setIsBbmListModalOpen] = useState(false);
+  const [isDiomsLogoModalOpen, setIsDiomsLogoModalOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<{ url: string; fileId?: string; title: string } | null>(null);
 
   // Search/Filter state
@@ -1174,13 +1176,18 @@ export default function App() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="w-full max-w-sm bg-white rounded-3xl border border-slate-200 shadow-xl p-6 text-center space-y-6 animate-slide-up">
           {/* Logo illustration */}
-          <div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto shadow-md border border-indigo-100">
-            <Database className="w-8 h-8 text-indigo-600 animate-pulse" />
+          <div className="flex items-center justify-center mx-auto py-1">
+            <img
+              src="/DIOMS-1.png"
+              alt="DIOMS Logo"
+              className="h-14 w-auto object-contain"
+              referrerPolicy="no-referrer"
+            />
           </div>
 
           <div className="space-y-2">
-            <h1 className="font-display font-black text-slate-800 text-base tracking-tight">
-              Sistem Manajemen Operasional
+            <h1 className="font-display font-black text-slate-800 text-sm sm:text-base tracking-tight leading-snug">
+              Depotel Integrated Operation Monitoring System
             </h1>
             <p className="text-xs text-slate-400 font-medium">
               Hubungkan Google Account Anda untuk memuat database
@@ -1262,6 +1269,7 @@ export default function App() {
           isRefreshing={isLoading}
           onOpenSettings={() => setActiveView('profile-settings')}
           activeView={activeView}
+          onOpenDiomsLogo={() => setIsDiomsLogoModalOpen(true)}
         />
       )}
 
@@ -1359,7 +1367,7 @@ export default function App() {
             {statusFilter === 'ALL' ? (
               <>
                 {/* Quick Profile/Role indicator banner */}
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3">
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3 overflow-hidden">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold font-display text-sm border border-slate-200 overflow-hidden shrink-0">
                       {userProfile?.nama ? (
@@ -1373,7 +1381,7 @@ export default function App() {
                       )}
                     </div>
                     <div className="min-w-0">
-                      <h2 className="font-display font-bold text-slate-800 text-xs truncate max-w-[180px]">
+                      <h2 className="font-display font-bold text-slate-800 text-xs truncate max-w-[130px] sm:max-w-[180px]">
                         {userProfile?.nama || userProfile?.userId || userProfile?.email}
                       </h2>
                       <p className="text-[10px] text-slate-400 font-semibold flex items-center gap-1 mt-0.5 truncate">
@@ -1385,7 +1393,40 @@ export default function App() {
                     </div>
                   </div>
 
+                  {/* Action Controls in Profile Bar */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Settings / Profile Button */}
+                    <button
+                      onClick={() => setActiveView('profile-settings')}
+                      className={`p-2 rounded-xl transition-all cursor-pointer ${
+                        activeView === 'profile-settings'
+                          ? 'text-indigo-600 bg-indigo-50 font-bold'
+                          : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'
+                      }`}
+                      title="Pengaturan Profil & Sandi"
+                    >
+                      <Settings className="w-4 h-4" />
+                    </button>
 
+                    {/* Refresh Button */}
+                    <button
+                      onClick={handleManualRefresh}
+                      disabled={isLoading}
+                      className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all cursor-pointer"
+                      title="Sinkronisasi Data"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-600' : ''}`} />
+                    </button>
+
+                    {/* User Sign Out */}
+                    <button
+                      onClick={handleLogout}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
+                      title="Keluar"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Core Stats Section */}
@@ -2110,6 +2151,36 @@ export default function App() {
           }
         }}
       />
+
+      {/* Modal Popup Preview Logo DIOMS */}
+      {isDiomsLogoModalOpen && (
+        <div 
+          className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setIsDiomsLogoModalOpen(false)}
+        >
+          <div 
+            className="relative bg-white rounded-2xl p-4 md:p-6 max-w-3xl w-full max-h-[90vh] flex flex-col items-center justify-center shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setIsDiomsLogoModalOpen(false)}
+              className="absolute top-3 right-3 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center transition-colors font-bold z-10 shadow-sm"
+              title="Tutup"
+            >
+              <X className="w-4 h-4" />
+            </button>
+            <div className="w-full flex flex-col items-center justify-center p-2">
+              <img
+                src="/DIOMS-1.png"
+                alt="DIOMS Logo"
+                className="max-h-[75vh] w-auto max-w-full object-contain rounded-xl"
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
