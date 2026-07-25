@@ -395,7 +395,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
 
       {/* Activities Popup Modal */}
       {viewingActivityItem && (
-        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs z-[60] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up">
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">

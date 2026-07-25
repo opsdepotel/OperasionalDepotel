@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { UserProfile, Role, BudgetRequest } from '../types';
-import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel } from 'lucide-react';
+import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel, Smartphone, RotateCcw } from 'lucide-react';
 
 interface ProfileSetupProps {
   profiles: UserProfile[];
@@ -33,6 +33,8 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   const [managerEmail, setManagerEmail] = useState('');
   const [divisi, setDivisi] = useState('');
   const [aksesBBM, setAksesBBM] = useState<boolean>(false);
+  const [mobile, setMobile] = useState<boolean>(false);
+  const [deviceId, setDeviceId] = useState<string>('');
   
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -69,7 +71,13 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setRole(p.role);
     setManagerEmail(p.managerEmail || '');
     setDivisi(p.divisi || '');
-    setAksesBBM(!!p.aksesBBM);
+
+    const isBbm = p.aksesBBM === true || String(p.aksesBBM).trim().toUpperCase() === 'TRUE' || String(p.aksesBBM).trim().toUpperCase() === 'YA' || String(p.aksesBBM).trim() === '1';
+    const isMob = p.mobile === true || String(p.mobile).trim().toUpperCase() === 'TRUE' || String(p.mobile).trim().toUpperCase() === 'YA' || String(p.mobile).trim() === '1';
+
+    setAksesBBM(isBbm);
+    setMobile(isMob);
+    setDeviceId(p.deviceId || '');
     setError(null);
   };
 
@@ -84,6 +92,8 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setManagerEmail('');
     setDivisi('');
     setAksesBBM(false);
+    setMobile(false);
+    setDeviceId('');
     setError(null);
   };
 
@@ -135,7 +145,9 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
         role,
         managerEmail: role === Role.USER ? managerEmail.trim() : '',
         divisi: divisi.trim().toUpperCase(),
-        aksesBBM
+        aksesBBM,
+        mobile,
+        deviceId: deviceId.trim()
       });
       // Reset form states
       setEditingProfile(null);
@@ -316,8 +328,26 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
             </div>
           )}
 
-          {/* Checkmark Pengisian BBM Duren Sawit */}
-          <div className="pt-2 border-t border-slate-100">
+          {/* Checkmark Akses Perangkat Mobile & Pengisian BBM */}
+          <div className="pt-2 border-t border-slate-100 space-y-2">
+            <label className="flex items-center gap-3 p-2.5 bg-slate-50/80 hover:bg-slate-100/80 border border-slate-200 rounded-xl transition-all cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={mobile}
+                onChange={(e) => setMobile(e.target.checked)}
+                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0"
+              />
+              <div className="flex-1">
+                <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
+                  <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Wajib Perangkat Mobile (Mobile Device Only)</span>
+                </div>
+                <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                  Jika aktif (TRUE), pengguna wajib menggunakan perangkat mobile (Android/iPhone). Login via PC/Windows akan ditolak.
+                </p>
+              </div>
+            </label>
+
             <label className="flex items-center gap-3 p-2.5 bg-slate-50/80 hover:bg-slate-100/80 border border-slate-200 rounded-xl transition-all cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -335,6 +365,39 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                 </p>
               </div>
             </label>
+          </div>
+
+          {/* Device ID Field & Reset */}
+          <div className="pt-2 border-t border-slate-100">
+            <label className="block text-xs font-semibold text-slate-500 mb-1">
+              Device ID Terikat (Mobile)
+            </label>
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  value={deviceId}
+                  onChange={(e) => setDeviceId(e.target.value)}
+                  placeholder="Kosong = Belum ada perangkat terikat"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-mono text-slate-700"
+                />
+                <Smartphone className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+              {deviceId && (
+                <button
+                  type="button"
+                  onClick={() => setDeviceId('')}
+                  className="py-2 px-3 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer shrink-0"
+                  title="Reset Device ID agar pengguna dapat mendaftarkan HP baru saat login"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reset Device ID</span>
+                </button>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">
+              Device ID akan otomatis terisi saat user login pertama kali dari HP. Tekan Reset jika user ganti HP.
+            </p>
           </div>
 
           {/* Action buttons */}
@@ -401,17 +464,26 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                           {p.divisi}
                         </span>
                       )}
-                      {p.aksesBBM && (
+                      {(p.aksesBBM === true || String(p.aksesBBM).trim().toUpperCase() === 'TRUE' || String(p.aksesBBM).trim().toUpperCase() === 'YA' || String(p.aksesBBM).trim() === '1') && (
                         <span className="text-[9px] font-bold bg-amber-50 text-amber-700 px-1.5 py-0.5 rounded border border-amber-200/60 flex items-center gap-1">
                           <Fuel className="w-2.5 h-2.5 text-amber-600" />
                           BBM Duren Sawit
                         </span>
                       )}
+                      {(p.mobile === true || String(p.mobile).trim().toUpperCase() === 'TRUE' || String(p.mobile).trim().toUpperCase() === 'YA' || String(p.mobile).trim() === '1') && (
+                        <span className="text-[9px] font-bold bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200/60 flex items-center gap-1">
+                          <Smartphone className="w-2.5 h-2.5 text-purple-600" />
+                          Mobile Only
+                        </span>
+                      )}
                     </div>
-                    <div className="text-[10px] text-slate-500 font-medium">
+                    <div className="text-[10px] text-slate-500 font-medium space-y-0.5">
                       <span className="block">Email: {p.email}</span>
                       {p.role === Role.USER && p.managerEmail && (
                         <span className="block text-slate-400">Manager: {p.managerEmail}</span>
+                      )}
+                      {p.deviceId && (
+                        <span className="block text-slate-400 font-mono text-[9px]">Device ID: {p.deviceId}</span>
                       )}
                     </div>
                   </div>

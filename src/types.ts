@@ -69,6 +69,8 @@ export interface UserProfile {
   managerEmail: string;
   divisi: string;
   aksesBBM?: boolean;
+  mobile?: boolean;
+  deviceId?: string;
 }
 
 export interface SiteInfo {

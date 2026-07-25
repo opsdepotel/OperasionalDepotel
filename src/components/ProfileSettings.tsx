@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { UserProfile, Role } from '../types';
 import {
-  User, Mail, Shield, Tag, Lock, ArrowLeft, Key, Eye, EyeOff, AlertCircle, CheckCircle2, Fuel
+  User, Mail, Shield, Tag, Lock, ArrowLeft, Key, Eye, EyeOff, AlertCircle, CheckCircle2, Fuel, Smartphone
 } from 'lucide-react';
 
 interface ProfileSettingsProps {
@@ -140,6 +140,26 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                 </span>
                 <span className="font-bold text-slate-700 truncate block" title={userProfile.managerEmail}>
                   {userProfile.managerEmail || '-'}
+                </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="bg-slate-50/50 p-2.5 rounded-2xl border border-slate-100">
+                <span className="block text-[8px] font-black text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                  <Smartphone className="w-3 h-3 text-indigo-500" /> Akses Perangkat
+                </span>
+                <span className={`font-bold ${userProfile.mobile ? 'text-purple-600' : 'text-slate-700'}`}>
+                  {userProfile.mobile ? 'Wajib Mobile' : 'Mobile & Windows'}
+                </span>
+              </div>
+
+              <div className="bg-slate-50/50 p-2.5 rounded-2xl border border-slate-100">
+                <span className="block text-[8px] font-black text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                  <Smartphone className="w-3 h-3 text-indigo-500" /> Device ID Terikat
+                </span>
+                <span className="font-bold text-slate-700 font-mono truncate block text-[10px]" title={userProfile.deviceId || 'Belum Terikat'}>
+                  {userProfile.deviceId || 'Belum Terikat'}
                 </span>
               </div>
             </div>

@@ -43,7 +43,7 @@ const LAPORAN_HEADERS = [
 ];
 
 const USERS_HEADERS = [
-  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'AksesBBM'
+  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'AksesBBM', 'Mobile', 'DeviceID'
 ];
 
 const ACTIVITY_HEADERS = [
@@ -58,10 +58,25 @@ function parseSheetRows<T>(headers: string[], rows: any[][], mapper: (rowMap: Re
 
   return dataRows.map((row) => {
     const rowMap: Record<string, any> = {};
-    headers.forEach((h) => {
-      const idx = sheetHeaders.indexOf(h);
+    headers.forEach((h, colIndex) => {
+      let idx = sheetHeaders.indexOf(h);
+      if (idx === -1) {
+        const hNorm = h.toLowerCase().replace(/[^a-z0-9]/g, '');
+        idx = sheetHeaders.findIndex(sh => sh.toLowerCase().replace(/[^a-z0-9]/g, '') === hNorm);
+      }
+      if (idx === -1 && colIndex < row.length) {
+        idx = colIndex;
+      }
       rowMap[h] = idx !== -1 && row[idx] !== undefined ? row[idx] : '';
     });
+
+    // Also copy all original sheet header key-values into rowMap for flexibility
+    sheetHeaders.forEach((sh, idx) => {
+      if (sh && row[idx] !== undefined) {
+        rowMap[sh] = row[idx];
+      }
+    });
+
     return mapper(rowMap);
   });
 }
@@ -106,8 +121,18 @@ function mapToUsageItem(row: Record<string, any>): UsageReportItem {
 
 // Map row map to UserProfile
 function mapToUserProfile(row: Record<string, any>): UserProfile {
-  const bbmVal = row.AksesBBM !== undefined ? String(row.AksesBBM).trim().toUpperCase() : '';
-  const rawRole = String(row.Role || '').trim().toUpperCase();
+  const rawBbm = row.AksesBBM ?? row['Akses BBM'] ?? row.aksesBBM ?? '';
+  const bbmStr = String(rawBbm).trim().toUpperCase();
+  const isAksesBBM = bbmStr === 'TRUE' || bbmStr === 'YA' || bbmStr === '1' || rawBbm === true;
+
+  const rawMobile = row.Mobile ?? row['Mobile(Boolean)'] ?? row['Mobile'] ?? row['Mobile Device'] ?? row.mobile ?? '';
+  const mobileStr = String(rawMobile).trim().toUpperCase();
+  const isMobile = mobileStr === 'TRUE' || mobileStr === 'YA' || mobileStr === '1' || rawMobile === true;
+
+  const rawDeviceId = row.DeviceID ?? row['Device ID'] ?? row['DeviceId'] ?? row.deviceId ?? row.Deviceid ?? '';
+  const deviceIdVal = String(rawDeviceId).trim();
+
+  const rawRole = String(row.Role || row.role || '').trim().toUpperCase();
   let roleVal = Role.USER;
   if (rawRole === 'FINANCE' || rawRole === 'ADMIN') {
     roleVal = Role.FINANCE;
@@ -115,14 +140,16 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
     roleVal = Role.MANAGER;
   }
   return {
-    userId: String(row.UserID),
-    password: String(row.Password),
-    nama: String(row.Nama || ''),
-    email: String(row.Email),
+    userId: String(row.UserID || row.userId || row.Email || ''),
+    password: String(row.Password || row.password || ''),
+    nama: String(row.Nama || row.nama || ''),
+    email: String(row.Email || row.email || ''),
     role: roleVal,
-    managerEmail: String(row.ManagerEmail),
-    divisi: String(row.Divisi),
-    aksesBBM: bbmVal === 'TRUE' || bbmVal === 'YA' || bbmVal === '1' || row.AksesBBM === true
+    managerEmail: String(row.ManagerEmail || row.managerEmail || ''),
+    divisi: String(row.Divisi || row.divisi || ''),
+    aksesBBM: isAksesBBM,
+    mobile: isMobile,
+    deviceId: deviceIdVal
   };
 }
 
@@ -203,7 +230,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
       data: [
         { range: 'Pengajuan!A1:N1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:L1', values: [LAPORAN_HEADERS] },
-        { range: 'Users!A1:H1', values: [USERS_HEADERS] },
+        { range: 'Users!A1:J1', values: [USERS_HEADERS] },
         { range: 'Activity!A1:K1', values: [ACTIVITY_HEADERS] }
       ]
     })
@@ -455,7 +482,7 @@ export async function fetchProfiles(token: string, spreadsheetId: string): Promi
   if (token === 'mock_demo_token') {
     return getMockData<UserProfile[]>('mock_db_users', defaultUsers);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:H1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) return [];
@@ -943,7 +970,9 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
       ...profile,
       userId: profile.userId || (profile.email ? profile.email.split('@')[0] : `user_${Date.now()}`),
       password: profile.password || '123456',
-      aksesBBM: !!profile.aksesBBM
+      aksesBBM: !!profile.aksesBBM,
+      mobile: !!profile.mobile,
+      deviceId: profile.deviceId || ''
     };
     if (idx !== -1) {
       list[idx] = updatedProfile;
@@ -965,13 +994,15 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
     Role: profile.role,
     ManagerEmail: profile.managerEmail,
     Divisi: profile.divisi,
-    AksesBBM: profile.aksesBBM ? 'TRUE' : 'FALSE'
+    AksesBBM: profile.aksesBBM ? 'TRUE' : 'FALSE',
+    Mobile: profile.mobile ? 'TRUE' : 'FALSE',
+    DeviceID: profile.deviceId || ''
   });
 
   if (existingIdx !== -1) {
     // Row is at existingIdx + 2 (since header is row 1, and index is 0-based index of slice(1))
     const sheetRowIdx = existingIdx + 2;
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:H${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:J${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,

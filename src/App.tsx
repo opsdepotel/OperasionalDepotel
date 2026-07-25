@@ -26,6 +26,7 @@ import {
   createUserActivity
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity } from './types';
+import { validateDeviceAccessAndBind } from './lib/deviceUtils';
 
 // Components
 import { Header } from './components/Header';
@@ -77,6 +78,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [loginRejectError, setLoginRejectError] = useState<string | null>(null);
 
   // Data arrays
   const [requests, setRequests] = useState<BudgetRequest[]>([]);
@@ -449,10 +451,30 @@ export default function App() {
       );
 
       if (matched) {
+        const deviceCheck = await validateDeviceAccessAndBind(matched, async (updated) => {
+          await saveUserProfile(currentToken!, sheetId, updated);
+        });
+
+        if (!deviceCheck.success) {
+          const errMsg = deviceCheck.errorMessage || 'Akses ditolak.';
+          setLoginRejectError(errMsg);
+          onFormError(errMsg);
+          return;
+        }
+
+        const finalUser = deviceCheck.updatedUser || matched;
+        if (deviceCheck.updatedUser) {
+          const updatedProfs = allProfs.map(p => p.email.toLowerCase() === finalUser.email.toLowerCase() ? finalUser : p);
+          setProfiles(updatedProfs);
+          localStorage.setItem('op_app_cached_profiles', JSON.stringify(updatedProfs));
+        }
+
         await syncAllData(currentToken!, sheetId);
-        handleAppLoginSuccess(matched);
+        handleAppLoginSuccess(finalUser);
       } else {
-        onFormError('User ID atau Password salah. Silakan coba lagi.');
+        const errMsg = 'User ID atau Password salah. Silakan coba lagi.';
+        setLoginRejectError(errMsg);
+        onFormError(errMsg);
       }
     } catch (err: any) {
       console.error('Login validation error:', err);
@@ -463,9 +485,18 @@ export default function App() {
           p.password === password
       );
       if (matched) {
-        handleAppLoginSuccess(matched);
+        const deviceCheck = await validateDeviceAccessAndBind(matched);
+        if (!deviceCheck.success) {
+          const errMsg = deviceCheck.errorMessage || 'Akses ditolak.';
+          setLoginRejectError(errMsg);
+          onFormError(errMsg);
+          return;
+        }
+        handleAppLoginSuccess(deviceCheck.updatedUser || matched);
       } else {
-        onFormError(err.message || 'Gagal memproses verifikasi login.');
+        const errMsg = err.message || 'Gagal memproses verifikasi login.';
+        setLoginRejectError(errMsg);
+        onFormError(errMsg);
       }
     } finally {
       setIsLoading(false);
@@ -1237,7 +1268,7 @@ export default function App() {
   }
 
   // Render Loader state (Database initialization or global action loaders)
-  if (isLoading && loadingStep) {
+  if (isLoading && loadingStep && userProfile) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
         <div className="w-full max-w-sm bg-white border border-slate-100 p-6 rounded-3xl shadow-xl text-center space-y-4">
@@ -1296,6 +1327,8 @@ export default function App() {
             isLoading={isLoading}
             onResetGoogle={handleResetGoogleConnection}
             onLoginWithCredentials={handleAppLoginWithCredentials}
+            externalError={loginRejectError}
+            onClearExternalError={() => setLoginRejectError(null)}
           />
         ) : activeView === 'setup-profile' ? (
           <ProfileSetup
@@ -1385,7 +1418,7 @@ export default function App() {
                         {userProfile?.nama || userProfile?.userId || userProfile?.email}
                       </h2>
                       <p className="text-[10px] text-slate-400 font-semibold flex items-center gap-1 mt-0.5 truncate">
-                        Role Aktif: <span className="text-indigo-600 font-bold">{activeRole}</span>
+                        Role: <span className="text-indigo-600 font-bold">{activeRole}</span>
                         {userProfile && userProfile.divisi && (
                           <span>| Divisi: {userProfile.divisi}</span>
                         )}
@@ -1465,6 +1498,7 @@ export default function App() {
                   <ReviewBudgetModal
                     request={reviewBudgetReq}
                     requesterName={profiles.find(p => p.email.toLowerCase() === reviewBudgetReq.userEmail.toLowerCase())?.nama || reviewBudgetReq.userEmail}
+                    sites={sites}
                     onApprove={handleReviewBudget}
                     onReject={handleRejectBudget}
                     onClose={() => setReviewBudgetReq(null)}
@@ -1502,7 +1536,7 @@ export default function App() {
                 )}
 
                 {closingConfirmReq && (
-                  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in">
+                  <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in">
                     <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up">
                       <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600">
                         <AlertCircle className="w-6 h-6" />
@@ -2042,7 +2076,7 @@ export default function App() {
 
       {/* Document/Photo Preview Popup Modal */}
       {previewDocument && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xs z-[100] flex items-center justify-center p-4 animate-fade-in">
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[100] flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -2155,7 +2189,7 @@ export default function App() {
       {/* Modal Popup Preview Logo DIOMS */}
       {isDiomsLogoModalOpen && (
         <div 
-          className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200"
           onClick={() => setIsDiomsLogoModalOpen(false)}
         >
           <div 

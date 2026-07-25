@@ -5,7 +5,8 @@
 
 import React, { useState } from 'react';
 import { UserProfile, Role } from '../types';
-import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw } from 'lucide-react';
+import { validateDeviceAccessAndBind } from '../lib/deviceUtils';
 
 interface AppLoginFormProps {
   profiles: UserProfile[];
@@ -13,6 +14,8 @@ interface AppLoginFormProps {
   isLoading: boolean;
   onResetGoogle?: () => void;
   onLoginWithCredentials?: (userId: string, password: string, onError: (msg: string) => void) => void;
+  externalError?: string | null;
+  onClearExternalError?: () => void;
 }
 
 export const AppLoginForm: React.FC<AppLoginFormProps> = ({
@@ -20,28 +23,50 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   onLoginSuccess,
   isLoading,
   onResetGoogle,
-  onLoginWithCredentials
+  onLoginWithCredentials,
+  externalError,
+  onClearExternalError
 }) => {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showRejectModal, setShowRejectModal] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const activeError = externalError || error;
+  const isModalOpen = (showRejectModal || !!externalError) && !!activeError;
+
+  const handleCloseModal = () => {
+    setShowRejectModal(false);
+    setError(null);
+    if (onClearExternalError) {
+      onClearExternalError();
+    }
+  };
+
+  const triggerError = (msg: string) => {
+    setError(msg);
+    setShowRejectModal(true);
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setShowRejectModal(false);
 
     if (!userId.trim()) {
-      setError('User ID wajib diisi.');
+      triggerError('User ID wajib diisi.');
       return;
     }
     if (!password.trim()) {
-      setError('Password wajib diisi.');
+      triggerError('Password wajib diisi.');
       return;
     }
 
     if (onLoginWithCredentials) {
-      onLoginWithCredentials(userId, password, (msg) => setError(msg));
+      onLoginWithCredentials(userId, password, (msg) => {
+        triggerError(msg);
+      });
     } else {
       // Find user by matching UserID and Password
       const matched = profiles.find(
@@ -51,9 +76,14 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
       );
 
       if (matched) {
-        onLoginSuccess(matched);
+        const deviceCheck = await validateDeviceAccessAndBind(matched);
+        if (!deviceCheck.success) {
+          triggerError(deviceCheck.errorMessage || 'Akses ditolak.');
+          return;
+        }
+        onLoginSuccess(deviceCheck.updatedUser || matched);
       } else {
-        setError('User ID atau Password salah. Silakan coba lagi.');
+        triggerError('User ID atau Password salah. Silakan coba lagi.');
       }
     }
   };
@@ -123,8 +153,17 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           disabled={isLoading}
           className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
         >
-          <LogIn className="w-4 h-4" />
-          <span>{isLoading ? 'Memproses...' : 'Masuk Aplikasi'}</span>
+          {isLoading ? (
+            <>
+              <RefreshCw className="w-4 h-4 animate-spin text-white" />
+              <span>Memverifikasi...</span>
+            </>
+          ) : (
+            <>
+              <LogIn className="w-4 h-4" />
+              <span>Masuk Aplikasi</span>
+            </>
+          )}
         </button>
       </form>
 
@@ -138,6 +177,49 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           >
             Switch Google Account
           </button>
+        </div>
+      )}
+
+      {/* Popup Notifikasi Login Ditolak */}
+      {isModalOpen && activeError && (
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div
+            className="bg-white rounded-3xl shadow-2xl border border-slate-200/80 max-w-sm w-full p-6 text-center space-y-4 animate-scale-up relative ring-1 ring-slate-900/5"
+            role="dialog"
+            aria-modal="true"
+          >
+            <button
+              type="button"
+              onClick={handleCloseModal}
+              className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition-all cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-14 h-14 bg-red-100 text-red-600 rounded-2xl flex items-center justify-center mx-auto shadow-inner ring-8 ring-red-50/60">
+              <ShieldAlert className="w-8 h-8 text-red-600" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-slate-800">Login Ditolak</h3>
+              <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest">
+                Akses Tidak Diizinkan
+              </p>
+            </div>
+
+            <div className="bg-red-50/80 border border-red-200/80 rounded-2xl p-3.5 text-left flex items-start gap-3">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <p className="text-slate-700 text-xs font-medium leading-relaxed">{activeError}</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleCloseModal}
+              className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-200 transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              <span>Tutup &amp; Coba Lagi</span>
+            </button>
+          </div>
         </div>
       )}
     </div>

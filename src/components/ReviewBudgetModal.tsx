@@ -4,12 +4,13 @@
  */
 
 import React, { useState } from 'react';
-import { BudgetRequest, RequestStatus } from '../types';
-import { Shield, Check, X, AlertCircle, Coins, MessageSquare } from 'lucide-react';
+import { BudgetRequest, RequestStatus, SiteInfo } from '../types';
+import { Shield, Check, X, AlertCircle, Coins, MessageSquare, MapPin } from 'lucide-react';
 
 interface ReviewBudgetModalProps {
   request: BudgetRequest;
   requesterName?: string;
+  sites?: SiteInfo[];
   onApprove: (approvedAmount: number, comment: string) => Promise<void>;
   onReject: (reason: string) => Promise<void>;
   onClose: () => void;
@@ -18,6 +19,7 @@ interface ReviewBudgetModalProps {
 export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
   request,
   requesterName,
+  sites = [],
   onApprove,
   onReject,
   onClose
@@ -27,6 +29,54 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
   const [action, setAction] = useState<'APPROVE' | 'REJECT' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Parse Site ID and match database for multi-site vertical list
+  const parseSiteList = (rawSiteId: string, sitesList: SiteInfo[]) => {
+    if (!rawSiteId || !rawSiteId.trim()) return [];
+
+    // 1. Check if regex matches standard site ID format (e.g. BKS123, JKT456)
+    const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
+    const regexMatches = rawSiteId.match(siteIdRegex) || [];
+    const uniqueRegexMatches = Array.from(new Set(regexMatches.map(m => m.trim().toUpperCase())));
+
+    let tokensToProcess: string[] = [];
+
+    if (uniqueRegexMatches.length > 0) {
+      tokensToProcess = uniqueRegexMatches;
+    } else {
+      // 2. Fallback: split by delimiters (comma, semicolon, slash, newline, pipe, plus)
+      const splitTokens = rawSiteId
+        .split(/[,;\/\n\r|+]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const tokenSet = new Set<string>();
+      splitTokens.forEach(t => tokenSet.add(t.toUpperCase()));
+      tokensToProcess = Array.from(tokenSet);
+    }
+
+    if (tokensToProcess.length === 0) {
+      tokensToProcess = [rawSiteId.trim().toUpperCase()];
+    }
+
+    return tokensToProcess.map(id => {
+      const cleanId = id.toUpperCase();
+      const found = sitesList.find(s => 
+        s.siteId.toUpperCase().trim() === cleanId || 
+        s.siteId.toUpperCase().replaceAll('-', '').trim() === cleanId.replaceAll('-', '')
+      );
+
+      if (found) {
+        return { id: found.siteId, name: found.siteName };
+      }
+      if (cleanId === 'DUREN-SAWIT' || cleanId === 'DURENSAWIT') {
+        return { id: 'DUREN-SAWIT', name: 'Depot / Pos Utama' };
+      }
+      return { id: id, name: null };
+    });
+  };
+
+  const parsedSites = parseSiteList(request.siteId, sites);
 
   const formatIDR = (num: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -110,9 +160,32 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
             <span className="text-[10px] text-slate-400 block font-semibold">Diajukan Oleh</span>
             <span className="font-semibold text-slate-800">{requesterName || request.userEmail}</span>
           </div>
-          <div>
-            <span className="text-[10px] text-slate-400 block font-semibold">Lokasi / Site</span>
-            <span className="font-bold text-slate-800">{request.siteId}</span>
+          <div className="col-span-2">
+            <span className="text-[10px] text-slate-400 block font-semibold mb-1">
+              Lokasi / Site {parsedSites.length > 1 ? `(${parsedSites.length} Multi-Site)` : ''}
+            </span>
+            {parsedSites.length > 0 ? (
+              <div className="flex flex-col gap-1.5">
+                {parsedSites.map((siteItem, idx) => (
+                  <div 
+                    key={idx} 
+                    className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2.5 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs"
+                  >
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <MapPin className="w-3.5 h-3.5 text-indigo-500" />
+                      <span className="font-mono font-bold text-indigo-600 text-xs">{siteItem.id}</span>
+                    </div>
+                    {siteItem.name && (
+                      <span className="text-xs font-semibold text-slate-700 sm:border-l sm:border-slate-200 sm:pl-2.5">
+                        {siteItem.name}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span className="font-bold text-slate-800">{request.siteId || '-'}</span>
+            )}
           </div>
           <div>
             <span className="text-[10px] text-slate-400 block font-semibold">Tanggal Pemakaian</span>

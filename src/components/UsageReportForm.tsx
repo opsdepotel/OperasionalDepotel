@@ -9,7 +9,7 @@ import { uploadReceiptFile } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle
+  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -626,18 +626,86 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                   </div>
 
-                  {/* Reject Comments if any */}
-                  {item.statusManager === ItemStatus.REJECTED && item.managerComment && (
-                    <div className="bg-red-50 text-red-700 p-2 rounded-xl text-[10px] border border-red-100 flex items-start gap-1">
-                      <Info className="w-3.5 h-3.5 shrink-0 text-red-500 mt-0.5" />
-                      <span><strong>Butuh Revisi (Manager):</strong> {item.managerComment}</span>
-                    </div>
-                  )}
+                  {/* Status Review Breakdown (Manager & Finance) - Only for User view */}
+                  {role === Role.USER && (
+                    <div className="bg-slate-50/80 rounded-xl p-2 border border-slate-100 mt-2">
+                      <div className="grid grid-cols-2 gap-2 text-[10px]">
+                        {/* Status Review Manager */}
+                        <div className="bg-white p-2 rounded-lg border border-slate-150 flex flex-col justify-between">
+                          <span className="text-[9px] font-bold text-slate-500 block mb-1">Review Manager</span>
+                          <div>
+                            <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md text-[9px] ${
+                              item.statusManager === ItemStatus.APPROVED
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                : item.statusManager === ItemStatus.REJECTED
+                                ? 'bg-red-50 text-red-700 border border-red-100'
+                                : 'bg-amber-50 text-amber-700 border border-amber-100'
+                            }`}>
+                              {item.statusManager === ItemStatus.APPROVED ? (
+                                <>
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+                                  <span>Disetujui</span>
+                                </>
+                              ) : item.statusManager === ItemStatus.REJECTED ? (
+                                <>
+                                  <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                  <span>Butuh Revisi</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Clock className="w-3 h-3 text-amber-500 shrink-0" />
+                                  <span>Menunggu</span>
+                                </>
+                              )}
+                            </span>
+                            {item.managerComment && (
+                              <p className={`text-[9px] leading-snug mt-1 font-medium ${
+                                item.statusManager === ItemStatus.REJECTED ? 'text-red-600 font-bold bg-red-50/50 p-1 rounded border border-red-100/50' : 'text-slate-500 italic'
+                              }`}>
+                                "{item.managerComment}"
+                              </p>
+                            )}
+                          </div>
+                        </div>
 
-                  {item.statusAdmin === ItemStatus.REJECTED && item.adminComment && (
-                    <div className="bg-red-50 text-red-700 p-2 rounded-xl text-[10px] border border-red-100 flex items-start gap-1">
-                      <Info className="w-3.5 h-3.5 shrink-0 text-red-500 mt-0.5" />
-                      <span><strong>Butuh Revisi (Admin):</strong> {item.adminComment}</span>
+                        {/* Status Review Finance */}
+                        <div className="bg-white p-2 rounded-lg border border-slate-150 flex flex-col justify-between">
+                          <span className="text-[9px] font-bold text-slate-500 block mb-1">Review Finance</span>
+                          <div>
+                            <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md text-[9px] ${
+                              item.statusAdmin === ItemStatus.APPROVED
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                : item.statusAdmin === ItemStatus.REJECTED
+                                ? 'bg-red-50 text-red-700 border border-red-100'
+                                : 'bg-amber-50 text-amber-700 border border-amber-100'
+                            }`}>
+                              {item.statusAdmin === ItemStatus.APPROVED ? (
+                                <>
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+                                  <span>Disetujui</span>
+                                </>
+                              ) : item.statusAdmin === ItemStatus.REJECTED ? (
+                                <>
+                                  <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                  <span>Butuh Revisi</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Clock className="w-3 h-3 text-amber-500 shrink-0" />
+                                  <span>Menunggu</span>
+                                </>
+                              )}
+                            </span>
+                            {item.adminComment && (
+                              <p className={`text-[9px] leading-snug mt-1 font-medium ${
+                                item.statusAdmin === ItemStatus.REJECTED ? 'text-red-600 font-bold bg-red-50/50 p-1 rounded border border-red-100/50' : 'text-slate-500 italic'
+                              }`}>
+                                "{item.adminComment}"
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
@@ -864,7 +932,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       {/* ----------------- POPUP MODAL FORM INPUT ----------------- */}
       {isFormOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-scale-up border border-slate-100 flex flex-col my-8">
             {/* Header */}
             <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/50">
@@ -1059,7 +1127,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       {/* ----------------- POPUP MODAL BUKTI PREVIEW ----------------- */}
       {previewItem && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1140,7 +1208,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       {/* ----------------- POPUP MODAL REQUEST PROOF PREVIEW ----------------- */}
       {previewRequestProof && request.buktiTransferUrl && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1221,7 +1289,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       {/* Activities Popup Modal */}
       {viewingActivityItem && (
-        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs z-[60] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up">
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
