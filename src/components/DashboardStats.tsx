@@ -72,7 +72,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               Pengisian BBM Duren Sawit
             </h3>
             <p className="text-[10px] text-slate-500 font-medium mt-0.5">
-              Akun ini memiliki hak akses resmi pengisian BBM operasional di pos Duren Sawit.
+              Akun ini memiliki hak akses resmi pengisian BBM operasional di SPBU Duren Sawit.
             </p>
           </div>
         </div>

@@ -120,10 +120,10 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-50">
         <div>
           <h2 className="font-display font-bold text-slate-800 text-sm">
-            {isTalangan ? 'Lapor Dana Talangan Pribadi' : 'Ajukan Anggaran Baru'}
+            {isTalangan ? 'Lapor Dana Talangan Pribadi' : 'Pengajuan Anggaran Baru'}
           </h2>
           <p className="text-[10px] text-slate-400">
-            {isTalangan ? 'Pelaporan penggunaan dana taktis talangan pribadi' : 'Pengajuan dana taktis / operasional'}
+            {isTalangan ? 'Pelaporan penggunaan dana talangan pribadi' : 'Pengajuan dana operasional'}
           </p>
         </div>
         <button
@@ -208,7 +208,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
               type="text"
               value={siteId}
               onChange={(e) => setSiteId(e.target.value.toUpperCase())}
-              placeholder="SITE-A"
+              placeholder="Site ID / lokasi"
               className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
               required
             />
@@ -321,7 +321,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
             <textarea
               value={keterangan}
               onChange={(e) => setKeterangan(e.target.value)}
-              placeholder={isTalangan ? "Sebutkan rincian kegiatan / peruntukan talangan dana (misal: Pembelian genset darurat di lapangan)" : "Sebutkan rincian kebutuhan dana (misal: Pembelian solar generator site, akomodasi tim lapangan)"}
+              placeholder="Sebutkan rincian rencana penggunaan dana"
               rows={3}
               className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
               required

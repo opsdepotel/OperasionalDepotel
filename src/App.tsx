@@ -1627,7 +1627,7 @@ export default function App() {
                       )}
 
                       {/* Action buttons moved here for USER role */}
-                      {activeRole === Role.USER && (
+                      {activeRole === Role.USER && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && (
                         <div className="flex gap-2 pt-1">
                           <button
                             onClick={() => {

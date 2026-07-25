@@ -503,18 +503,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   Site: <span className="text-indigo-600 font-bold">{siteResults[0].id}</span> - {siteResults[0].siteName}
                 </p>
                 {siteResults[0].coordinates && (
-                  <p className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                    Koord:{" "}
-                    <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(siteResults[0].coordinates.trim())}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-0.5 transition-colors"
-                      title="Buka di Google Maps"
-                    >
-                      <span>{siteResults[0].coordinates}</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                  <p className="text-[10px] text-slate-500 font-mono">
+                    {siteResults[0].coordinates}
                   </p>
                 )}
               </div>
@@ -537,14 +527,14 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-slate-800">
           <div>
             <span className="text-[10px] text-slate-400 block font-semibold">
-              {isTalangan ? 'Sumber Anggaran' : 'Dana Ditransfer Admin'}
+              {isTalangan ? 'Sumber Anggaran' : 'Dana ditransfer'}
             </span>
             <span className="text-sm font-bold font-display text-blue-400">
               {isTalangan ? 'Talangan Pribadi' : formatIDR(request.adminActionAmount)}
             </span>
           </div>
           <div>
-            <span className="text-[10px] text-slate-400 block font-semibold">Total Dilaporkan (User)</span>
+            <span className="text-[10px] text-slate-400 block font-semibold">Total dilaporkan</span>
             <span className={`text-sm font-bold font-display ${!isTalangan && totalReportedAmount > request.adminActionAmount ? 'text-red-400' : 'text-emerald-400'}`}>
               {formatIDR(totalReportedAmount)}
             </span>
@@ -572,27 +562,15 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               <h4 className="text-xs font-bold text-slate-800">Dokumen Penyelesaian Transaksi</h4>
             </div>
           </div>
-          <p className="text-[10px] text-slate-500 font-medium">
-            Transaksi ini telah selesai disesuaikan oleh Admin dengan lampiran dokumen pendukung sebagai bukti potongan atau transfer.
-          </p>
-          <div className="flex gap-2">
+          <div>
             <button
               type="button"
               onClick={() => setPreviewRequestProof(true)}
-              className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
             >
               <Eye className="w-3.5 h-3.5" />
               <span>Lihat Bukti Dokumen</span>
             </button>
-            <a
-              href={request.buktiTransferUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="py-2 px-3 bg-white hover:bg-slate-50 text-indigo-600 font-bold text-[10px] rounded-xl border border-indigo-200 flex items-center justify-center gap-1.5 transition-all cursor-pointer text-center"
-            >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>Buka Dokumen Asli</span>
-            </a>
           </div>
         </div>
       )}
@@ -1180,14 +1158,14 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             </div>
 
             {/* Receipt metadata info */}
-            <div className="bg-slate-50 rounded-2xl p-3 text-xs text-slate-600 grid grid-cols-2 gap-2 border border-slate-100">
-              <div>
-                <span className="text-[9px] text-slate-400 font-bold block uppercase">Jumlah Penyesuaian</span>
-                <span className="font-bold text-slate-800">{formatIDR(request.adminActionAmount)}</span>
-              </div>
+            <div className="bg-slate-50 rounded-2xl p-3 text-xs text-slate-600 flex flex-col gap-2 border border-slate-100">
               <div>
                 <span className="text-[9px] text-slate-400 font-bold block uppercase">ID Proses (UID)</span>
                 <span className="font-bold text-indigo-600">{request.id}</span>
+              </div>
+              <div>
+                <span className="text-[9px] text-slate-400 font-bold block uppercase">Jumlah Transfer / Penyesuaian</span>
+                <span className="font-bold text-slate-800">{formatIDR(request.adminActionAmount)}</span>
               </div>
             </div>
 

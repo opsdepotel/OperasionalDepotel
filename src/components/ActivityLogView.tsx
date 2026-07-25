@@ -83,6 +83,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [siteName, setSiteName] = useState('');
   const [coordinatesDb, setCoordinatesDb] = useState('');
   const [coordinatesActual, setCoordinatesActual] = useState('');
+  const [gpsAddress, setGpsAddress] = useState('');
+  const [isGeocoding, setIsGeocoding] = useState(false);
   const [keterangan, setKeterangan] = useState('');
   const [originalPhotoFile, setOriginalPhotoFile] = useState<File | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -251,6 +253,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     };
   }, [originalPhotoFile, selectedSiteId, siteName, coordinatesDb, coordinatesActual]);
 
+  const matchedSite = selectedSiteId.trim() ? sites.find(s => s.siteId.toUpperCase() === selectedSiteId.trim().toUpperCase()) : null;
+
   // Auto populate site name and coordinates when selectedSiteId changes
   useEffect(() => {
     const trimmedId = selectedSiteId.trim().toUpperCase();
@@ -268,6 +272,38 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setCoordinatesDb('');
     }
   }, [selectedSiteId, sites]);
+
+  // Auto reverse geocode coordinatesActual / coordinatesDb to obtain address
+  useEffect(() => {
+    const coord = coordinatesActual || coordinatesDb;
+    if (!coord) {
+      setGpsAddress('');
+      return;
+    }
+    const parts = coord.split(',').map(s => s.trim());
+    if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
+      const lat = parts[0];
+      const lon = parts[1];
+      setIsGeocoding(true);
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.display_name) {
+            setGpsAddress(data.display_name);
+          } else {
+            setGpsAddress(`Lokasi GPS (${coord})`);
+          }
+        })
+        .catch(() => {
+          setGpsAddress(`Lokasi GPS (${coord})`);
+        })
+        .finally(() => {
+          setIsGeocoding(false);
+        });
+    } else {
+      setGpsAddress(coord);
+    }
+  }, [coordinatesActual, coordinatesDb]);
 
   // Auto trigger GPS lookup when form is opened
   useEffect(() => {
@@ -334,7 +370,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       await onSaveActivity({
         tanggal: getTodayStr(), // System date for real-time tracking
         siteId: trimmedSiteId,
-        siteName: siteName.trim() || trimmedSiteId,
+        siteName: matchedSite ? matchedSite.siteName : (gpsAddress || siteName.trim() || trimmedSiteId),
         coordinatesDb,
         coordinatesActual,
         keterangan: keterangan.trim()
@@ -345,6 +381,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setSiteName('');
       setCoordinatesDb('');
       setCoordinatesActual('');
+      setGpsAddress('');
       setKeterangan('');
       setOriginalPhotoFile(null);
       setPhotoFile(null);
@@ -404,25 +441,29 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Site ID Input */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">SITE ID</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">SITE ID / LOKASI</label>
                 <input
                   type="text"
                   value={selectedSiteId}
                   onChange={(e) => setSelectedSiteId(e.target.value)}
-                  placeholder="Masukkan SiteID (Contoh: SITE-001)"
+                  placeholder="Tuliskan SiteID / lokasi"
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl bg-slate-50 text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800"
                   id="activity-site-input"
                   required
                 />
               </div>
 
-              {/* Site Name Display */}
-              <div className="space-y-1 bg-slate-50 border border-slate-200/60 p-3 rounded-xl">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">NAMA SITE</span>
-                <span className="text-xs font-bold text-slate-700">
-                  {siteName || (selectedSiteId ? 'Site tidak terdaftar di database' : 'Masukkan SiteID di atas')}
-                </span>
-              </div>
+              {/* Site Name Display - Only shown if Site ID is verified */}
+              {matchedSite && (
+                <div className="space-y-1 bg-slate-50 border border-slate-200/60 p-3 rounded-xl">
+                  <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">
+                    NAMA SITE
+                  </span>
+                  <span className="text-xs font-bold text-slate-700 block">
+                    <span className="text-indigo-600 font-bold">{matchedSite.siteId}</span> - {matchedSite.siteName}
+                  </span>
+                </div>
+              )}
 
               {/* Coordinates Display (Hidden from view but kept in background for storage & watermarking) */}
               <div className="hidden">
