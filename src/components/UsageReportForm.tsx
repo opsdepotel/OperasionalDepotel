@@ -6,6 +6,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile } from '../types';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
+import { analyzeReceiptClientSide } from '../lib/clientGemini';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
@@ -293,27 +294,37 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       reader.onload = async () => {
         try {
           const base64Str = reader.result as string;
-          const response = await fetch('/api/analyze-receipt', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          let result: any = null;
+
+          try {
+            const response = await fetch('/api/analyze-receipt', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                imageBase64: base64Str,
+                mimeType: targetFile.type || 'image/jpeg'
+              })
+            });
+
+            const contentType = response.headers.get('content-type') || '';
+            if (response.ok && contentType.includes('application/json')) {
+              const resData = await response.json();
+              if (resData.success && resData.data) {
+                result = resData.data;
+              } else {
+                throw new Error(resData.error || 'Gagal dari API backend.');
+              }
+            } else {
+              throw new Error(`Endpoint /api/analyze-receipt tidak dapat dijangkau (${response.status})`);
+            }
+          } catch (serverErr: any) {
+            console.warn('Backend API call failed, trying client-side fallback:', serverErr);
+            result = await analyzeReceiptClientSide({
               imageBase64: base64Str,
               mimeType: targetFile.type || 'image/jpeg'
-            })
-          });
-
-          const contentType = response.headers.get('content-type') || '';
-          if (!contentType.includes('application/json')) {
-            const textErr = await response.text();
-            throw new Error(`Server returned non-JSON response (${response.status}): ${textErr.slice(0, 100)}`);
+            });
           }
 
-          const resData = await response.json();
-          if (!response.ok || !resData.success) {
-            throw new Error(resData.error || 'Gagal menganalisis nota dengan AI.');
-          }
-
-          const result = resData.data;
           setAiAnalysisResult(result);
 
           // Auto-fill form input fields
@@ -349,30 +360,42 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     });
 
     try {
-      const apiRes = await fetch('/api/analyze-receipt', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let result: any = null;
+
+      try {
+        const apiRes = await fetch('/api/analyze-receipt', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileId: item.buktiFileId,
+            imageUrl: item.buktiUrl,
+            googleAccessToken: googleToken
+          })
+        });
+
+        const contentType = apiRes.headers.get('content-type') || '';
+        if (apiRes.ok && contentType.includes('application/json')) {
+          const apiData = await apiRes.json();
+          if (apiData.success && apiData.data) {
+            result = apiData.data;
+          } else {
+            throw new Error(apiData.error || 'Gagal dari API backend.');
+          }
+        } else {
+          throw new Error(`Endpoint /api/analyze-receipt tidak dapat dijangkau (${apiRes.status})`);
+        }
+      } catch (serverErr: any) {
+        console.warn('Backend API call failed, trying client-side fallback:', serverErr);
+        result = await analyzeReceiptClientSide({
           fileId: item.buktiFileId,
           imageUrl: item.buktiUrl,
           googleAccessToken: googleToken
-        })
-      });
-
-      const contentType = apiRes.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        const textErr = await apiRes.text();
-        throw new Error(`Server returned non-JSON response (${apiRes.status}): ${textErr.slice(0, 100)}`);
-      }
-
-      const apiData = await apiRes.json();
-      if (!apiRes.ok || !apiData.success) {
-        throw new Error(apiData.error || 'Gagal menganalisis foto nota.');
+        });
       }
 
       setAiModalItem({
         item,
-        result: apiData.data,
+        result,
         loading: false,
         error: null
       });
