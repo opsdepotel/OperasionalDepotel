@@ -480,6 +480,24 @@ export default function App() {
       }
     } catch (err: any) {
       console.error('Login validation error:', err);
+
+      const isAuthError = err.message && (
+        err.message.includes('401') ||
+        err.message.toLowerCase().includes('authentication credentials') ||
+        err.message.toLowerCase().includes('invalid_grant') ||
+        err.message.toLowerCase().includes('unauthorized') ||
+        err.message.toLowerCase().includes('token')
+      );
+
+      if (isAuthError) {
+        console.warn('Google API returned 401 during login validation. Resetting Google auth...');
+        await handleGoogleAuthError();
+        const errMsg = 'Sesi Google OAuth telah berakhir atau tidak valid. Silakan hubungkan kembali Google Account Anda (ops.depotel@gmail.com).';
+        setLoginRejectError(errMsg);
+        onFormError(errMsg);
+        return;
+      }
+
       // Fallback to cache if offline / Sheet request fails
       const matched = profiles.find(
         (p) =>
@@ -1957,34 +1975,34 @@ export default function App() {
                               </div>
 
                               {req.buktiTransferUrl && (
-                                <div className="flex items-center gap-1.5 text-[10px] text-indigo-600 bg-indigo-50/40 p-2 rounded-xl border border-indigo-50/50">
-                                  <Paperclip className="w-3.5 h-3.5 shrink-0" />
-                                  <span className="font-semibold text-slate-500">Bukti Transfer:</span>
-                                  <button 
-                                    type="button"
-                                    onClick={() => setPreviewDocument({
-                                      url: req.buktiTransferUrl!,
-                                      fileId: req.buktiTransferFileId || undefined,
-                                      title: `Bukti Transfer (UID: ${req.id})`
-                                    })}
-                                    className="font-bold hover:underline cursor-pointer text-indigo-600 text-left"
-                                  >
-                                    Lihat Dokumen / Foto
-                                  </button>
-                                </div>
+                                <button 
+                                  type="button"
+                                  onClick={() => setPreviewDocument({
+                                    url: req.buktiTransferUrl!,
+                                    fileId: req.buktiTransferFileId || undefined,
+                                    title: `Bukti Transfer (UID: ${req.id})`
+                                  })}
+                                  className="w-full flex items-center gap-1.5 text-[10px] font-bold text-indigo-600 bg-indigo-50/50 hover:bg-indigo-100/70 p-2 rounded-xl border border-indigo-100/80 transition-colors cursor-pointer text-left"
+                                >
+                                  <Paperclip className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                                  <span>Bukti Transfer</span>
+                                </button>
                               )}
 
-                              {req.managerComment && req.status !== RequestStatus.REJECTED && (
-                                <div className="flex items-start gap-1.5 text-[10px] text-slate-600 bg-slate-50/80 p-2 rounded-xl border border-slate-100">
-                                  <span className="font-semibold text-slate-500 shrink-0">Catatan Manager:</span>
-                                  <span className="italic text-slate-700">{req.managerComment}</span>
-                                </div>
-                              )}
-
-                              {req.adminComment && (
-                                <div className="flex items-start gap-1.5 text-[10px] text-slate-600 bg-slate-50/80 p-2 rounded-xl border border-slate-100">
-                                  <span className="font-semibold text-slate-500 shrink-0">Catatan Finance:</span>
-                                  <span className="italic text-slate-700">{req.adminComment}</span>
+                              {((req.managerComment && req.status !== RequestStatus.REJECTED) || req.adminComment) && (
+                                <div className="bg-slate-50/80 p-2.5 rounded-xl border border-slate-100 space-y-1.5 text-[10px] text-slate-600">
+                                  {req.managerComment && req.status !== RequestStatus.REJECTED && (
+                                    <div className="flex items-start gap-1.5">
+                                      <span className="font-semibold text-slate-500 shrink-0">Catatan Manager:</span>
+                                      <span className="italic text-slate-700">{req.managerComment}</span>
+                                    </div>
+                                  )}
+                                  {req.adminComment && (
+                                    <div className="flex items-start gap-1.5">
+                                      <span className="font-semibold text-slate-500 shrink-0">Catatan Finance:</span>
+                                      <span className="italic text-slate-700">{req.adminComment}</span>
+                                    </div>
+                                  )}
                                 </div>
                               )}
 

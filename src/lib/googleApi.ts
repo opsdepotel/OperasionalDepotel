@@ -517,6 +517,9 @@ export async function fetchBudgetRequests(token: string, spreadsheetId: string):
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Z1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
+  if (res.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
   if (!res.ok) return [];
   const data = await res.json();
   return parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, data.values, mapToBudgetRequest);
@@ -530,6 +533,9 @@ export async function fetchUsageItems(token: string, spreadsheetId: string): Pro
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
+  if (res.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
   if (!res.ok) return [];
   const data = await res.json();
   return parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, data.values, mapToUsageItem);
@@ -543,6 +549,9 @@ export async function fetchProfiles(token: string, spreadsheetId: string): Promi
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
+  if (res.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
   if (!res.ok) return [];
   const data = await res.json();
   return parseSheetRows<UserProfile>(USERS_HEADERS, data.values, mapToUserProfile);
@@ -556,6 +565,9 @@ export async function fetchUserActivities(token: string, spreadsheetId: string):
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:Z1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
+  if (res.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
   if (!res.ok) return [];
   const data = await res.json();
   return parseSheetRows<UserActivity>(ACTIVITY_HEADERS, data.values, mapToUserActivity);
@@ -1124,6 +1136,10 @@ export async function fetchSites(token: string, spreadsheetId: string): Promise<
       headers: { Authorization: `Bearer ${token}` }
     });
     
+    if (metaRes.status === 401) {
+      throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+    }
+
     let resolvedTitle = 'SiteID'; // default fallback
     if (metaRes.ok) {
       const meta = await metaRes.json();
@@ -1144,6 +1160,10 @@ export async function fetchSites(token: string, spreadsheetId: string): Promise<
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(resolvedTitle)}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
+    
+    if (res.status === 401) {
+      throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+    }
     
     if (!res.ok) {
       console.warn(`Gagal membaca sheet "${resolvedTitle}". Pastikan sheet tersebut ada di Google Sheet.`);

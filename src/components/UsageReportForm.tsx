@@ -9,7 +9,8 @@ import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel
+  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel,
+  Sparkles, Bot, Scan, Brain
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -255,6 +256,135 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // AI Receipt Analysis States
+  const [isAnalyzingAi, setIsAnalyzingAi] = useState(false);
+  const [aiAnalysisResult, setAiAnalysisResult] = useState<{
+    namaVendor?: string;
+    tanggal?: string;
+    totalNominal?: number;
+    deskripsi?: string;
+    kategori?: string;
+    kejelasanBukti?: string;
+    ringkasanAnalisis?: string;
+  } | null>(null);
+
+  const [aiModalItem, setAiModalItem] = useState<{
+    item: UsageReportItem;
+    result: any;
+    loading: boolean;
+    error: string | null;
+  } | null>(null);
+
+  const handleAnalyzeSelectedFileWithAi = async (fileToAnalyze?: File) => {
+    const targetFile = fileToAnalyze || selectedFile;
+    if (!targetFile) {
+      setActionError('Pilih file atau ambil foto nota terlebih dahulu.');
+      return;
+    }
+
+    setIsAnalyzingAi(true);
+    setActionError(null);
+    setAiAnalysisResult(null);
+
+    try {
+      const reader = new FileReader();
+      reader.readAsDataURL(targetFile);
+      reader.onload = async () => {
+        try {
+          const base64Str = reader.result as string;
+          const response = await fetch('/api/analyze-receipt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              imageBase64: base64Str,
+              mimeType: targetFile.type || 'image/jpeg'
+            })
+          });
+
+          const contentType = response.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            const textErr = await response.text();
+            throw new Error(`Server returned non-JSON response (${response.status}): ${textErr.slice(0, 100)}`);
+          }
+
+          const resData = await response.json();
+          if (!response.ok || !resData.success) {
+            throw new Error(resData.error || 'Gagal menganalisis nota dengan AI.');
+          }
+
+          const result = resData.data;
+          setAiAnalysisResult(result);
+
+          // Auto-fill form input fields
+          if (result.totalNominal && result.totalNominal > 0) {
+            setNominal(String(result.totalNominal));
+          }
+          if (result.deskripsi || result.namaVendor) {
+            const textParts = [result.namaVendor, result.deskripsi].filter(Boolean);
+            setKeterangan(textParts.join(' - '));
+          }
+          if (result.tanggal && /^\d{4}-\d{2}-\d{2}$/.test(result.tanggal)) {
+            setTanggal(result.tanggal);
+          }
+        } catch (innerErr: any) {
+          setActionError('Analisis AI Error: ' + (innerErr.message || String(innerErr)));
+        } finally {
+          setIsAnalyzingAi(false);
+        }
+      };
+    } catch (err: any) {
+      setActionError('Gagal membaca file: ' + err.message);
+      setIsAnalyzingAi(false);
+    }
+  };
+
+  const handleAnalyzeExistingItemPhoto = async (item: UsageReportItem) => {
+    if (!item.buktiUrl && !item.buktiFileId) return;
+    setAiModalItem({
+      item,
+      result: null,
+      loading: true,
+      error: null
+    });
+
+    try {
+      const apiRes = await fetch('/api/analyze-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileId: item.buktiFileId,
+          imageUrl: item.buktiUrl,
+          googleAccessToken: googleToken
+        })
+      });
+
+      const contentType = apiRes.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        const textErr = await apiRes.text();
+        throw new Error(`Server returned non-JSON response (${apiRes.status}): ${textErr.slice(0, 100)}`);
+      }
+
+      const apiData = await apiRes.json();
+      if (!apiRes.ok || !apiData.success) {
+        throw new Error(apiData.error || 'Gagal menganalisis foto nota.');
+      }
+
+      setAiModalItem({
+        item,
+        result: apiData.data,
+        loading: false,
+        error: null
+      });
+    } catch (err: any) {
+      setAiModalItem({
+        item,
+        result: null,
+        loading: false,
+        error: err.message || String(err)
+      });
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -532,37 +662,66 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       )}
 
       {/* Financial Comparison Summary Card */}
-      <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-sm">
-        <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">
-          {isTalangan ? 'REKONSILIASI DANA TALANGAN PRIBADI' : 'REKONSILIASI NILAI ANGGARAN'}
-        </p>
-        <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-slate-800">
-          <div>
-            <span className="text-[10px] text-slate-400 block font-semibold">
-              {isTalangan ? 'Sumber Anggaran' : 'Dana ditransfer'}
-            </span>
-            <span className="text-sm font-bold font-display text-blue-400">
-              {isTalangan ? 'Talangan Pribadi' : formatIDR(request.adminActionAmount)}
-            </span>
+      {(() => {
+        const reconDiff = request.adminActionAmount - totalReportedAmount;
+        return (
+          <div className="bg-slate-900 text-white rounded-2xl p-4 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">
+              {isTalangan ? 'REKONSILIASI DANA TALANGAN PRIBADI' : 'REKONSILIASI NILAI ANGGARAN'}
+            </p>
+            <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-slate-800 text-left">
+              <div>
+                <span className="text-[10px] text-slate-400 block font-semibold truncate">
+                  {isTalangan ? 'Sumber Anggaran' : 'Dana Ditransfer'}
+                </span>
+                <span className="text-xs sm:text-sm font-bold font-display text-blue-400 block mt-0.5">
+                  {isTalangan ? 'Talangan' : formatIDR(request.adminActionAmount)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block font-semibold truncate">Total Dilaporkan</span>
+                <span className="text-xs sm:text-sm font-bold font-display text-emerald-400 block mt-0.5">
+                  {formatIDR(totalReportedAmount)}
+                </span>
+              </div>
+              <div>
+                <span className="text-[10px] text-slate-400 block font-semibold truncate">
+                  {reconDiff > 0 ? 'Lebih Operasional' : reconDiff < 0 ? 'Kurang Operasional' : 'Status'}
+                </span>
+                <span className={`text-xs sm:text-sm font-bold font-display block mt-0.5 ${
+                  reconDiff > 0 ? 'text-amber-400' : reconDiff < 0 ? 'text-rose-400' : 'text-emerald-400'
+                }`}>
+                  {reconDiff > 0 
+                    ? formatIDR(reconDiff) 
+                    : reconDiff < 0 
+                      ? formatIDR(Math.abs(reconDiff)) 
+                      : 'Balance (Pas)'}
+                </span>
+              </div>
+            </div>
+            <div className="mt-3 text-[10px] text-slate-300 flex items-start gap-1.5 bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
+              <Info className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
+                reconDiff > 0 ? 'text-amber-400' : reconDiff < 0 ? 'text-rose-400' : 'text-emerald-400'
+              }`} />
+              <span>
+                {isTalangan
+                  ? request.adminActionAmount > 0
+                    ? reconDiff === 0
+                      ? 'Balance: Pembayaran ganti rugi dana talangan telah pas dengan total pengeluaran dilaporkan.'
+                      : reconDiff > 0
+                        ? `Lebih Transfer: Nominal transfer ganti rugi melebihi pengeluaran sebesar ${formatIDR(reconDiff)}.`
+                        : `Kurang Transfer: Nominal ganti rugi masih kurang ${formatIDR(Math.abs(reconDiff))} dari total pengeluaran.`
+                    : 'Seluruh nominal pengeluaran di atas dibayarkan secara mandiri oleh user (Talangan Pribadi).'
+                  : reconDiff > 0
+                    ? `Lebih Operasional: Terdapat sisa/kelebihan dana operasional sebesar ${formatIDR(reconDiff)}.`
+                    : reconDiff < 0
+                      ? `Kurang Operasional: Laporan penggunaan melebihi dana transfer sebesar ${formatIDR(Math.abs(reconDiff))}.`
+                      : 'Balance: Jumlah laporan penggunaan dan dana yang ditransfer seimbang (Pas).'}
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-[10px] text-slate-400 block font-semibold">Total dilaporkan</span>
-            <span className={`text-sm font-bold font-display ${!isTalangan && totalReportedAmount > request.adminActionAmount ? 'text-red-400' : 'text-emerald-400'}`}>
-              {formatIDR(totalReportedAmount)}
-            </span>
-          </div>
-        </div>
-        <div className="mt-3 text-[10px] text-slate-400 flex items-start gap-1.5 bg-slate-800/50 p-2 rounded-xl">
-          <Info className="w-3.5 h-3.5 text-blue-400 shrink-0 mt-0.5" />
-          <span>
-            {isTalangan
-              ? 'Seluruh nominal pengeluaran di atas dibayarkan secara mandiri oleh user, dan akan mengurangi saldo operasional Anda setelah disetujui.'
-              : totalReportedAmount > request.adminActionAmount
-                ? 'Peringatan: Jumlah yang dilaporkan melebihi dana yang ditransfer oleh admin!'
-                : 'Jumlah laporan yang dicatat masih dalam batas alokasi dana.'}
-          </span>
-        </div>
-      </div>
+        );
+      })()}
 
       {/* Catatan Manager / Finance Card */}
       {(request.managerComment || request.adminComment) && (
@@ -656,8 +815,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                   </div>
 
-                  {/* Status Review Breakdown (Manager & Finance) - Only for User view */}
-                  {role === Role.USER && (
+                  {/* Status Review Breakdown (Manager & Finance) - For User view OR when request is CLOSED */}
+                  {(role === Role.USER || request.status === RequestStatus.CLOSED) && (
                     <div className="bg-slate-50/80 rounded-xl p-2 border border-slate-100 mt-2">
                       <div className="grid grid-cols-2 gap-2 text-[10px]">
                         {/* Status Review Manager */}
@@ -739,8 +898,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                   )}
 
-                  {/* Decision Buttons for Manager and Finance */}
-                  {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                  {/* Decision Buttons for Manager and Finance (When NOT CLOSED) */}
+                  {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.CLOSED && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 space-y-2 mt-2">
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">
                         Review Keputusan ({role === Role.MANAGER ? 'Manager' : 'Finance'})
@@ -757,87 +916,58 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         </div>
                       )}
 
-                      {request.status === RequestStatus.CLOSED ? (
-                        <div className="mt-1 flex flex-col gap-1">
-                          <div className={`text-xs font-bold px-3 py-1.5 rounded-lg border w-fit flex items-center gap-1.5 ${
-                            (role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.APPROVED 
-                              ? 'text-emerald-600 bg-emerald-50/50 border-emerald-100' 
-                              : (role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.REJECTED 
-                                ? 'text-red-600 bg-red-50/50 border-red-100'
-                                : 'text-slate-600 bg-slate-50/50 border-slate-100'
-                          }`}>
-                            {(role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.APPROVED ? (
-                              <>
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                                <span>Disetujui ({role === Role.MANAGER ? 'Manager' : 'Finance'})</span>
-                              </>
-                            ) : (role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.REJECTED ? (
-                              <>
-                                <XCircle className="w-3.5 h-3.5 text-red-500" />
-                                <span>Revisi ({role === Role.MANAGER ? 'Manager' : 'Finance'})</span>
-                              </>
-                            ) : (
-                              <span>Belum Ditentukan ({role === Role.MANAGER ? 'Manager' : 'Finance'})</span>
-                            )}
-                          </div>
-                          {(role === Role.MANAGER ? item.managerComment : item.adminComment) && (
-                            <p className="text-[10px] text-slate-500 italic mt-0.5">"{role === Role.MANAGER ? item.managerComment : item.adminComment}"</p>
-                          )}
+                      {role === Role.MANAGER && item.statusManager === ItemStatus.APPROVED ? (
+                        <div className="text-center py-2 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-700 font-bold text-xs flex items-center justify-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                          <span>Telah Disetujui Manager</span>
                         </div>
                       ) : (
-                        role === Role.MANAGER && item.statusManager === ItemStatus.APPROVED ? (
-                          <div className="text-center py-2 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-700 font-bold text-xs flex items-center justify-center gap-2">
-                            <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                            <span>Telah Disetujui Manager</span>
+                        <>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleDecisionChange(item.id, ItemStatus.APPROVED)}
+                              className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                decisions[item.id]?.status === ItemStatus.APPROVED
+                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                              <span>Setujui</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDecisionChange(item.id, ItemStatus.REJECTED)}
+                              className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                decisions[item.id]?.status === ItemStatus.REJECTED
+                                  ? 'border-red-500 bg-red-50 text-red-700 font-bold'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                              }`}
+                            >
+                              <XCircle className="w-3.5 h-3.5 text-red-500" />
+                              <span>Revisi</span>
+                            </button>
                           </div>
-                        ) : (
-                          <>
-                            <div className="grid grid-cols-2 gap-2">
-                              <button
-                                type="button"
-                                onClick={() => handleDecisionChange(item.id, ItemStatus.APPROVED)}
-                                className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                                  decisions[item.id]?.status === ItemStatus.APPROVED
-                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
-                                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                }`}
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                                <span>Setujui</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDecisionChange(item.id, ItemStatus.REJECTED)}
-                                className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                                  decisions[item.id]?.status === ItemStatus.REJECTED
-                                    ? 'border-red-500 bg-red-50 text-red-700 font-bold'
-                                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                }`}
-                              >
-                                <XCircle className="w-3.5 h-3.5 text-red-500" />
-                                <span>Revisi</span>
-                              </button>
-                            </div>
 
-                            {/* If rejected/revision, reason is required */}
-                            {decisions[item.id]?.status === ItemStatus.REJECTED && (
-                              <div className="space-y-1 mt-1.5">
-                                <label className="block text-[9px] font-bold text-red-500 uppercase">Alasan Revisi (Wajib)</label>
-                                <div className="relative">
-                                  <input
-                                    type="text"
-                                    value={decisions[item.id]?.comment || ''}
-                                    onChange={(e) => handleCommentChange(item.id, e.target.value)}
-                                    placeholder="Contoh: Bukti buram, Nominal tidak sesuai nota"
-                                    className="w-full pl-8 pr-2 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                                    required
-                                  />
-                                  <MessageSquare className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-                                </div>
+                          {/* If rejected/revision, reason is required */}
+                          {decisions[item.id]?.status === ItemStatus.REJECTED && (
+                            <div className="space-y-1 mt-1.5">
+                              <label className="block text-[9px] font-bold text-red-500 uppercase">Alasan Revisi (Wajib)</label>
+                              <div className="relative">
+                                <input
+                                  type="text"
+                                  value={decisions[item.id]?.comment || ''}
+                                  onChange={(e) => handleCommentChange(item.id, e.target.value)}
+                                  placeholder="Contoh: Bukti buram, Nominal tidak sesuai nota"
+                                  className="w-full pl-8 pr-2 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                                  required
+                                />
+                                <MessageSquare className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
                               </div>
-                            )}
-                          </>
-                        )
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}
@@ -852,6 +982,16 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       >
                         <span>Nota</span>
                         <ExternalLink className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleAnalyzeExistingItemPhoto(item)}
+                        className="text-purple-600 hover:text-purple-800 font-semibold flex items-center gap-1 cursor-pointer border-l border-slate-200 pl-3"
+                        title="Analisis Bukti Nota Menggunakan AI Gemini"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                        <span>Analisis AI</span>
                       </button>
 
                       {(role === Role.MANAGER || role === Role.FINANCE) && (
@@ -1093,6 +1233,55 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   <div className="bg-amber-50 border border-amber-100 text-amber-700 p-3 rounded-xl text-xs flex items-center gap-2">
                     <AlertCircle className="w-4.5 h-4.5 text-amber-500 shrink-0" />
                     <span>Bukti nota wajib diupload atau diambil foto kamera</span>
+                  </div>
+                )}
+
+                {/* AI Scan Action & Results */}
+                {selectedFile && (
+                  <div className="space-y-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleAnalyzeSelectedFileWithAi()}
+                      disabled={isAnalyzingAi}
+                      className="w-full py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-sm cursor-pointer transition-all disabled:opacity-50"
+                    >
+                      {isAnalyzingAi ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Gemini Menganalisis Foto Nota...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4 text-amber-300" />
+                          <span>Pindai & Isi Otomatis dengan AI Gemini</span>
+                        </>
+                      )}
+                    </button>
+
+                    {aiAnalysisResult && (
+                      <div className="bg-purple-50/80 border border-purple-200 rounded-2xl p-3 text-xs space-y-1.5 text-purple-900 animate-fade-in">
+                        <div className="flex items-center justify-between border-b border-purple-200/60 pb-1.5">
+                          <div className="flex items-center gap-1.5 font-bold text-purple-800">
+                            <Bot className="w-4 h-4 text-purple-600" />
+                            <span>Hasil Analisis AI Gemini</span>
+                          </div>
+                          {aiAnalysisResult.kejelasanBukti && (
+                            <span className="px-2 py-0.5 text-[9px] font-bold rounded-full bg-purple-100 text-purple-700">
+                              Kejelasan: {aiAnalysisResult.kejelasanBukti}
+                            </span>
+                          )}
+                        </div>
+                        {aiAnalysisResult.namaVendor && (
+                          <p><span className="font-semibold text-purple-700">Vendor:</span> {aiAnalysisResult.namaVendor}</p>
+                        )}
+                        {aiAnalysisResult.totalNominal && (
+                          <p><span className="font-semibold text-purple-700">Nominal Terdeteksi:</span> {formatIDR(aiAnalysisResult.totalNominal)}</p>
+                        )}
+                        {aiAnalysisResult.ringkasanAnalisis && (
+                          <p className="text-[11px] text-purple-800 leading-snug">{aiAnalysisResult.ringkasanAnalisis}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1623,6 +1812,111 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           </div>
         );
       })()}
+
+      {/* ----------------- POPUP MODAL ANALISIS AI ----------------- */}
+      {aiModalItem && (
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] overflow-y-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-50 flex items-center justify-center text-purple-600">
+                  <Sparkles className="w-4.5 h-4.5 text-purple-600" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-slate-800">Analisis AI Gemini</h3>
+                  <p className="text-[10px] text-slate-400 font-semibold truncate max-w-[200px]">{aiModalItem.item.keterangan}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAiModalItem(null)}
+                className="w-8 h-8 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {aiModalItem.loading ? (
+              <div className="py-12 text-center space-y-3">
+                <Loader2 className="w-8 h-8 text-purple-600 animate-spin mx-auto" />
+                <p className="text-xs font-semibold text-slate-600">Gemini AI sedang menganalisis foto nota...</p>
+              </div>
+            ) : aiModalItem.error ? (
+              <div className="bg-red-50 border border-red-100 text-red-600 rounded-2xl p-4 text-xs space-y-2">
+                <div className="flex items-center gap-2 font-bold">
+                  <AlertCircle className="w-4 h-4" />
+                  <span>Gagal Menganalisis Foto</span>
+                </div>
+                <p>{aiModalItem.error}</p>
+              </div>
+            ) : aiModalItem.result ? (
+              <div className="space-y-3">
+                {/* Vendor & Nominal Card */}
+                <div className="bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-100 rounded-2xl p-4 space-y-2">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-purple-500">Penyedia / Vendor</span>
+                      <p className="text-sm font-extrabold text-slate-800">{aiModalItem.result.namaVendor || '-'}</p>
+                    </div>
+                    {aiModalItem.result.kejelasanBukti && (
+                      <span className="px-2.5 py-1 text-[10px] font-bold rounded-lg bg-white/80 text-purple-700 shadow-xs border border-purple-100">
+                        {aiModalItem.result.kejelasanBukti}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-purple-100/60 text-xs">
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-purple-500 block">Nominal Terdeteksi</span>
+                      <span className="font-extrabold text-indigo-700">
+                        {aiModalItem.result.totalNominal ? formatIDR(aiModalItem.result.totalNominal) : '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] uppercase font-bold text-purple-500 block">Nominal Dilaporkan</span>
+                      <span className="font-extrabold text-slate-800">
+                        {formatIDR(aiModalItem.item.nominal)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {aiModalItem.result.totalNominal && Math.abs(aiModalItem.result.totalNominal - aiModalItem.item.nominal) > 100 && (
+                    <div className="mt-2 bg-amber-100/80 border border-amber-200 text-amber-800 rounded-xl p-2.5 text-[11px] flex items-center gap-2 font-semibold">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Perhatian: Nominal terdeteksi AI berbeda dengan nominal yang dilaporkan!</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Details */}
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3.5 space-y-2 text-xs">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Deskripsi Barang/Jasa</span>
+                    <p className="text-slate-700 font-medium mt-0.5">{aiModalItem.result.deskripsi || '-'}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Kategori Pengeluaran</span>
+                    <p className="text-slate-700 font-medium mt-0.5">{aiModalItem.result.kategori || '-'}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Catatan AI Audit</span>
+                    <p className="text-slate-700 font-medium mt-0.5 leading-relaxed">{aiModalItem.result.ringkasanAnalisis || '-'}</p>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => setAiModalItem(null)}
+              className="w-full py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl transition-all cursor-pointer text-center"
+            >
+              Tutup
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );
