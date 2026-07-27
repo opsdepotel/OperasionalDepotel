@@ -151,11 +151,6 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-          {deviceId && (
-            <p className="mt-1.5 text-[11px] text-slate-400 font-medium truncate">
-              Device ID: <span className="font-mono text-slate-400 select-all">{deviceId}</span>
-            </p>
-          )}
         </div>
 
         <button
@@ -175,6 +170,12 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
             </>
           )}
         </button>
+
+        {deviceId && (
+          <p className="text-[10px] text-slate-400 font-mono text-center pt-1 truncate select-all">
+            Device ID: {deviceId}
+          </p>
+        )}
       </form>
 
       {/* Switch Google Account Option */}

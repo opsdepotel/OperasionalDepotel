@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity } from '../types';
+import { parseNumericValue } from '../lib/googleApi';
 import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink } from 'lucide-react';
 
 interface BbmListModalProps {
@@ -144,13 +145,14 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   });
 
   // Format Currency
-  const formatIDR = (num: number) => {
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
-    }).format(num);
+    }).format(val);
   };
 
   // Helper date display e.g. "Rabu, 22 Juli 2026"

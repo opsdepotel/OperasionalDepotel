@@ -5,6 +5,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, SiteInfo } from '../types';
+import { parseNumericValue } from '../lib/googleApi';
 import { Fuel, Calendar, MapPin, Coins, FileText, Camera, RefreshCw, CheckCircle2, AlertCircle, X, ExternalLink } from 'lucide-react';
 
 interface BbmRefillModalProps {
@@ -170,8 +171,8 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    const amount = Number(nominal);
-    if (isNaN(amount) || amount <= 0) {
+    const amount = parseNumericValue(nominal);
+    if (amount <= 0) {
       setError('Nominal pengisian BBM harus lebih besar dari Rp 0.');
       return;
     }
@@ -375,9 +376,8 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
                 Rp
               </span>
               <input
-                type="number"
-                min="1000"
-                step="1000"
+                type="text"
+                inputMode="numeric"
                 value={nominal}
                 onChange={(e) => setNominal(e.target.value)}
                 placeholder="0"
@@ -385,9 +385,9 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
                 className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
               />
             </div>
-            {nominal && Number(nominal) > 0 && (
+            {nominal && parseNumericValue(nominal) > 0 && (
               <p className="text-[10px] text-indigo-600 font-bold mt-1">
-                Total Nominal: Rp {Number(nominal).toLocaleString('id-ID')}
+                Total Nominal: Rp {parseNumericValue(nominal).toLocaleString('id-ID')}
               </p>
             )}
           </div>

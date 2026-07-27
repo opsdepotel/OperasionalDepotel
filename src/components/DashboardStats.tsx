@@ -5,7 +5,8 @@
 
 import React from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity } from '../types';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel } from 'lucide-react';
+import { parseNumericValue } from '../lib/googleApi';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle } from 'lucide-react';
 
 interface DashboardStatsProps {
   role: Role;
@@ -41,13 +42,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onOpenBbmListModal
 }) => {
   // Format Currency
-  const formatIDR = (num: number) => {
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
-    }).format(num);
+    }).format(val);
   };
 
   const handleCardClick = (key: string) => {
@@ -82,7 +84,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   // Compute stats based on roles
   if (role === Role.USER) {
-    const myReqs = requests.filter(r => r.userEmail.toLowerCase() === email.toLowerCase());
+    const myReqs = requests.filter(r => r.userEmail.toLowerCase() === email.toLowerCase() && r.status !== RequestStatus.CANCELLED);
     const myReqIds = myReqs.map(r => r.id);
     const myUsage = usageItems.filter(item => myReqIds.includes(item.requestId));
 
@@ -100,13 +102,30 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const saldoOperasional = totalTransferred + totalAdjustments - totalReportedApproved;
 
     // Active tasks for User:
-    // 1. Rejected requests (need adjustment/resubmit - or just awareness)
+    // 1. Rejected requests (need cancellation / review)
     // 2. Transferred requests that need usage report filling (status is TRANSFERRED or REPORTING)
-    // 3. Reports with some rejected items that need correction (status is REPORTING and there are rejected usage items)
+    // 3. Reports with some rejected items that need correction
     const taskReportNeeded = myReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING).length;
-    const taskCorrections = myReqs.filter(r => r.status === RequestStatus.REPORTING && myUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))).length;
+    const taskCorrections = myReqs.filter(r => 
+      [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
+      myUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
+    ).length;
+    const taskRejected = myReqs.filter(r => r.status === RequestStatus.REJECTED).length;
 
-    const totalTasks = taskReportNeeded + taskCorrections;
+    const totalTasks = taskReportNeeded + taskCorrections + taskRejected;
+
+    // Count rejected items in requests currently in PROSES LAPORAN
+    const rejectedItemsInReportingCount = myUsage.filter(item => {
+      const parentReq = myReqs.find(r => r.id === item.requestId);
+      if (!parentReq) return false;
+      const isReportingState = [
+        RequestStatus.TRANSFERRED,
+        RequestStatus.REPORTING,
+        RequestStatus.REVIEW_MANAGER,
+        RequestStatus.REVIEW_ADMIN
+      ].includes(parentReq.status);
+      return isReportingState && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED);
+    }).length;
 
     // UID count by status
     const pendingApprCount = myReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
@@ -122,6 +141,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       r.status === RequestStatus.REVIEW_ADMIN
     ).length;
     const closedCount = myReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
+    const rejectedCount = taskRejected;
 
     return (
       <div className="space-y-4">
@@ -134,7 +154,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <div>
               <h3 className="font-display font-bold text-amber-900 text-xs tracking-wide uppercase">TUGAS ANDA ({totalTasks})</h3>
               <p className="text-xs text-amber-700 font-medium mt-0.5">
-                Ada {taskReportNeeded} pengajuan yang ditransfer dan siap dilaporkan, serta {taskCorrections} laporan yang perlu perbaikan.
+                {[
+                  taskReportNeeded > 0 ? `${taskReportNeeded} pengajuan siap dilaporkan` : '',
+                  taskCorrections > 0 ? `${taskCorrections} laporan perlu perbaikan` : '',
+                  taskRejected > 0 ? `${taskRejected} pengajuan ditolak Manager` : ''
+                ].filter(Boolean).join(', ')}.
               </p>
             </div>
           </div>
@@ -152,8 +176,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
-        {/* 2x2 Stats Cards Grid */}
-        <div className="grid grid-cols-2 gap-4">
+        {/* Stats Cards Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div 
             onClick={() => handleCardClick('PENDING')}
             className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
@@ -193,13 +217,27 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             }`}
           >
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PROSES LAPORAN</p>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PROSES LAPORAN</p>
+                {rejectedItemsInReportingCount > 0 && (
+                  <span className="text-[9px] font-extrabold text-rose-600 bg-rose-100 border border-rose-200 px-2 py-0.5 rounded-full animate-pulse">
+                    {rejectedItemsInReportingCount} Perlu Perbaikan
+                  </span>
+                )}
+              </div>
               <div className="flex items-end justify-between mt-2">
                 <span className="text-3xl font-display font-bold text-slate-900">{reportingCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
                 <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Review</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Sedang direview</p>
+            {rejectedItemsInReportingCount > 0 ? (
+              <p className="text-[10px] font-bold text-rose-600 mt-2 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                <span>{rejectedItemsInReportingCount} item review perlu perbaikan</span>
+              </p>
+            ) : (
+              <p className="text-[9px] text-slate-400 mt-2 font-medium">Sedang direview</p>
+            )}
           </div>
 
           <div 
@@ -216,6 +254,22 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               </div>
             </div>
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Dinyatakan Closed oleh Finance</p>
+          </div>
+
+          <div 
+            onClick={() => handleCardClick('REJECTED')}
+            className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-rose-300 hover:shadow-md col-span-2 sm:col-span-1 ${
+              activeFilter === 'REJECTED' ? 'border-rose-500 bg-rose-50/20 ring-2 ring-rose-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN DITOLAK</p>
+              <div className="flex items-end justify-between mt-2">
+                <span className="text-3xl font-display font-bold text-rose-600">{rejectedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Ditolak</span>
+              </div>
+            </div>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Ditolak Manager, klik untuk lihat & batalkan</p>
           </div>
         </div>
 

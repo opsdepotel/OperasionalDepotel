@@ -19,7 +19,8 @@ export enum RequestStatus {
   REVIEW_MANAGER = 'REVIEW_MANAGER', // Reports submitted, waiting for Manager review
   REVIEW_ADMIN = 'REVIEW_ADMIN', // Reports approved by Manager, waiting for Admin review
   CLOSED = 'CLOSED', // All reports approved by Admin, process closed
-  PENDING_TALANGAN_TRANSFER = 'PENDING_TALANGAN_TRANSFER' // Added: Waiting for Admin to transfer/reimburse bailout funds
+  PENDING_TALANGAN_TRANSFER = 'PENDING_TALANGAN_TRANSFER', // Waiting for Admin to transfer/reimburse bailout funds
+  CANCELLED = 'CANCELLED' // Cancelled manually or auto-cancelled after 2 days
 }
 
 export enum ItemStatus {
@@ -40,7 +41,9 @@ export interface BudgetRequest {
   managerActionAmount: number;
   managerComment: string;
   adminActionAmount: number;
+  adminComment?: string;
   createdAt: string;
+  timestamp?: string;
   buktiTransferUrl?: string;
   buktiTransferFileId?: string;
 }
@@ -58,6 +61,7 @@ export interface UsageReportItem {
   statusAdmin: ItemStatus;
   adminComment: string;
   updatedAt: string;
+  timestamp?: string;
 }
 
 export interface UserProfile {
@@ -84,6 +88,7 @@ export interface UserActivity {
   userEmail: string;
   tanggal: string; // YYYY-MM-DD
   createdAt: string; // Timestamp
+  timestamp?: string;
   siteId: string;
   siteName: string;
   coordinatesDb: string; // From database

@@ -33,13 +33,15 @@ const FOLDER_NAME = 'Operasional Perusahaan Bukti';
 const PENGAJUAN_HEADERS = [
   'UID', 'UserEmail', 'ManagerEmail', 'TanggalPemakaian', 'SiteID',
   'JumlahPengajuan', 'Keterangan', 'Status', 'ManagerActionAmount',
-  'ManagerComment', 'AdminActionAmount', 'CreatedAt', 'BuktiTransferUrl', 'BuktiTransferFileId'
+  'ManagerComment', 'AdminActionAmount', 'AdminComment', 'CreatedAt', 'BuktiTransferUrl', 'BuktiTransferFileId',
+  'Timestamp'
 ];
 
 const LAPORAN_HEADERS = [
   'ItemUID', 'UID', 'TanggalPenggunaan', 'Nominal', 'Keterangan',
   'BuktiUrl', 'BuktiFileId', 'StatusManager', 'ManagerComment',
-  'StatusAdmin', 'AdminComment', 'UpdatedAt'
+  'StatusAdmin', 'AdminComment', 'UpdatedAt',
+  'Timestamp'
 ];
 
 const USERS_HEADERS = [
@@ -47,7 +49,8 @@ const USERS_HEADERS = [
 ];
 
 const ACTIVITY_HEADERS = [
-  'ActivityID', 'UserEmail', 'Tanggal', 'CreatedAt', 'SiteID', 'SiteName', 'CoordinatesDb', 'CoordinatesActual', 'Keterangan', 'BuktiUrl', 'BuktiFileId'
+  'ActivityID', 'UserEmail', 'Tanggal', 'CreatedAt', 'SiteID', 'SiteName', 'CoordinatesDb', 'CoordinatesActual', 'Keterangan', 'BuktiUrl', 'BuktiFileId',
+  'Timestamp'
 ];
 
 // Helper to convert sheet rows (2D array) to JSON objects
@@ -81,41 +84,87 @@ function parseSheetRows<T>(headers: string[], rows: any[][], mapper: (rowMap: Re
   });
 }
 
+// Helper to parse numeric values from various formats (number, string with dots/commas/Rp, etc.)
+export function parseNumericValue(val: any): number {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const str = String(val).trim();
+  if (!str) return 0;
+
+  if (/^\d+$/.test(str)) {
+    return parseInt(str, 10);
+  }
+
+  let cleaned = str.replace(/Rp\.?/gi, '').trim();
+  if (cleaned.includes(',') && cleaned.includes('.')) {
+    if (cleaned.lastIndexOf(',') > cleaned.lastIndexOf('.')) {
+      cleaned = cleaned.split(',')[0].replace(/\./g, '');
+    } else {
+      cleaned = cleaned.split('.')[0].replace(/,/g, '');
+    }
+  } else if (cleaned.includes('.')) {
+    const parts = cleaned.split('.');
+    if (parts.length > 1 && parts.every((p, idx) => idx === 0 || p.length === 3)) {
+      cleaned = parts.join('');
+    } else {
+      cleaned = cleaned.replace(/\./g, '');
+    }
+  } else if (cleaned.includes(',')) {
+    const parts = cleaned.split(',');
+    if (parts.length > 1 && parts.every((p, idx) => idx === 0 || p.length === 3)) {
+      cleaned = parts.join('');
+    } else {
+      cleaned = parts[0];
+    }
+  }
+  const parsed = parseInt(cleaned.replace(/[^0-9]/g, ''), 10);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
 // Map row map to BudgetRequest
 function mapToBudgetRequest(row: Record<string, any>): BudgetRequest {
+  const ts = String(row.Timestamp || row.timestamp || row.CreatedAt || '');
+  const rawJumlah = row.JumlahPengajuan ?? row.jumlahPengajuan ?? row['Jumlah Pengajuan'] ?? row.Jumlah ?? row.Nominal;
+  const rawMgrAction = row.ManagerActionAmount ?? row.managerActionAmount ?? row['Manager Action Amount'];
+  const rawAdminAction = row.AdminActionAmount ?? row.adminActionAmount ?? row['Admin Action Amount'];
   return {
-    id: String(row.UID),
-    userEmail: String(row.UserEmail),
-    managerEmail: String(row.ManagerEmail),
-    tanggalPemakaian: String(row.TanggalPemakaian),
-    siteId: String(row.SiteID),
-    jumlahPengajuan: Number(row.JumlahPengajuan) || 0,
-    keterangan: String(row.Keterangan),
-    status: (row.Status as RequestStatus) || RequestStatus.PENDING_APPROVAL,
-    managerActionAmount: Number(row.ManagerActionAmount) || 0,
-    managerComment: String(row.ManagerComment),
-    adminActionAmount: Number(row.AdminActionAmount) || 0,
-    createdAt: String(row.CreatedAt),
-    buktiTransferUrl: String(row.BuktiTransferUrl || ''),
-    buktiTransferFileId: String(row.BuktiTransferFileId || '')
+    id: String(row.UID || row.uid || ''),
+    userEmail: String(row.UserEmail || row.userEmail || ''),
+    managerEmail: String(row.ManagerEmail || row.managerEmail || ''),
+    tanggalPemakaian: String(row.TanggalPemakaian || row.tanggalPemakaian || row.Tanggal || ''),
+    siteId: String(row.SiteID || row.siteId || ''),
+    jumlahPengajuan: parseNumericValue(rawJumlah),
+    keterangan: String(row.Keterangan || row.keterangan || ''),
+    status: (row.Status as RequestStatus) || (row.status as RequestStatus) || RequestStatus.PENDING_APPROVAL,
+    managerActionAmount: parseNumericValue(rawMgrAction),
+    managerComment: String(row.ManagerComment || row.managerComment || ''),
+    adminActionAmount: parseNumericValue(rawAdminAction),
+    adminComment: String(row.AdminComment || row.adminComment || ''),
+    createdAt: String(row.CreatedAt || row.createdAt || ''),
+    timestamp: ts,
+    buktiTransferUrl: String(row.BuktiTransferUrl || row.buktiTransferUrl || ''),
+    buktiTransferFileId: String(row.BuktiTransferFileId || row.buktiTransferFileId || '')
   };
 }
 
 // Map row map to UsageReportItem
 function mapToUsageItem(row: Record<string, any>): UsageReportItem {
+  const ts = String(row.Timestamp || row.timestamp || row.UpdatedAt || '');
+  const rawNominal = row.Nominal ?? row.nominal ?? row['Nominal (Rp)'] ?? row['Nominal (Rupiah)'] ?? row.Jumlah ?? row.JumlahPengajuan;
   return {
-    id: String(row.ItemUID),
-    requestId: String(row.UID),
-    tanggalPenggunaan: String(row.TanggalPenggunaan),
-    nominal: Number(row.Nominal) || 0,
-    keterangan: String(row.Keterangan),
-    buktiUrl: String(row.BuktiUrl),
-    buktiFileId: String(row.BuktiFileId),
-    statusManager: (row.StatusManager as ItemStatus) || ItemStatus.PENDING,
-    managerComment: String(row.ManagerComment),
-    statusAdmin: (row.StatusAdmin as ItemStatus) || ItemStatus.PENDING,
-    adminComment: String(row.AdminComment),
-    updatedAt: String(row.UpdatedAt)
+    id: String(row.ItemUID || row.itemUid || row.ItemID || row.id || ''),
+    requestId: String(row.UID || row.uid || row.requestId || ''),
+    tanggalPenggunaan: String(row.TanggalPenggunaan || row.tanggalPenggunaan || row.Tanggal || ''),
+    nominal: parseNumericValue(rawNominal),
+    keterangan: String(row.Keterangan || row.keterangan || ''),
+    buktiUrl: String(row.BuktiUrl || row.buktiUrl || ''),
+    buktiFileId: String(row.BuktiFileId || row.buktiFileId || ''),
+    statusManager: (row.StatusManager as ItemStatus) || (row.statusManager as ItemStatus) || ItemStatus.PENDING,
+    managerComment: String(row.ManagerComment || row.managerComment || ''),
+    statusAdmin: (row.StatusAdmin as ItemStatus) || (row.statusAdmin as ItemStatus) || ItemStatus.PENDING,
+    adminComment: String(row.AdminComment || row.adminComment || ''),
+    updatedAt: String(row.UpdatedAt || row.updatedAt || ''),
+    timestamp: ts
   };
 }
 
@@ -155,11 +204,13 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
 
 // Map row map to UserActivity
 function mapToUserActivity(row: Record<string, any>): UserActivity {
+  const ts = String(row.Timestamp || row.timestamp || row.CreatedAt || '');
   return {
     id: String(row.ActivityID),
     userEmail: String(row.UserEmail),
     tanggal: String(row.Tanggal),
     createdAt: String(row.CreatedAt),
+    timestamp: ts,
     siteId: String(row.SiteID),
     siteName: String(row.SiteName),
     coordinatesDb: String(row.CoordinatesDb || ''),
@@ -228,15 +279,22 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
     body: JSON.stringify({
       valueInputOption: 'USER_ENTERED',
       data: [
-        { range: 'Pengajuan!A1:N1', values: [PENGAJUAN_HEADERS] },
-        { range: 'Laporan!A1:L1', values: [LAPORAN_HEADERS] },
+        { range: 'Pengajuan!A1:P1', values: [PENGAJUAN_HEADERS] },
+        { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
         { range: 'Users!A1:J1', values: [USERS_HEADERS] },
-        { range: 'Activity!A1:K1', values: [ACTIVITY_HEADERS] }
+        { range: 'Activity!A1:L1', values: [ACTIVITY_HEADERS] }
       ]
     })
   });
   if (!headersRes.ok) {
-    throw new Error(`Gagal menginisialisasi header kolom: ${headersRes.statusText}`);
+    let errDetail = '';
+    try {
+      const errJson = await headersRes.json();
+      errDetail = errJson.error?.message || JSON.stringify(errJson);
+    } catch {
+      try { errDetail = await headersRes.text(); } catch {}
+    }
+    throw new Error(`Gagal menginisialisasi header kolom: [HTTP ${headersRes.status}] ${headersRes.statusText || ''} - ${errDetail}`);
   }
 
   // Check if Users sheet has any data (besides headers). If not, seed default users
@@ -456,7 +514,7 @@ export async function fetchBudgetRequests(token: string, spreadsheetId: string):
   if (token === 'mock_demo_token') {
     return getMockData<BudgetRequest[]>('mock_db_pengajuan', defaultRequests);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:N1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Z1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) return [];
@@ -469,7 +527,7 @@ export async function fetchUsageItems(token: string, spreadsheetId: string): Pro
   if (token === 'mock_demo_token') {
     return getMockData<UsageReportItem[]>('mock_db_laporan', defaultUsageItems);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:L1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) return [];
@@ -495,7 +553,7 @@ export async function fetchUserActivities(token: string, spreadsheetId: string):
   if (token === 'mock_demo_token') {
     return getMockData<UserActivity[]>('mock_db_kegiatan', []);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:K1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:Z1000`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) return [];
@@ -649,6 +707,9 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     
     req.id = finalUid; // Save back to the request object so caller knows the final unique UID
 
+    const nowTimestamp = req.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+    req.timestamp = nowTimestamp;
+
     const rowData = objectToRow(PENGAJUAN_HEADERS, {
       UID: req.id,
       UserEmail: req.userEmail,
@@ -661,9 +722,11 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
       ManagerActionAmount: req.managerActionAmount,
       ManagerComment: req.managerComment,
       AdminActionAmount: req.adminActionAmount,
-      CreatedAt: req.createdAt,
+      AdminComment: req.adminComment || '',
+      CreatedAt: req.createdAt || nowTimestamp,
       BuktiTransferUrl: req.buktiTransferUrl || '',
-      BuktiTransferFileId: req.buktiTransferFileId || ''
+      BuktiTransferFileId: req.buktiTransferFileId || '',
+      Timestamp: nowTimestamp
     });
 
     const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:append?valueInputOption=USER_ENTERED`, {
@@ -713,6 +776,9 @@ export async function updateBudgetRequest(token: string, spreadsheetId: string, 
     throw new Error(`Data pengajuan dengan UID ${req.id} tidak ditemukan.`);
   }
 
+  const nowTimestamp = req.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  req.timestamp = nowTimestamp;
+
   const sheetRowIdx = rowIdx + 1; // 1-indexed for spreadsheet
   const rowData = objectToRow(PENGAJUAN_HEADERS, {
     UID: req.id,
@@ -726,12 +792,14 @@ export async function updateBudgetRequest(token: string, spreadsheetId: string, 
     ManagerActionAmount: req.managerActionAmount,
     ManagerComment: req.managerComment,
     AdminActionAmount: req.adminActionAmount,
+    AdminComment: req.adminComment || '',
     CreatedAt: req.createdAt,
     BuktiTransferUrl: req.buktiTransferUrl || '',
-    BuktiTransferFileId: req.buktiTransferFileId || ''
+    BuktiTransferFileId: req.buktiTransferFileId || '',
+    Timestamp: nowTimestamp
   });
 
-  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A${sheetRowIdx}:N${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A${sheetRowIdx}:P${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -756,6 +824,9 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
     return;
   }
 
+  const nowTimestamp = item.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  item.timestamp = nowTimestamp;
+
   const rowData = objectToRow(LAPORAN_HEADERS, {
     ItemUID: item.id,
     UID: item.requestId,
@@ -768,7 +839,8 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
     ManagerComment: item.managerComment,
     StatusAdmin: item.statusAdmin,
     AdminComment: item.adminComment,
-    UpdatedAt: item.updatedAt
+    UpdatedAt: item.updatedAt || nowTimestamp,
+    Timestamp: nowTimestamp
   });
 
   const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:append?valueInputOption=USER_ENTERED`, {
@@ -812,6 +884,9 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
     throw new Error(`Data item laporan dengan ItemUID ${item.id} tidak ditemukan.`);
   }
 
+  const nowTimestamp = item.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  item.timestamp = nowTimestamp;
+
   const sheetRowIdx = rowIdx + 1;
   const rowData = objectToRow(LAPORAN_HEADERS, {
     ItemUID: item.id,
@@ -825,10 +900,11 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
     ManagerComment: item.managerComment,
     StatusAdmin: item.statusAdmin,
     AdminComment: item.adminComment,
-    UpdatedAt: item.updatedAt
+    UpdatedAt: item.updatedAt || nowTimestamp,
+    Timestamp: nowTimestamp
   });
 
-  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:L${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:M${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -870,7 +946,7 @@ export async function deleteUsageItem(token: string, spreadsheetId: string, item
 
   // Since Google Sheets values API doesn't support deleting row cleanly without shifting, we can clear the values of this row or delete the row with batchUpdate (requires gridId).
   // Clearing the row values is much simpler and safer for basic spreadsheets. Or we can clear it:
-  const clearRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:L${sheetRowIdx}:clear`, {
+  const clearRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:M${sheetRowIdx}:clear`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`
@@ -923,18 +999,22 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
   }
   activity.id = finalId;
 
+  const nowTimestamp = activity.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  activity.timestamp = nowTimestamp;
+
   const rowData = objectToRow(ACTIVITY_HEADERS, {
     ActivityID: activity.id,
     UserEmail: activity.userEmail,
     Tanggal: activity.tanggal,
-    CreatedAt: activity.createdAt,
+    CreatedAt: activity.createdAt || nowTimestamp,
     SiteID: activity.siteId,
     SiteName: activity.siteName,
     CoordinatesDb: activity.coordinatesDb,
     CoordinatesActual: activity.coordinatesActual,
     Keterangan: activity.keterangan,
     BuktiUrl: activity.buktiUrl,
-    BuktiFileId: activity.buktiFileId || ''
+    BuktiFileId: activity.buktiFileId || '',
+    Timestamp: nowTimestamp
   });
 
   const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:append?valueInputOption=USER_ENTERED`, {

@@ -4,11 +4,12 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity } from '../types';
+import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile } from '../types';
+import { parseNumericValue } from '../lib/googleApi';
 import {
   Shield, Check, X, AlertCircle, Info, ExternalLink,
   MessageSquare, Send, CheckCircle2, AlertTriangle, HelpCircle, Eye,
-  Compass, ClipboardList, MapPin
+  Compass, ClipboardList, MapPin, Fuel
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -57,6 +58,8 @@ interface ReviewReportModalProps {
   onClose: () => void;
   onPreviewDocument?: (doc: { url: string; fileId?: string; title?: string }) => void;
   activities?: UserActivity[];
+  profiles?: UserProfile[];
+  requests?: BudgetRequest[];
 }
 
 export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
@@ -67,10 +70,19 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   onSubmitReview,
   onClose,
   onPreviewDocument,
-  activities = []
+  activities = [],
+  profiles = [],
+  requests = []
 }) => {
   // Filter items for this request
   const currentItems = items.filter(item => item.requestId === request.id);
+
+  // Check user BBM access
+  const userForRequest = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
+  const hasBbmAccess = !!userForRequest?.aksesBBM;
+
+  // Track BBM popup item view state
+  const [viewingBbmItem, setViewingBbmItem] = useState<{ item: UsageReportItem; date: string; userEmail: string; userName: string } | null>(null);
 
   // Track review decisions locally before submitting
   // Format: { [itemId]: { status: ItemStatus, comment: string } }
@@ -98,12 +110,13 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
     setDecisions(initialDecisions);
   }, [items, request, role]);
 
-  const formatIDR = (num: number) => {
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0
-    }).format(num);
+    }).format(val);
   };
 
   const handleDecisionChange = (itemId: string, status: ItemStatus) => {
@@ -255,7 +268,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
               )}
 
               {/* Buttons as a single bar under the status bar for both ADMIN and MANAGER */}
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button
                   type="button"
                   onClick={() => {
@@ -272,7 +285,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                   className="flex-1 py-1.5 bg-indigo-55/10 hover:bg-indigo-55/20 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-150"
                   style={{ backgroundColor: 'rgba(99, 102, 241, 0.08)', borderColor: 'rgba(99, 102, 241, 0.15)' }}
                 >
-                  <span>Bukti</span>
+                  <span>Nota</span>
                   <Eye className="w-3.5 h-3.5 text-indigo-600" />
                 </button>
 
@@ -285,6 +298,18 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                   <span>Aktivitas</span>
                   <Compass className="w-3.5 h-3.5 text-slate-500" />
                 </button>
+
+                {hasBbmAccess && (
+                  <button
+                    type="button"
+                    onClick={() => setViewingBbmItem({ item, date: item.tanggalPenggunaan, userEmail: request.userEmail, userName: requesterName || request.userEmail })}
+                    className="flex-1 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-amber-200"
+                    title="Cek Pengisian BBM Duren Sawit User"
+                  >
+                    <span>BBM Duren Sawit</span>
+                    <Fuel className="w-3.5 h-3.5 text-amber-600" />
+                  </button>
+                )}
               </div>
 
               {/* Reviewer Action selectors */}
@@ -551,6 +576,144 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Popup Pengisian BBM Duren Sawit */}
+      {viewingBbmItem && (() => {
+        const matchingBbmRequests = (requests || []).filter(r => {
+          const isBbm = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+          const isSameUser = r.userEmail.toLowerCase() === viewingBbmItem.userEmail.toLowerCase();
+          const isSameDate = r.tanggalPemakaian === viewingBbmItem.date;
+          return isBbm && isSameUser && isSameDate;
+        });
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] z-[70] flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                    <Fuel className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-slate-800 text-sm">
+                      Pengisian BBM Duren Sawit
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      User: <span className="font-bold text-slate-700">{viewingBbmItem.userName}</span> | Tanggal: <span className="font-semibold text-amber-700">{viewingBbmItem.date}</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingBbmItem(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Content Body */}
+              <div className="overflow-y-auto space-y-3 pr-1 max-h-[60vh]">
+                {matchingBbmRequests.length === 0 ? (
+                  <div className="bg-amber-50/60 border border-amber-200/80 rounded-2xl p-6 text-center space-y-2">
+                    <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 mx-auto flex items-center justify-center">
+                      <Fuel className="w-5 h-5" />
+                    </div>
+                    <p className="text-xs font-bold text-amber-900">
+                      Tidak Ada Pengisian BBM Duren Sawit
+                    </p>
+                    <p className="text-[11px] text-slate-600 font-medium max-w-xs mx-auto">
+                      Tidak ada data pengisian BBM Duren Sawit tercatat untuk user <strong className="text-slate-800">{viewingBbmItem.userName}</strong> pada tanggal <strong className="text-amber-800">{viewingBbmItem.date}</strong>.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-3 flex items-center gap-2 text-xs font-bold text-emerald-800">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Ditemukan {matchingBbmRequests.length} transaksi pengisian BBM Duren Sawit pada tanggal ini</span>
+                    </div>
+
+                    {matchingBbmRequests.map((req) => {
+                      const matchedUsageItem = (items || []).find(it => it.requestId === req.id || it.id.startsWith(req.id));
+                      const photoUrl = matchedUsageItem?.buktiUrl || req.buktiTransferUrl;
+                      const fileId = matchedUsageItem?.buktiFileId || req.buktiTransferFileId;
+                      
+                      let displayImg = '';
+                      if (photoUrl) {
+                        if (photoUrl.startsWith('data:')) {
+                          displayImg = photoUrl;
+                        } else if (fileId && !fileId.startsWith('BBM_NOTA_')) {
+                          displayImg = `https://drive.google.com/thumbnail?sz=w1000&id=${fileId.trim()}`;
+                        } else {
+                          const m = photoUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || photoUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                          displayImg = m && m[1] ? `https://drive.google.com/thumbnail?sz=w1000&id=${m[1]}` : photoUrl;
+                        }
+                      }
+
+                      return (
+                        <div key={req.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2.5 shadow-sm">
+                          <div className="flex items-start justify-between gap-2 border-b border-slate-200/60 pb-2">
+                            <div>
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-mono font-bold">
+                                {req.id}
+                              </span>
+                              <h4 className="font-bold text-xs text-slate-800 mt-1">
+                                Site: {req.siteId || '-'}
+                              </h4>
+                            </div>
+                            <span className="text-xs font-extrabold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl">
+                              {formatIDR(req.jumlahPengajuan)}
+                            </span>
+                          </div>
+
+                          {req.keterangan && (
+                            <p className="text-xs text-slate-600 font-medium bg-white p-2.5 rounded-xl border border-slate-200/80">
+                              <span className="font-bold text-slate-500 text-[10px] uppercase block mb-0.5">Keterangan:</span>
+                              {req.keterangan}
+                            </p>
+                          )}
+
+                          {displayImg && (
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold text-slate-500 uppercase">Foto Nota Pengisian:</span>
+                              <div className="relative rounded-xl overflow-hidden border border-slate-200 max-h-48 bg-black/5">
+                                <img
+                                  src={displayImg}
+                                  alt="Nota BBM"
+                                  className="w-full h-full object-contain max-h-48 cursor-pointer hover:opacity-95 transition-all"
+                                  onClick={() => {
+                                    if (photoUrl) window.open(photoUrl, '_blank');
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
+                            <span>Status: <strong className="text-emerald-700">{req.status}</strong></span>
+                            {req.createdAt && <span>Dibuat: {req.createdAt}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="pt-2 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setViewingBbmItem(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

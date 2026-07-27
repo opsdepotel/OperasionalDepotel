@@ -5,6 +5,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { BudgetRequest, RequestStatus } from '../types';
+import { parseNumericValue } from '../lib/googleApi';
 import { 
   CreditCard, 
   AlertCircle, 
@@ -19,7 +20,7 @@ import { uploadReceiptFile } from '../lib/googleApi';
 interface TransferModalProps {
   request: BudgetRequest;
   requesterName?: string;
-  onTransfer: (transferredAmount: number, buktiUrl: string, buktiFileId: string) => Promise<void>;
+  onTransfer: (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string) => Promise<void>;
   onClose: () => void;
   googleToken: string;
   driveFolderId: string | null;
@@ -43,6 +44,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   const [transferredAmount, setTransferredAmount] = useState(
     isFinalTalanganTransfer ? String(approvedUsageAmount) : String(request.managerActionAmount)
   );
+  const [adminComment, setAdminComment] = useState(request.adminComment || '');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -65,12 +67,13 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     };
   }, []);
 
-  const formatIDR = (num: number) => {
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0
-    }).format(num);
+    }).format(val);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,9 +135,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    const amt = isFinalTalanganTransfer ? approvedUsageAmount : (isTalangan ? 0 : Number(transferredAmount));
+    const amt = isFinalTalanganTransfer ? approvedUsageAmount : (isTalangan ? 0 : parseNumericValue(transferredAmount));
     if (!isTalangan || isFinalTalanganTransfer) {
-      if (isNaN(amt) || amt <= 0) {
+      if (amt <= 0) {
         setError('Nominal transfer harus lebih besar dari Rp 0.');
         return;
       }
@@ -163,7 +166,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         finalBuktiFileId = uploadResult.fileId;
       }
 
-      await onTransfer(amt, finalBuktiUrl, finalBuktiFileId);
+      await onTransfer(amt, finalBuktiUrl, finalBuktiFileId, adminComment.trim());
     } catch (err: any) {
       const isAuthError = err.message && (
         err.message.includes('401') ||
@@ -258,7 +261,8 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                 <label className="block text-xs font-semibold text-slate-500 mb-1">Nominal Dana Ditransfer (Rupiah)</label>
                 <div className="relative">
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
                     value={transferredAmount}
                     onChange={(e) => setTransferredAmount(e.target.value)}
                     placeholder="Nominal transfer"
@@ -267,9 +271,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                   />
                   <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 </div>
-                {transferredAmount && !isNaN(Number(transferredAmount)) && (
+                {transferredAmount && parseNumericValue(transferredAmount) > 0 && (
                   <p className="text-[10px] text-indigo-600 font-semibold mt-1">
-                    Format: {formatIDR(Number(transferredAmount))}
+                    Format: {formatIDR(transferredAmount)}
                   </p>
                 )}
               </div>
@@ -282,7 +286,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               </label>
               
               {/* File Status Indicator */}
-              {selectedFile ? (
+              {selectedFile && (
                 <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 p-3 rounded-xl text-xs flex items-center justify-between">
                   <div className="flex items-center gap-2 truncate">
                     <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500 shrink-0" />
@@ -298,11 +302,6 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                   >
                     Hapus
                   </button>
-                </div>
-              ) : (
-                <div className="bg-amber-50 border border-amber-100 text-amber-700 p-3 rounded-xl text-xs flex items-center gap-2">
-                  <AlertCircle className="w-4.5 h-4.5 text-amber-500 shrink-0" />
-                  <span>Bukti transfer wajib dilampirkan atau diambil dari kamera</span>
                 </div>
               )}
 
@@ -362,6 +361,20 @@ export const TransferModal: React.FC<TransferModalProps> = ({
             </p>
           </div>
         )}
+
+        {/* Catatan Finance (Opsional) */}
+        <div className="space-y-1">
+          <label className="block text-xs font-semibold text-slate-500">
+            Catatan Finance <span className="text-slate-400 font-normal">(Opsional)</span>
+          </label>
+          <textarea
+            rows={2}
+            value={adminComment}
+            onChange={(e) => setAdminComment(e.target.value)}
+            placeholder="Tambahkan catatan dari Finance (misal: No. Ref Transfer, Nama Bank, dll)..."
+            className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-none"
+          />
+        </div>
 
         {/* Transfer Button */}
         <button

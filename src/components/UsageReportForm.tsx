@@ -4,12 +4,12 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity } from '../types';
-import { uploadReceiptFile } from '../lib/googleApi';
+import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile } from '../types';
+import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock
+  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -65,6 +65,8 @@ interface UsageReportFormProps {
   onAuthError?: () => void;
   sites?: SiteInfo[];
   activities?: UserActivity[];
+  profiles?: UserProfile[];
+  requests?: BudgetRequest[];
 }
 
 export const UsageReportForm: React.FC<UsageReportFormProps> = ({
@@ -81,7 +83,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   role = Role.USER,
   onAuthError,
   sites = [],
-  activities = []
+  activities = [],
+  profiles = [],
+  requests = []
 }) => {
   // Extract and match site IDs from request.siteId. Format is "XXXNNN" (3 letters, 3 digits)
   const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
@@ -103,6 +107,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
   // Filter items for this request UID
   const currentItems = items.filter(item => item.requestId === request.id);
+
+  // Check if the user associated with this UID request has BBM Duren Sawit access
+  const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
+  const hasBbmAccess = !!requesterProfile?.aksesBBM;
+
+  // Track BBM popup item view state
+  const [viewingBbmItem, setViewingBbmItem] = useState<{ item: UsageReportItem; date: string; userEmail: string; userName: string } | null>(null);
 
   // Track review decisions locally before submitting
   // Format: { [itemId]: { status: ItemStatus, comment: string } }
@@ -260,12 +271,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   }, []);
 
   // Format IDR Currency
-  const formatIDR = (num: number) => {
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0
-    }).format(num);
+    }).format(val);
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -329,8 +341,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     e.preventDefault();
     setActionError(null);
 
-    const amount = Number(nominal);
-    if (isNaN(amount) || amount <= 0) {
+    const amount = parseNumericValue(nominal);
+    if (amount <= 0) {
       setActionError('Nominal penggunaan harus lebih besar dari Rp 0.');
       return;
     }
@@ -552,6 +564,24 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         </div>
       </div>
 
+      {/* Catatan Manager / Finance Card */}
+      {(request.managerComment || request.adminComment) && (
+        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2 text-xs shadow-sm">
+          {request.managerComment && (
+            <div className="flex items-start gap-1.5 text-slate-700">
+              <span className="font-bold text-slate-500 text-[10px] uppercase shrink-0">Catatan Manager:</span>
+              <span className="italic text-slate-800">{request.managerComment}</span>
+            </div>
+          )}
+          {request.adminComment && (
+            <div className="flex items-start gap-1.5 text-slate-700">
+              <span className="font-bold text-slate-500 text-[10px] uppercase shrink-0">Catatan Finance:</span>
+              <span className="italic text-slate-800">{request.adminComment}</span>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Bukti Transfer / Adjustment Card for CLOSED UIDs */}
       {request.buktiTransferUrl && (
         <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
@@ -739,15 +769,15 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                             {(role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.APPROVED ? (
                               <>
                                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                                <span>Disetujui ({role === Role.MANAGER ? 'Manager' : 'Admin'})</span>
+                                <span>Disetujui ({role === Role.MANAGER ? 'Manager' : 'Finance'})</span>
                               </>
                             ) : (role === Role.MANAGER ? item.statusManager : item.statusAdmin) === ItemStatus.REJECTED ? (
                               <>
                                 <XCircle className="w-3.5 h-3.5 text-red-500" />
-                                <span>Revisi ({role === Role.MANAGER ? 'Manager' : 'Admin'})</span>
+                                <span>Revisi ({role === Role.MANAGER ? 'Manager' : 'Finance'})</span>
                               </>
                             ) : (
-                              <span>Belum Ditentukan ({role === Role.MANAGER ? 'Manager' : 'Admin'})</span>
+                              <span>Belum Ditentukan ({role === Role.MANAGER ? 'Manager' : 'Finance'})</span>
                             )}
                           </div>
                           {(role === Role.MANAGER ? item.managerComment : item.adminComment) && (
@@ -814,13 +844,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
                   {/* Actions Bar */}
                   <div className="flex items-center justify-between pt-2 border-t border-slate-50 text-xs">
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-3 flex-wrap">
                       <button
                         type="button"
                         onClick={() => setPreviewItem(item)}
                         className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer"
                       >
-                        <span>Lihat Bukti Nota</span>
+                        <span>Nota</span>
                         <ExternalLink className="w-3.5 h-3.5" />
                       </button>
 
@@ -831,8 +861,25 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                           className="text-slate-600 hover:text-slate-800 font-semibold flex items-center gap-1 cursor-pointer border-l border-slate-200 pl-3"
                           title="Lihat Aktivitas Lapangan User"
                         >
-                          <span>Lihat Aktivitas</span>
+                          <span>Aktivitas</span>
                           <Compass className="w-3.5 h-3.5 text-indigo-500" />
+                        </button>
+                      )}
+
+                      {hasBbmAccess && (role === Role.FINANCE || role === Role.MANAGER || request.status !== RequestStatus.CLOSED) && (
+                        <button
+                          type="button"
+                          onClick={() => setViewingBbmItem({
+                            item,
+                            date: item.tanggalPenggunaan,
+                            userEmail: request.userEmail,
+                            userName: requesterProfile?.nama || request.userEmail
+                          })}
+                          className="text-amber-700 hover:text-amber-900 font-semibold flex items-center gap-1 cursor-pointer border-l border-slate-200 pl-3"
+                          title="Cek Pengisian BBM Duren Sawit User"
+                        >
+                          <span>BBM Duren Sawit</span>
+                          <Fuel className="w-3.5 h-3.5 text-amber-600" />
                         </button>
                       )}
                     </div>
@@ -982,18 +1029,19 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nominal (Rupiah)</label>
                 <div className="relative">
                   <input
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
                     value={nominal}
                     onChange={(e) => setNominal(e.target.value)}
-                    placeholder="contoh: 450000"
+                    placeholder="contoh: 450000 atau 450.000"
                     className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
                     required
                   />
                   <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 </div>
-                {nominal && !isNaN(Number(nominal)) && (
+                {nominal && parseNumericValue(nominal) > 0 && (
                   <p className="text-[10px] text-indigo-600 font-semibold mt-1">
-                    Format: {formatIDR(Number(nominal))}
+                    Format: {formatIDR(nominal)}
                   </p>
                 )}
               </div>
@@ -1437,6 +1485,144 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Popup Pengisian BBM Duren Sawit */}
+      {viewingBbmItem && (() => {
+        const matchingBbmRequests = (requests || []).filter(r => {
+          const isBbm = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+          const isSameUser = r.userEmail.toLowerCase() === viewingBbmItem.userEmail.toLowerCase();
+          const isSameDate = r.tanggalPemakaian === viewingBbmItem.date;
+          return isBbm && isSameUser && isSameDate;
+        });
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] z-[70] flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                    <Fuel className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-slate-800 text-sm">
+                      Pengisian BBM Duren Sawit
+                    </h3>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      User: <span className="font-bold text-slate-700">{viewingBbmItem.userName}</span> | Tanggal: <span className="font-semibold text-amber-700">{viewingBbmItem.date}</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingBbmItem(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Content Body */}
+              <div className="overflow-y-auto space-y-3 pr-1 max-h-[60vh]">
+                {matchingBbmRequests.length === 0 ? (
+                  <div className="bg-amber-50/60 border border-amber-200/80 rounded-2xl p-6 text-center space-y-2">
+                    <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 mx-auto flex items-center justify-center">
+                      <Fuel className="w-5 h-5" />
+                    </div>
+                    <p className="text-xs font-bold text-amber-900">
+                      Tidak Ada Pengisian BBM Duren Sawit
+                    </p>
+                    <p className="text-[11px] text-slate-600 font-medium max-w-xs mx-auto">
+                      Tidak ada data pengisian BBM Duren Sawit tercatat untuk user <strong className="text-slate-800">{viewingBbmItem.userName}</strong> pada tanggal <strong className="text-amber-800">{viewingBbmItem.date}</strong>.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="bg-emerald-50 border border-emerald-200/80 rounded-2xl p-3 flex items-center gap-2 text-xs font-bold text-emerald-800">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>Ditemukan {matchingBbmRequests.length} transaksi pengisian BBM Duren Sawit pada tanggal ini</span>
+                    </div>
+
+                    {matchingBbmRequests.map((req) => {
+                      const matchedUsageItem = (items || []).find(it => it.requestId === req.id || it.id.startsWith(req.id));
+                      const photoUrl = matchedUsageItem?.buktiUrl || req.buktiTransferUrl;
+                      const fileId = matchedUsageItem?.buktiFileId || req.buktiTransferFileId;
+                      
+                      let displayImg = '';
+                      if (photoUrl) {
+                        if (photoUrl.startsWith('data:')) {
+                          displayImg = photoUrl;
+                        } else if (fileId && !fileId.startsWith('BBM_NOTA_')) {
+                          displayImg = `https://drive.google.com/thumbnail?sz=w1000&id=${fileId.trim()}`;
+                        } else {
+                          const m = photoUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || photoUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+                          displayImg = m && m[1] ? `https://drive.google.com/thumbnail?sz=w1000&id=${m[1]}` : photoUrl;
+                        }
+                      }
+
+                      return (
+                        <div key={req.id} className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2.5 shadow-sm">
+                          <div className="flex items-start justify-between gap-2 border-b border-slate-200/60 pb-2">
+                            <div>
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-mono font-bold">
+                                {req.id}
+                              </span>
+                              <h4 className="font-bold text-xs text-slate-800 mt-1">
+                                Site: {req.siteId || '-'}
+                              </h4>
+                            </div>
+                            <span className="text-xs font-extrabold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-xl">
+                              {formatIDR(req.jumlahPengajuan)}
+                            </span>
+                          </div>
+
+                          {req.keterangan && (
+                            <p className="text-xs text-slate-600 font-medium bg-white p-2.5 rounded-xl border border-slate-200/80">
+                              <span className="font-bold text-slate-500 text-[10px] uppercase block mb-0.5">Keterangan:</span>
+                              {req.keterangan}
+                            </p>
+                          )}
+
+                          {displayImg && (
+                            <div className="space-y-1">
+                              <span className="text-[10px] font-bold text-slate-500 uppercase">Foto Nota Pengisian:</span>
+                              <div className="relative rounded-xl overflow-hidden border border-slate-200 max-h-48 bg-black/5">
+                                <img
+                                  src={displayImg}
+                                  alt="Nota BBM"
+                                  className="w-full h-full object-contain max-h-48 cursor-pointer hover:opacity-95 transition-all"
+                                  onClick={() => {
+                                    if (photoUrl) window.open(photoUrl, '_blank');
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
+                            <span>Status: <strong className="text-emerald-700">{req.status}</strong></span>
+                            {req.createdAt && <span>Dibuat: {req.createdAt}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="pt-2 border-t border-slate-100 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setViewingBbmItem(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

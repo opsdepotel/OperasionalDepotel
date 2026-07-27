@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { BudgetRequest, RequestStatus, SiteInfo } from '../types';
+import { parseNumericValue } from '../lib/googleApi';
 import { Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles, ExternalLink } from 'lucide-react';
 
 interface BudgetRequestFormProps {
@@ -74,8 +75,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 
     let amount = 0;
     if (!isTalangan) {
-      amount = Number(jumlahPengajuan);
-      if (isNaN(amount) || amount <= 0) {
+      amount = parseNumericValue(jumlahPengajuan);
+      if (amount <= 0) {
         setError('Jumlah Pengajuan anggaran harus lebih besar dari Rp 0.');
         return;
       }
@@ -285,7 +286,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
             <label className="block text-xs font-semibold text-slate-500 mb-1">Jumlah Pengajuan (Rupiah)</label>
             <div className="relative">
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={jumlahPengajuan}
                 onChange={(e) => setJumlahPengajuan(e.target.value)}
                 placeholder="contoh: 1500000"
@@ -294,9 +296,9 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
               />
               <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             </div>
-            {jumlahPengajuan && !isNaN(Number(jumlahPengajuan)) && (
+            {jumlahPengajuan && parseNumericValue(jumlahPengajuan) > 0 && (
               <p className="text-[10px] text-indigo-600 font-semibold mt-1">
-                Setara dengan: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(Number(jumlahPengajuan))}
+                Setara dengan: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseNumericValue(jumlahPengajuan))}
               </p>
             )}
           </div>

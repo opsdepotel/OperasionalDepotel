@@ -23,7 +23,8 @@ import {
   uploadBase64Image,
   fetchSites,
   fetchUserActivities,
-  createUserActivity
+  createUserActivity,
+  parseNumericValue
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity } from './types';
 import { validateDeviceAccessAndBind } from './lib/deviceUtils';
@@ -121,6 +122,7 @@ export default function App() {
   const [reviewReportReq, setReviewReportReq] = useState<BudgetRequest | null>(null);
   const [transferReq, setTransferReq] = useState<BudgetRequest | null>(null);
   const [closingConfirmReq, setClosingConfirmReq] = useState<BudgetRequest | null>(null);
+  const [cancelConfirmReq, setCancelConfirmReq] = useState<BudgetRequest | null>(null);
   const [isBbmModalOpen, setIsBbmModalOpen] = useState(false);
   const [isBbmListModalOpen, setIsBbmListModalOpen] = useState(false);
   const [isDiomsLogoModalOpen, setIsDiomsLogoModalOpen] = useState(false);
@@ -709,7 +711,7 @@ export default function App() {
   };
 
   // Workflow Action 3: Admin Transfer Funds
-  const handleAdminTransfer = async (transferredAmount: number, buktiUrl: string, buktiFileId: string) => {
+  const handleAdminTransfer = async (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string) => {
     if (!token || !spreadsheetId || !transferReq) return;
 
     const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.keterangan.startsWith('[DANA TALANGAN]');
@@ -720,7 +722,8 @@ export default function App() {
       status: (isReqTalangan && isPendingTalanganTransfer) ? RequestStatus.CLOSED : RequestStatus.TRANSFERRED,
       adminActionAmount: transferredAmount,
       buktiTransferUrl: buktiUrl,
-      buktiTransferFileId: buktiFileId
+      buktiTransferFileId: buktiFileId,
+      adminComment: adminComment || ''
     };
 
     const success = await runGoogleAction(
@@ -968,8 +971,74 @@ export default function App() {
     return parseIndonesianDate(req.createdAt);
   };
 
+  const getRequestCreatedDate = (req: BudgetRequest): Date | null => {
+    const dateStr = req.timestamp || req.createdAt;
+    if (!dateStr) return null;
+    const indonesianDate = parseIndonesianDate(dateStr);
+    if (indonesianDate && !isNaN(indonesianDate.getTime())) return indonesianDate;
+    const parsed = Date.parse(dateStr);
+    return isNaN(parsed) ? null : new Date(parsed);
+  };
+
+  // Auto-cancel REJECTED requests older than 2 days (48 hours)
+  useEffect(() => {
+    if (!token || !spreadsheetId || requests.length === 0) return;
+
+    const now = new Date().getTime();
+    const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+
+    const expiredReqs = requests.filter(r => {
+      if (r.status !== RequestStatus.REJECTED) return false;
+      const cDate = getRequestCreatedDate(r);
+      if (!cDate) return false;
+      return (now - cDate.getTime()) >= TWO_DAYS_MS;
+    });
+
+    if (expiredReqs.length > 0) {
+      const processAutoCancel = async () => {
+        const expiredIds = new Set(expiredReqs.map(r => r.id));
+        setRequests(prev => prev.map(r => expiredIds.has(r.id) ? { ...r, status: RequestStatus.CANCELLED } : r));
+
+        for (const req of expiredReqs) {
+          try {
+            await updateBudgetRequest(token, spreadsheetId, {
+              ...req,
+              status: RequestStatus.CANCELLED
+            });
+          } catch (err) {
+            console.error(`Auto-cancel failed for request ${req.id}:`, err);
+          }
+        }
+      };
+      processAutoCancel();
+    }
+  }, [requests, token, spreadsheetId]);
+
+  const handleCancelBudgetRequest = async (req: BudgetRequest) => {
+    if (!token || !spreadsheetId) return;
+    setIsLoading(true);
+    setLoadingStep('Membatalkan pengajuan dana...');
+    try {
+      const updatedReq: BudgetRequest = {
+        ...req,
+        status: RequestStatus.CANCELLED
+      };
+      await updateBudgetRequest(token, spreadsheetId, updatedReq);
+      setRequests(prev => prev.map(r => r.id === req.id ? updatedReq : r));
+      setCancelConfirmReq(null);
+    } catch (err: any) {
+      setError(`Gagal membatalkan pengajuan: ${err.message || err}`);
+    } finally {
+      setIsLoading(false);
+      setLoadingStep('');
+    }
+  };
+
   // Filtering Logic for requests list on Dashboard
   const filteredRequests = requests.filter((r) => {
+    // Exclude CANCELLED requests from all main views
+    if (r.status === RequestStatus.CANCELLED) return false;
+
     // Role based scoping
     if (activeRole === Role.USER) {
       // User only sees their own requests
@@ -1093,6 +1162,8 @@ export default function App() {
         return 'bg-pink-50 text-pink-600 border border-pink-150 animate-pulse';
       case RequestStatus.CLOSED:
         return 'bg-slate-100 text-slate-500 border border-slate-200';
+      case RequestStatus.CANCELLED:
+        return 'bg-slate-100 text-slate-400 border border-slate-200 line-through';
       default:
         return 'bg-slate-50 text-slate-600 border border-slate-150';
     }
@@ -1136,16 +1207,18 @@ export default function App() {
       case RequestStatus.REVIEW_ADMIN: return 'Review Laporan (Finance)';
       case RequestStatus.PENDING_TALANGAN_TRANSFER: return 'Menunggu Transfer Dana Talangan';
       case RequestStatus.CLOSED: return 'Closing';
+      case RequestStatus.CANCELLED: return 'Dibatalkan (Cancelled)';
       default: return status;
     }
   };
 
-  const formatIDR = (num: number) => {
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0
-    }).format(num);
+    }).format(val);
   };
 
   // Render Login state only if the Google Account is explicitly invalid
@@ -1374,6 +1447,8 @@ export default function App() {
             onAuthError={handleGoogleAuthError}
             sites={sites}
             activities={activities}
+            profiles={profiles}
+            requests={requests}
           />
         ) : activeView === 'adjustment' && userProfile ? (
           <AdjustmentPanel
@@ -1515,6 +1590,8 @@ export default function App() {
                     onClose={() => setReviewReportReq(null)}
                     onPreviewDocument={setPreviewDocument}
                     activities={activities}
+                    profiles={profiles}
+                    requests={requests}
                   />
                 )}
 
@@ -1563,6 +1640,45 @@ export default function App() {
                           className="flex-1 py-2.5 px-4 bg-slate-900 hover:bg-slate-850 text-white font-bold text-xs rounded-xl transition-all shadow-sm cursor-pointer"
                         >
                           Ya, Closing
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {cancelConfirmReq && (
+                  <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up">
+                      <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600">
+                        <XCircle className="w-6 h-6" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <h3 className="text-sm font-bold text-slate-800">Batalkan Pengajuan UID {cancelConfirmReq.id}?</h3>
+                        <p className="text-xs text-slate-500 leading-relaxed">
+                          Apakah Anda yakin ingin membatalkan pengajuan dana ini? Status pengajuan akan diubah secara permanen menjadi <strong>CANCELLED</strong> dan dikecualikan dari seluruh proses operasional aplikasi.
+                        </p>
+                        <div className="bg-slate-50 p-3 rounded-xl text-xs space-y-1 border border-slate-100 mt-2">
+                          <p className="text-slate-700 font-medium">Keterangan: <strong>{cancelConfirmReq.keterangan}</strong></p>
+                          <p className="text-slate-700 font-medium">Nominal: <strong className="text-indigo-600">{formatIDR(cancelConfirmReq.jumlahPengajuan)}</strong></p>
+                          {cancelConfirmReq.managerComment && (
+                            <p className="text-rose-600 font-medium text-[11px] pt-1">Alasan Ditolak: "{cancelConfirmReq.managerComment}"</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex gap-3 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setCancelConfirmReq(null)}
+                          className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                        >
+                          Kembali
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleCancelBudgetRequest(cancelConfirmReq)}
+                          className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-sm"
+                        >
+                          Ya, Batalkan
                         </button>
                       </div>
                     </div>
@@ -1747,6 +1863,8 @@ export default function App() {
                       <div className="space-y-3">
                         {filteredRequests.map((req) => {
                           const reqItems = usageItems.filter(i => i.requestId === req.id);
+                          const rejectedItems = reqItems.filter(i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED);
+                          const hasRejectedItems = rejectedItems.length > 0;
                           const isFullyApprovedByAdmin = reqItems.length > 0 && reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
                           const isReqTalangan = req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]');
 
@@ -1838,23 +1956,6 @@ export default function App() {
                                 </div>
                               </div>
 
-                              {/* Saldo UID Info Box */}
-                              {!(activeRole === Role.MANAGER && req.status === RequestStatus.PENDING_APPROVAL) && (
-                                <div className="flex items-center justify-between bg-slate-50/50 border border-slate-100/80 px-3 py-2 rounded-xl text-[10px]">
-                                  <div className="flex items-center gap-1.5 text-slate-500 font-medium">
-                                    <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${
-                                      saldoUID > 0 ? 'bg-blue-500' : saldoUID < 0 ? 'bg-rose-500' : 'bg-emerald-500'
-                                    }`}></div>
-                                    <span>{saldoUID > 0 ? 'Saldo (lebih):' : saldoUID < 0 ? 'Saldo (kurang):' : 'Saldo:'}</span>
-                                  </div>
-                                  <span className={`font-bold font-display ${
-                                    saldoUID > 0 ? 'text-blue-600' : saldoUID < 0 ? 'text-rose-600' : 'text-emerald-600'
-                                  }`}>
-                                    {formatIDR(saldoUID)}
-                                  </span>
-                                </div>
-                              )}
-
                               {req.buktiTransferUrl && (
                                 <div className="flex items-center gap-1.5 text-[10px] text-indigo-600 bg-indigo-50/40 p-2 rounded-xl border border-indigo-50/50">
                                   <Paperclip className="w-3.5 h-3.5 shrink-0" />
@@ -1870,6 +1971,20 @@ export default function App() {
                                   >
                                     Lihat Dokumen / Foto
                                   </button>
+                                </div>
+                              )}
+
+                              {req.managerComment && req.status !== RequestStatus.REJECTED && (
+                                <div className="flex items-start gap-1.5 text-[10px] text-slate-600 bg-slate-50/80 p-2 rounded-xl border border-slate-100">
+                                  <span className="font-semibold text-slate-500 shrink-0">Catatan Manager:</span>
+                                  <span className="italic text-slate-700">{req.managerComment}</span>
+                                </div>
+                              )}
+
+                              {req.adminComment && (
+                                <div className="flex items-start gap-1.5 text-[10px] text-slate-600 bg-slate-50/80 p-2 rounded-xl border border-slate-100">
+                                  <span className="font-semibold text-slate-500 shrink-0">Catatan Finance:</span>
+                                  <span className="italic text-slate-700">{req.adminComment}</span>
                                 </div>
                               )}
 
@@ -1907,7 +2022,7 @@ export default function App() {
                                                 className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-lg text-[9px] font-bold shrink-0 flex items-center gap-1 transition-all cursor-pointer"
                                               >
                                                 <Paperclip className="w-3 h-3" />
-                                                <span>Bukti</span>
+                                                <span>Nota</span>
                                               </button>
                                             )}
                                           </div>
@@ -1922,6 +2037,38 @@ export default function App() {
                               {req.status === RequestStatus.REJECTED && req.managerComment && (
                                 <div className="bg-red-50 text-red-700 p-2.5 rounded-xl text-[10px] border border-red-100">
                                   <strong>Alasan Ditolak:</strong> {req.managerComment}
+                                </div>
+                              )}
+
+                              {/* Item Review Perbaikan Warning Banner */}
+                              {hasRejectedItems && (
+                                <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-2 text-xs text-rose-900 shadow-xs">
+                                  <div className="flex items-center gap-2 font-bold text-rose-700">
+                                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                                    <span>Perhatian: Ada {rejectedItems.length} item laporan yang perlu perbaikan / revisi!</span>
+                                  </div>
+                                  <div className="space-y-1.5 pl-0.5">
+                                    {rejectedItems.map(item => (
+                                      <div key={item.id} className="text-[11px] bg-white p-2.5 rounded-lg border border-rose-150 space-y-1 shadow-2xs">
+                                        <div className="flex items-start justify-between gap-2 font-semibold text-slate-800">
+                                          <span>• {item.keterangan}</span>
+                                          <span className="text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded shrink-0">
+                                            {formatIDR(item.nominal)}
+                                          </span>
+                                        </div>
+                                        {item.statusManager === ItemStatus.REJECTED && item.managerComment && (
+                                          <p className="text-[10px] text-rose-700 font-medium leading-tight">
+                                            <strong className="text-slate-600">Catatan Manager:</strong> "{item.managerComment}"
+                                          </p>
+                                        )}
+                                        {item.statusAdmin === ItemStatus.REJECTED && item.adminComment && (
+                                          <p className="text-[10px] text-rose-700 font-medium leading-tight">
+                                            <strong className="text-slate-600">Catatan Finance:</strong> "{item.adminComment}"
+                                          </p>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
                                 </div>
                               )}
 
@@ -1941,9 +2088,18 @@ export default function App() {
                                             setSelectedRequest(req);
                                             setActiveView('report-usage');
                                           }}
-                                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all"
+                                          className={`px-3 py-1.5 font-bold rounded-xl transition-all cursor-pointer ${
+                                            hasRejectedItems
+                                              ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-sm shadow-rose-200'
+                                              : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-600'
+                                          }`}
                                         >
-                                          {[RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status) ? 'Lihat Laporan (Dalam Review)' : 'Laporkan Penggunaan'}
+                                          {hasRejectedItems
+                                            ? 'Perbaiki Laporan'
+                                            : [RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status)
+                                              ? 'Lihat Laporan (Dalam Review)'
+                                              : 'Laporkan Penggunaan'
+                                          }
                                         </button>
                                       )}
 
@@ -1972,6 +2128,17 @@ export default function App() {
                                           className="px-3 py-1.5 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold rounded-xl transition-all"
                                         >
                                           Lihat Rincian Laporan
+                                        </button>
+                                      )}
+
+                                      {req.status === RequestStatus.REJECTED && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setCancelConfirmReq(req)}
+                                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                        >
+                                          <XCircle className="w-3.5 h-3.5" />
+                                          <span>Batalkan Pengajuan</span>
                                         </button>
                                       )}
                                     </>

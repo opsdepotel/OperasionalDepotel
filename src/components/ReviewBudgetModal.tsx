@@ -5,7 +5,8 @@
 
 import React, { useState } from 'react';
 import { BudgetRequest, RequestStatus, SiteInfo } from '../types';
-import { Shield, Check, X, AlertCircle, Coins, MessageSquare, MapPin } from 'lucide-react';
+import { parseNumericValue } from '../lib/googleApi';
+import { Shield, Check, X, AlertCircle, Coins, MessageSquare, MapPin, ExternalLink } from 'lucide-react';
 
 interface ReviewBudgetModalProps {
   request: BudgetRequest;
@@ -67,23 +68,39 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
       );
 
       if (found) {
-        return { id: found.siteId, name: found.siteName };
+        return { 
+          id: found.siteId, 
+          name: found.siteName, 
+          coordinates: found.coordinates || '', 
+          isVerified: true 
+        };
       }
       if (cleanId === 'DUREN-SAWIT' || cleanId === 'DURENSAWIT') {
-        return { id: 'DUREN-SAWIT', name: 'Depot / Pos Utama' };
+        return { 
+          id: 'DUREN-SAWIT', 
+          name: 'Depot / Pos Utama', 
+          coordinates: '', 
+          isVerified: true 
+        };
       }
-      return { id: id, name: null };
+      return { 
+        id: id, 
+        name: null, 
+        coordinates: '', 
+        isVerified: false 
+      };
     });
   };
 
   const parsedSites = parseSiteList(request.siteId, sites);
 
-  const formatIDR = (num: number) => {
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0
-    }).format(num);
+    }).format(val);
   };
 
   const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
@@ -92,9 +109,9 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
     e.preventDefault();
     setError(null);
 
-    const amt = isTalangan ? 0 : Number(approvedAmount);
+    const amt = isTalangan ? 0 : parseNumericValue(approvedAmount);
     if (!isTalangan) {
-      if (isNaN(amt) || amt <= 0) {
+      if (amt <= 0) {
         setError('Nominal persetujuan harus lebih besar dari Rp 0.');
         return;
       }
@@ -166,22 +183,46 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
             </span>
             {parsedSites.length > 0 ? (
               <div className="flex flex-col gap-1.5">
-                {parsedSites.map((siteItem, idx) => (
-                  <div 
-                    key={idx} 
-                    className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2.5 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-2xs"
-                  >
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <MapPin className="w-3.5 h-3.5 text-indigo-500" />
-                      <span className="font-mono font-bold text-indigo-600 text-xs">{siteItem.id}</span>
+                {parsedSites.map((siteItem, idx) => {
+                  const gmapsUrl = siteItem.coordinates
+                    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(siteItem.coordinates.trim())}`
+                    : '';
+
+                  return (
+                    <div 
+                      key={idx} 
+                      className="flex flex-col gap-1 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-2xs"
+                    >
+                      {/* Top Row: Site ID & Site Name */}
+                      <div className="flex items-center gap-2">
+                        <MapPin className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                        <span className="font-mono font-bold text-indigo-600 text-xs shrink-0">{siteItem.id}</span>
+                        {siteItem.name && (
+                          <span className="text-xs font-semibold text-slate-700 border-l border-slate-200 pl-2">
+                            {siteItem.name}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Bottom Row: Clickable Coordinates */}
+                      {siteItem.coordinates && (
+                        <div className="pt-0.5">
+                          <a
+                            href={gmapsUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] font-mono font-medium text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+                            title="Buka lokasi koordinat di Google Maps"
+                          >
+                            <MapPin className="w-3 h-3 text-indigo-500" />
+                            <span>{siteItem.coordinates}</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                          </a>
+                        </div>
+                      )}
                     </div>
-                    {siteItem.name && (
-                      <span className="text-xs font-semibold text-slate-700 sm:border-l sm:border-slate-200 sm:pl-2.5">
-                        {siteItem.name}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <span className="font-bold text-slate-800">{request.siteId || '-'}</span>
@@ -242,7 +283,8 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
               <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nominal Disetujui (Rupiah)</label>
               <div className="relative">
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   value={approvedAmount}
                   onChange={(e) => setApprovedAmount(e.target.value)}
                   placeholder="contoh: 1500000"
@@ -251,9 +293,9 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
                 />
                 <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               </div>
-              {approvedAmount && (
+              {approvedAmount && parseNumericValue(approvedAmount) > 0 && (
                 <p className="text-[10px] text-indigo-600 font-semibold mt-1">
-                  Format: {formatIDR(Number(approvedAmount))}
+                  Format: {formatIDR(approvedAmount)}
                 </p>
               )}
             </div>

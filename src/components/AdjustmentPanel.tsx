@@ -6,7 +6,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
 import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar } from 'lucide-react';
-import { uploadReceiptFile } from '../lib/googleApi';
+import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 
 interface AdjustmentPanelProps {
   profiles: UserProfile[];
@@ -63,13 +63,14 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   }, []);
 
   // Format Currency
-  const formatIDR = (num: number) => {
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
-    }).format(num);
+    }).format(val);
   };
 
   const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
@@ -188,8 +189,8 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       return;
     }
 
-    const parsedAmount = parseFloat(inputAmount);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+    const parsedAmount = parseNumericValue(inputAmount);
+    if (parsedAmount <= 0) {
       setError('Nominal penyesuaian harus berupa angka positif lebih dari 0.');
       return;
     }
@@ -399,13 +400,13 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
             </label>
             <div className="relative">
               <input
-                type="number"
+                type="text"
+                inputMode="numeric"
                 value={inputAmount}
                 onChange={(e) => setInputAmount(e.target.value)}
                 placeholder="Masukkan nominal adjustment..."
                 className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-bold"
                 required
-                min="0"
               />
               <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             </div>
