@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import {
@@ -90,6 +91,9 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [viewingActivityItem, setViewingActivityItem] = useState<{ item: UsageReportItem; date: string } | null>(null);
+
+  useBackHandler(!!viewingBbmItem, () => setViewingBbmItem(null), 'reviewReport_bbmItem');
+  useBackHandler(!!viewingActivityItem, () => setViewingActivityItem(null), 'reviewReport_activityItem');
 
   // Pre-fill local decisions with current values
   useEffect(() => {

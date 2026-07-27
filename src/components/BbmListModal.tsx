@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink } from 'lucide-react';
@@ -126,6 +127,9 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
     userName: string;
     tanggal: string;
   } | null>(null);
+
+  useBackHandler(!!selectedPhotoUrl, () => setSelectedPhotoUrl(null), 'bbmList_photoUrl');
+  useBackHandler(!!selectedUserActivityModal, () => setSelectedUserActivityModal(null), 'bbmList_userActivity');
 
   // Helper date normalizer
   const getNormalizedYmd = (dateStr?: string): string => {

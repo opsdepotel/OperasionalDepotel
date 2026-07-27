@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile } from '../types';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 import {
@@ -246,6 +247,14 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [previewRequestProof, setPreviewRequestProof] = useState(false);
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [viewingActivityItem, setViewingActivityItem] = useState<{ item: UsageReportItem; date: string } | null>(null);
+
+  // Mobile Back Button handlers for UsageReportForm modals
+  useBackHandler(isFormOpen, () => setIsFormOpen(false), 'report_isFormOpen');
+  useBackHandler(showCameraStream, () => setShowCameraStream(false), 'report_showCameraStream');
+  useBackHandler(!!previewItem, () => setPreviewItem(null), 'report_previewItem');
+  useBackHandler(previewRequestProof, () => setPreviewRequestProof(false), 'report_previewRequestProof');
+  useBackHandler(!!viewingActivityItem, () => setViewingActivityItem(null), 'report_viewingActivityItem');
+  useBackHandler(!!viewingBbmItem, () => setViewingBbmItem(null), 'report_viewingBbmItem');
 
   // Form State for Adding/Editing Item
   const [editingItem, setEditingItem] = useState<UsageReportItem | null>(null);

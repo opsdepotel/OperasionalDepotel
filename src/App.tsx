@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
 import { initAuth, googleSignIn, logout } from './lib/firebase';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -127,6 +128,19 @@ export default function App() {
   const [isBbmListModalOpen, setIsBbmListModalOpen] = useState(false);
   const [isDiomsLogoModalOpen, setIsDiomsLogoModalOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<{ url: string; fileId?: string; title: string } | null>(null);
+
+  // Mobile Device Back Button Navigation Shortcuts
+  useBackHandler(activeView !== 'dashboard', () => setActiveView('dashboard'), 'activeView');
+  useBackHandler(!!selectedRequest, () => setSelectedRequest(null), 'selectedRequest');
+  useBackHandler(!!reviewBudgetReq, () => setReviewBudgetReq(null), 'reviewBudgetReq');
+  useBackHandler(!!reviewReportReq, () => setReviewReportReq(null), 'reviewReportReq');
+  useBackHandler(!!transferReq, () => setTransferReq(null), 'transferReq');
+  useBackHandler(!!closingConfirmReq, () => setClosingConfirmReq(null), 'closingConfirmReq');
+  useBackHandler(!!cancelConfirmReq, () => setCancelConfirmReq(null), 'cancelConfirmReq');
+  useBackHandler(isBbmModalOpen, () => setIsBbmModalOpen(false), 'isBbmModalOpen');
+  useBackHandler(isBbmListModalOpen, () => setIsBbmListModalOpen(false), 'isBbmListModalOpen');
+  useBackHandler(isDiomsLogoModalOpen, () => setIsDiomsLogoModalOpen(false), 'isDiomsLogoModalOpen');
+  useBackHandler(!!previewDocument, () => setPreviewDocument(null), 'previewDocument');
 
   // Search/Filter state
   const [searchQuery, setSearchQuery] = useState('');

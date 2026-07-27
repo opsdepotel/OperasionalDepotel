@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { useBackHandler } from '../hooks/useBackHandler';
 import { SiteInfo, UserActivity } from '../types';
 import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle } from 'lucide-react';
 
@@ -77,6 +78,12 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
   const [selectedOriginalUrl, setSelectedOriginalUrl] = useState<string | null>(null);
+
+  useBackHandler(showAddForm, () => setShowAddForm(false), 'activity_addForm');
+  useBackHandler(!!selectedPhotoUrl, () => {
+    setSelectedPhotoUrl(null);
+    setSelectedOriginalUrl(null);
+  }, 'activity_photoModal');
 
   // Form State
   const [selectedSiteId, setSelectedSiteId] = useState('');
