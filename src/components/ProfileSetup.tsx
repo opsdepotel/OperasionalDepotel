@@ -147,7 +147,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
         divisi: divisi.trim().toUpperCase(),
         aksesBBM,
         mobile,
-        deviceId: deviceId.trim()
+        deviceId: mobile ? deviceId.trim() : ''
       });
       // Reset form states
       setEditingProfile(null);

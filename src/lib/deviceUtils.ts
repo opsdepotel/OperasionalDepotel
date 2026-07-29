@@ -48,76 +48,89 @@ export async function validateDeviceAccessAndBind(
   saveProfileFn?: (updated: UserProfile) => Promise<void>,
   allProfiles?: UserProfile[]
 ): Promise<{ success: boolean; errorMessage?: string; updatedUser?: UserProfile }> {
-  const isMobile = isMobileDevice();
-
   const isUserMobileOnly =
     user.mobile === true ||
     String(user.mobile).trim().toUpperCase() === 'TRUE' ||
     String(user.mobile).trim().toUpperCase() === 'YA' ||
     String(user.mobile).trim() === '1';
 
-  // 1. Check Mobile (Boolean) constraint
-  // If Mobile is TRUE, user MUST use a mobile device (Android/iPhone). Access from PC/Windows is rejected.
-  if (isUserMobileOnly && !isMobile) {
+  // 1. If Mobile is NOT set to TRUE, user can access from any device without Device ID check/binding
+  if (!isUserMobileOnly) {
+    return {
+      success: true,
+      updatedUser: user
+    };
+  }
+
+  // 2. If Mobile IS set to TRUE, user MUST use a mobile device (Android/iPhone). PC/Windows is rejected.
+  const isMobile = isMobileDevice();
+
+  if (!isMobile) {
     return {
       success: false,
       errorMessage: 'Akses Ditolak: Akun Anda dikonfigurasi wajib menggunakan perangkat mobile (Android/iPhone). Login melalui PC/Windows tidak diizinkan.'
     };
   }
 
-  // 2. Check Device ID binding when accessing from a mobile device
-  if (isMobile) {
-    const currentDeviceId = getOrCreateDeviceId();
+  // 3. Check Device ID binding when accessing from a mobile device for Mobile-only user
+  const currentDeviceId = getOrCreateDeviceId();
 
-    if (!user.deviceId || !user.deviceId.trim()) {
-      // Device ID in database is empty:
-      // First check if currentDeviceId is already bound/registered to another user profile
-      if (allProfiles && allProfiles.length > 0) {
-        const boundOtherUser = allProfiles.find(
-          (p) =>
-            p.deviceId &&
-            p.deviceId.trim().toLowerCase() === currentDeviceId.trim().toLowerCase() &&
-            (p.userId ? p.userId.toLowerCase() !== user.userId?.toLowerCase() : p.email.toLowerCase() !== user.email?.toLowerCase())
+  if (!user.deviceId || !user.deviceId.trim()) {
+    // Device ID in database is empty:
+    // First check if currentDeviceId is already bound/registered to another user profile that has Mobile = TRUE
+    if (allProfiles && allProfiles.length > 0) {
+      const boundOtherUser = allProfiles.find((p) => {
+        const otherIsMobile =
+          p.mobile === true ||
+          String(p.mobile).trim().toUpperCase() === 'TRUE' ||
+          String(p.mobile).trim().toUpperCase() === 'YA' ||
+          String(p.mobile).trim() === '1';
+
+        return (
+          otherIsMobile &&
+          p.deviceId &&
+          p.deviceId.trim().toLowerCase() === currentDeviceId.trim().toLowerCase() &&
+          (p.userId ? p.userId.toLowerCase() !== user.userId?.toLowerCase() : p.email.toLowerCase() !== user.email?.toLowerCase())
         );
+      });
 
-        if (boundOtherUser) {
-          const otherName = boundOtherUser.nama || boundOtherUser.userId || boundOtherUser.email;
-          return {
-            success: false,
-            errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDeviceId}) sudah terdaftar/terikat dengan akun User lain (${otherName}).`
-          };
-        }
-      }
-
-      // First time mobile access for this user and device is free => Bind current Device ID!
-      const updatedUser: UserProfile = {
-        ...user,
-        deviceId: currentDeviceId
-      };
-
-      if (saveProfileFn) {
-        try {
-          await saveProfileFn(updatedUser);
-        } catch (err) {
-          console.error('Gagal menyimpan Device ID ke database:', err);
-        }
-      }
-
-      return {
-        success: true,
-        updatedUser
-      };
-    } else {
-      // Device ID exists in database: Compare with current mobile device's ID
-      const dbDeviceId = user.deviceId.trim();
-      const currentDevId = currentDeviceId.trim();
-
-      if (dbDeviceId.toLowerCase() !== currentDevId.toLowerCase()) {
+      if (boundOtherUser) {
+        const otherName = boundOtherUser.nama || boundOtherUser.userId || boundOtherUser.email;
         return {
           success: false,
-          errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDevId}) tidak sesuai dengan Device ID yang terikat di akun Anda (${dbDeviceId}).`
+          errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDeviceId}) sudah terdaftar/terikat dengan akun User lain (${otherName}).`
         };
       }
+    }
+
+    // First time mobile access for this mobile user => Bind current Device ID!
+    const updatedUser: UserProfile = {
+      ...user,
+      deviceId: currentDeviceId
+    };
+
+    if (saveProfileFn) {
+      try {
+        await saveProfileFn(updatedUser);
+      } catch (err) {
+        console.error('Gagal menyimpan Device ID ke database:', err);
+      }
+    }
+
+    return {
+      success: true,
+      updatedUser
+    };
+  } else {
+    // Device ID exists in database: Compare with current mobile device's ID
+    const dbDeviceId = user.deviceId.trim();
+    const currentDevId = currentDeviceId.trim();
+
+    if (dbDeviceId.toLowerCase() !== currentDevId.toLowerCase()) {
+      return {
+        success: false,
+        errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDevId}) tidak sesuai dengan Device ID yang terikat di akun Anda (${dbDeviceId}).`
+      };
     }
   }
 
