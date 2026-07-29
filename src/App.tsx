@@ -1159,6 +1159,8 @@ export default function App() {
           const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
           const adminApprovedAll = reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
           if (!managerApproved || adminApprovedAll) return false;
+        } else if (activeRole === Role.DIREKTUR) {
+          if (![RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
         } else {
           if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
         }
@@ -1757,6 +1759,7 @@ export default function App() {
                           {statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Pengisian & Review Laporan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.MANAGER ? 'Review Penggunaan Anggaran (Termasuk Dana Talangan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.FINANCE ? 'Review Finansial' :
+                           statusFilter === 'REPORTING' && activeRole === Role.DIREKTUR ? 'Proses Laporan Operasional' :
                            statusFilter === 'CLOSED' ? 'Arsip / UID Selesai (Closed)' :
                            getStatusLabel(statusFilter as RequestStatus) || statusFilter}
                         </span>
@@ -2288,6 +2291,20 @@ export default function App() {
                                         </button>
                                       )}
                                     </>
+                                  )}
+
+                                  {/* DIREKTUR ACTIONS */}
+                                  {activeRole === Role.DIREKTUR && (
+                                    <button
+                                      onClick={() => {
+                                        setSelectedRequest(req);
+                                        setActiveView('report-usage');
+                                      }}
+                                      className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold rounded-xl transition-all border border-purple-200/60 flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-purple-600" />
+                                      <span>Lihat Rincian</span>
+                                    </button>
                                   )}
                                 </div>
                               </div>

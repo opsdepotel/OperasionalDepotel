@@ -284,19 +284,19 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
           {/* Role Type */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Role Pekerjaan</label>
-            <div className="grid grid-cols-3 gap-2">
-              {([Role.USER, Role.MANAGER, Role.FINANCE] as Role[]).map((r) => (
+            <div className="grid grid-cols-4 gap-1.5">
+              {([Role.USER, Role.MANAGER, Role.FINANCE, Role.DIREKTUR] as Role[]).map((r) => (
                 <button
                   key={r}
                   type="button"
                   onClick={() => setRole(r)}
-                  className={`py-2 px-3 text-xs font-medium rounded-xl border text-center transition-all cursor-pointer ${
+                  className={`py-2 px-1.5 text-[11px] font-medium rounded-xl border text-center transition-all cursor-pointer ${
                     role === r
                       ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 font-semibold'
                       : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {r === Role.USER ? 'Staff / User' : r === Role.MANAGER ? 'Manager' : 'Finance'}
+                  {r === Role.USER ? 'Staff' : r === Role.MANAGER ? 'Manager' : r === Role.FINANCE ? 'Finance' : 'Direktur'}
                 </button>
               ))}
             </div>
@@ -455,6 +455,8 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                           ? 'bg-red-50 text-red-600 border border-red-100'
                           : p.role === Role.MANAGER
                           ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                          : p.role === Role.DIREKTUR
+                          ? 'bg-purple-50 text-purple-600 border border-purple-100'
                           : 'bg-indigo-50 text-indigo-600 border border-indigo-100'
                       }`}>
                         {p.role}

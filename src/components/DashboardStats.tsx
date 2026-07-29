@@ -664,5 +664,146 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     );
   }
 
+  // Compute stats for DIREKTUR role
+  if (role === Role.DIREKTUR) {
+    const activeReqs = requests.filter(r => r.status !== RequestStatus.CANCELLED);
+    const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+
+    // 1. PENGAJUAN (Pending Approval by Manager / Partially Approved)
+    const pengajuanCount = activeReqs.filter(r => 
+      r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
+    ).length;
+
+    // 2. MENUNGGU TRANSFER (Approved by Manager or Bailout Reimbursement pending)
+    const menungguTransferCount = activeReqs.filter(r => 
+      r.status === RequestStatus.APPROVED || r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+    ).length;
+
+    // 3. PROSES LAPORAN (Transferred, Reporting, Review Manager, Review Admin)
+    const prosesLaporanCount = activeReqs.filter(r => 
+      [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)
+    ).length;
+
+    // 4. CLOSED (Closed requests excluding BBMDS)
+    const closedCount = activeReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
+
+    // Financial totals for executive summary
+    const totalPengajuan = activeReqs.reduce((sum, r) => sum + (r.jumlahPengajuan || 0), 0);
+    const totalTransferred = activeReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+    const totalClosed = activeReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+
+    return (
+      <div className="space-y-4">
+        {/* Banner Direktur */}
+        <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg border border-purple-800/50">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-bold tracking-widest text-purple-300 uppercase bg-purple-950/80 px-2.5 py-1 rounded-lg border border-purple-700/50">
+                Ringkasan Eksekutif Direktur
+              </span>
+              <h2 className="text-base font-display font-bold mt-2 text-white">Monitoring Operasional Anggaran</h2>
+              <p className="text-[11px] text-purple-200 mt-0.5">
+                Tinjauan & review status UID pengajuan anggaran seluruh operasional perusahaan.
+              </p>
+            </div>
+            <div className="hidden sm:flex w-11 h-11 rounded-2xl bg-purple-500/20 border border-purple-400/30 items-center justify-center shrink-0">
+              <ShieldCheck className="w-6 h-6 text-purple-300" />
+            </div>
+          </div>
+        </div>
+
+        {/* 4 Core Cards Grid */}
+        <div className="grid grid-cols-2 gap-3.5">
+          {/* Card 1: PENGAJUAN */}
+          <div
+            onClick={() => handleCardClick('PENDING')}
+            className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
+              activeFilter === 'PENDING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN</p>
+            <div className="flex items-end justify-between mt-2">
+              <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{pengajuanCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Tinjauan</span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-2 font-medium">Menunggu persetujuan Manager</p>
+          </div>
+
+          {/* Card 2: MENUNGGU TRANSFER */}
+          <div
+            onClick={() => handleCardClick('APPROVED')}
+            className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
+              activeFilter === 'APPROVED' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">MENUNGGU TRANSFER</p>
+            <div className="flex items-end justify-between mt-2">
+              <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{menungguTransferCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-blue-200/60">Transfer</span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-2 font-medium">Disetujui, antrean pencairan Finance</p>
+          </div>
+
+          {/* Card 3: PROSES LAPORAN */}
+          <div
+            onClick={() => handleCardClick('REPORTING')}
+            className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
+              activeFilter === 'REPORTING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PROSES LAPORAN</p>
+            <div className="flex items-end justify-between mt-2">
+              <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{prosesLaporanCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Penggunaan</span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-2 font-medium">Pengisian & verifikasi laporan</p>
+          </div>
+
+          {/* Card 4: CLOSED */}
+          <div
+            onClick={() => handleCardClick('CLOSED')}
+            className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
+              activeFilter === 'CLOSED' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CLOSED</p>
+            <div className="flex items-end justify-between mt-2">
+              <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{closedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-emerald-200/60">Selesai</span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-2 font-medium">Laporan lengkap & ter-closing</p>
+          </div>
+        </div>
+
+        {/* Total Financial Summary Card */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">IKHTISAR REKONSILIASI KEUANGAN</p>
+          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+            <div>
+              <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wider">Total Pengajuan</span>
+              <span className="text-sm font-bold font-display text-slate-800">{formatIDR(totalPengajuan)}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wider">Total Dana Ditransfer</span>
+              <span className="text-sm font-bold font-display text-indigo-600">{formatIDR(totalTransferred)}</span>
+            </div>
+            <div className="col-span-2 pt-3 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wider">Total Closing Terverifikasi</span>
+                  <span className="text-base font-extrabold font-display text-emerald-600 mt-0.5 block">{formatIDR(totalClosed)}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[9px] text-slate-400 block font-semibold uppercase tracking-wider">Selisih Belum Closing</span>
+                  <span className="text-sm font-extrabold font-display text-amber-600 mt-0.5 block">{formatIDR(totalTransferred - totalClosed)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return null;
 };

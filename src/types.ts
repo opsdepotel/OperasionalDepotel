@@ -6,7 +6,8 @@
 export enum Role {
   USER = 'USER',
   MANAGER = 'MANAGER',
-  FINANCE = 'FINANCE'
+  FINANCE = 'FINANCE',
+  DIREKTUR = 'DIREKTUR'
 }
 
 export enum RequestStatus {
