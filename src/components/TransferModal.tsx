@@ -38,7 +38,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   onAuthError,
   approvedUsageAmount = 0
 }) => {
-  const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
+  const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
   const isFinalTalanganTransfer = isTalangan && request.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
 
   const [transferredAmount, setTransferredAmount] = useState(

@@ -79,7 +79,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   const currentItems = items.filter(item => item.requestId === request.id);
 
   // Check user BBM access
-  const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
+  const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
   const userForRequest = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
   const hasBbmAccess = !!userForRequest?.aksesBBM;
 
@@ -179,7 +179,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       return dec?.status === ItemStatus.REJECTED;
     });
 
-    const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
+    const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
     let nextRequestStatus: RequestStatus;
 
     if (role === Role.MANAGER) {
@@ -196,8 +196,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         // If Admin rejects any item, it goes back to User for reporting/correction
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        // If Admin approves all, for Dana Talangan go to PENDING_TALANGAN_TRANSFER, otherwise CLOSED (Closing Form)
-        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.CLOSED;
+        // If Admin approves all, for Dana Talangan go to PENDING_TALANGAN_TRANSFER, otherwise keep as REPORTING (ready for Form Closing)
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
       }
     }
 
@@ -245,27 +245,6 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <span>{error}</span>
-        </div>
-      )}
-
-      {/* Quick Action Bar for Reviewers */}
-      {request.status !== RequestStatus.CLOSED && currentItems.length > 0 && (
-        <div className="flex items-center justify-between bg-indigo-50/60 px-3.5 py-2 rounded-xl border border-indigo-100/80">
-          <span className="text-[11px] font-semibold text-slate-700">Quick Review:</span>
-          <button
-            type="button"
-            onClick={() => {
-              const allApprovedDecisions: Record<string, { status: ItemStatus; comment: string }> = {};
-              currentItems.forEach(i => {
-                allApprovedDecisions[i.id] = { status: ItemStatus.APPROVED, comment: '' };
-              });
-              setDecisions(allApprovedDecisions);
-            }}
-            className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-          >
-            <Check className="w-3.5 h-3.5" />
-            <span>Setujui Semua Item</span>
-          </button>
         </div>
       )}
 
@@ -449,6 +428,31 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         const selisih = totalApprovedAmount - totalTransferAmount;
 
         if (role === Role.FINANCE && request.status !== RequestStatus.CLOSED && allItemsApprovedByFinance) {
+          if (isTalangan) {
+            return (
+              <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-blue-950 text-white p-4 rounded-2xl border border-indigo-700/60 shadow-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300">
+                      <ShieldCheck className="w-4.5 h-4.5" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-bold text-white">Verifikasi Dana Talangan Selesai</h4>
+                      <p className="text-[10px] text-indigo-200">Seluruh item disetujui. Pengajuan akan dipindahkan ke Menunggu Transfer.</p>
+                    </div>
+                  </div>
+                  <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-indigo-500/30 text-indigo-300 border border-indigo-400/30">
+                    Siap Transfer
+                  </span>
+                </div>
+                <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50 flex items-center justify-between text-xs mt-1">
+                  <span className="text-[10px] text-slate-400 font-semibold uppercase">Total Reimbursement Disetujui</span>
+                  <span className="font-bold text-emerald-300 font-display text-sm">{formatIDR(totalApprovedAmount)}</span>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div className="bg-gradient-to-br from-emerald-950 via-slate-900 to-indigo-950 text-white p-4 rounded-2xl border border-emerald-700/60 shadow-lg space-y-3">
               <div className="flex items-center justify-between">
@@ -502,7 +506,13 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
           {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) ? (
             <>
               <ShieldCheck className="w-4 h-4 text-emerald-200" />
-              <span>{isSubmitting ? 'Memproses Closing...' : 'Selesaikan & Form Closing Laporan (CLOSED)'}</span>
+              <span>
+                {isSubmitting
+                  ? 'Memproses Review...'
+                  : isTalangan
+                  ? 'Simpan Review & Masuk Menunggu Transfer'
+                  : 'Simpan Review & Buka Form Closing'}
+              </span>
             </>
           ) : (
             <>

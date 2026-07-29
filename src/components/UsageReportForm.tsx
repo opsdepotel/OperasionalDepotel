@@ -109,9 +109,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   // Filter items for this request UID
   const currentItems = items.filter(item => item.requestId === request.id);
 
-  // Check if the user associated with this UID request has BBM Duren Sawit access
+  // Check if the user associated with this UID request has BBM Duren Sawit access and Mobile mandatory setting
   const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
   const hasBbmAccess = !!requesterProfile?.aksesBBM;
+  const isMobileUser = requesterProfile?.mobile === true ||
+    String(requesterProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
+    String(requesterProfile?.mobile).trim().toUpperCase() === 'YA' ||
+    String(requesterProfile?.mobile).trim() === '1';
 
   // Track BBM popup item view state
   const [viewingBbmItem, setViewingBbmItem] = useState<{ item: UsageReportItem; date: string; userEmail: string; userName: string } | null>(null);
@@ -193,7 +197,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       return dec?.status === ItemStatus.REJECTED;
     });
 
-    const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
+    const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
     let nextRequestStatus: RequestStatus;
 
     if (role === Role.MANAGER) {
@@ -207,7 +211,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       if (hasRejections) {
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.CLOSED;
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
       }
     }
 
@@ -292,6 +296,11 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isMobileUser) {
+      alert('Akun Anda dikonfigurasi Wajib Mobile. Upload dari galeri/file tidak diizinkan, semua foto nota wajib diambil langsung dari Kamera HP.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
     }
@@ -971,25 +980,6 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       {/* Form Closing Card & Submit Review Button for Manager/Finance */}
       {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && request.status !== RequestStatus.CLOSED && onSubmitReview && currentItems.length > 0 && (
         <div className="space-y-3 pt-2">
-          {/* Quick Review Bar */}
-          <div className="flex items-center justify-between bg-indigo-50/60 px-4 py-2.5 rounded-2xl border border-indigo-100/80">
-            <span className="text-xs font-semibold text-slate-700">Aksi Cepat Review ({role === Role.MANAGER ? 'Manager' : 'Finance'}):</span>
-            <button
-              type="button"
-              onClick={() => {
-                const allApprovedDecisions: Record<string, { status: ItemStatus; comment: string }> = {};
-                currentItems.forEach(i => {
-                  allApprovedDecisions[i.id] = { status: ItemStatus.APPROVED, comment: '' };
-                });
-                setDecisions(allApprovedDecisions);
-              }}
-              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-            >
-              <Check className="w-4 h-4" />
-              <span>Setujui Semua Item</span>
-            </button>
-          </div>
-
           {/* Form Closing Banner for Finance when all items approved */}
           {(() => {
             const allApprovedByFinance = currentItems.length > 0 && currentItems.every(i => {
@@ -1005,6 +995,31 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             const selisih = totalApproved - totalTransfer;
 
             if (role === Role.FINANCE && allApprovedByFinance) {
+              if (isTalangan) {
+                return (
+                  <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-blue-950 text-white p-4.5 rounded-2xl border border-indigo-700/60 shadow-xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300">
+                          <ShieldCheck className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">Verifikasi Dana Talangan Selesai</h4>
+                          <p className="text-[10px] text-indigo-200">Seluruh item disetujui. Pengajuan akan dipindahkan ke Menunggu Transfer.</p>
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-extrabold uppercase px-2.5 py-1 rounded-lg bg-indigo-500/30 text-indigo-300 border border-indigo-400/30">
+                        Siap Transfer
+                      </span>
+                    </div>
+                    <div className="bg-slate-800/60 p-3 rounded-xl border border-slate-700/50 flex items-center justify-between text-xs">
+                      <span className="text-[10px] text-slate-400 font-semibold uppercase">Total Reimbursement Disetujui</span>
+                      <span className="font-bold text-emerald-300 font-display text-sm">{formatIDR(totalApproved)}</span>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <div className="bg-gradient-to-br from-emerald-950 via-slate-900 to-indigo-950 text-white p-4.5 rounded-2xl border border-emerald-700/60 shadow-xl space-y-3">
                   <div className="flex items-center justify-between">
@@ -1063,7 +1078,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) ? (
               <>
                 <ShieldCheck className="w-4.5 h-4.5 text-emerald-200" />
-                <span>{isSubmittingReview ? 'Memproses Closing...' : 'Selesaikan & Form Closing Laporan (CLOSED)'}</span>
+                <span>
+                  {isSubmittingReview
+                    ? 'Memproses Review...'
+                    : isTalangan
+                    ? 'Simpan Review & Masuk Menunggu Transfer'
+                    : 'Simpan Review & Buka Form Closing'}
+                </span>
               </>
             ) : (
               <>
@@ -1216,27 +1237,36 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 />
 
                 {/* Capture/Upload Options Panel */}
-                <div className="grid grid-cols-2 gap-2">
+                <div className={isMobileUser ? "grid grid-cols-1 gap-2" : "grid grid-cols-2 gap-2"}>
                   {/* Native device camera */}
                   <button
                     type="button"
                     onClick={() => cameraInputRef.current?.click()}
-                    className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                    className={`p-3 bg-indigo-50/80 hover:bg-indigo-100/80 text-indigo-700 border border-indigo-200/80 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold cursor-pointer ${isMobileUser ? 'py-3.5 shadow-xs' : ''}`}
                   >
-                    <Camera className="w-5 h-5 text-indigo-500" />
-                    <span>Kamera HP</span>
+                    <Camera className="w-5 h-5 text-indigo-600" />
+                    <span>{isMobileUser ? 'Ambil Foto Nota dari Kamera HP (Wajib Mobile)' : 'Kamera HP'}</span>
                   </button>
 
-                  {/* Choose file / gallery */}
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
-                  >
-                    <UploadCloud className="w-5 h-5 text-indigo-500" />
-                    <span>File / Galeri</span>
-                  </button>
+                  {/* Choose file / gallery - Only for non-mobile users */}
+                  {!isMobileUser && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                    >
+                      <UploadCloud className="w-5 h-5 text-indigo-500" />
+                      <span>File / Galeri</span>
+                    </button>
+                  )}
                 </div>
+
+                {isMobileUser && (
+                  <div className="bg-amber-50/90 border border-amber-200 text-amber-800 p-2.5 rounded-xl text-[11px] font-medium flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>User Wajib Mobile: Semua bukti nota harus diambil dari Kamera HP secara langsung (upload galeri ditutup).</span>
+                  </div>
+                )}
               </div>
 
               {/* Submit Action Buttons */}

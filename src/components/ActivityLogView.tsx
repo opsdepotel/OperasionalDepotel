@@ -5,8 +5,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { SiteInfo, UserActivity } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle } from 'lucide-react';
+import { UserProfile, SiteInfo, UserActivity } from '../types';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
 function parseCoords(coordStr: string): { lat: number; lng: number } | null {
@@ -46,6 +46,7 @@ interface ActivityLogViewProps {
   activities: UserActivity[];
   sites: SiteInfo[];
   userEmail: string;
+  userProfile?: UserProfile;
   onSaveActivity: (activityData: {
     tanggal: string;
     siteId: string;
@@ -61,9 +62,14 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   activities,
   sites,
   userEmail,
+  userProfile,
   onSaveActivity,
   onBack
 }) => {
+  const isMobileUser = userProfile?.mobile === true ||
+    String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
+    String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
+    String(userProfile?.mobile).trim() === '1';
   const getTodayStr = () => {
     const d = new Date();
     const year = d.getFullYear();
@@ -528,7 +534,15 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
               {/* Camera Capture Only input */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">AMBIL FOTO BUKTI (KAMERA HP LANGSUNG)</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  AMBIL FOTO BUKTI (KAMERA HP LANGSUNG)
+                </label>
+                {isMobileUser && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-800 p-2.5 rounded-xl text-[11px] font-medium flex items-center gap-2 mb-2">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>User Wajib Mobile: Foto bukti kegiatan harian wajib diambil dari Kamera HP secara langsung (tidak dapat memilih file galeri).</span>
+                  </div>
+                )}
                 <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim())) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
                   {photoPreview ? (
                     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100">

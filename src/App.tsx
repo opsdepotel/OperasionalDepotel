@@ -753,7 +753,7 @@ export default function App() {
   const handleAdminTransfer = async (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string) => {
     if (!token || !spreadsheetId || !transferReq) return;
 
-    const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.keterangan.startsWith('[DANA TALANGAN]');
+    const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.id.startsWith('BBMDS') || transferReq.id.startsWith('BBM_DurenSawit') || transferReq.tipePengajuan === 'DANA_TALANGAN' || transferReq.keterangan.startsWith('[DANA TALANGAN]');
     const isPendingTalanganTransfer = transferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
 
     const updated: BudgetRequest = {
@@ -954,6 +954,14 @@ export default function App() {
       setSelectedRequest(null);
       setActiveView('dashboard');
       await handleManualRefresh();
+
+      // Check if Finance approved all items for standard request => open dedicated Form Closing modal
+      const allApprovedByFinance = itemDecisions.length > 0 && itemDecisions.every(d => d.status === ItemStatus.APPROVED);
+      const isTalangan = reqToUse.id.startsWith('OPT-') || reqToUse.id.startsWith('BBMDS') || reqToUse.id.startsWith('BBM_DurenSawit') || reqToUse.tipePengajuan === 'DANA_TALANGAN' || reqToUse.keterangan.startsWith('[DANA TALANGAN]');
+
+      if (activeRole === Role.FINANCE && allApprovedByFinance && !isTalangan && nextRequestStatus !== RequestStatus.CLOSED) {
+        setClosingConfirmReq(reqToUse);
+      }
     }
   };
 
@@ -1531,6 +1539,7 @@ export default function App() {
             activities={activities}
             sites={sites}
             userEmail={userProfile.email}
+            userProfile={userProfile}
             onSaveActivity={handleSaveActivity}
             onBack={() => setActiveView('dashboard')}
           />
