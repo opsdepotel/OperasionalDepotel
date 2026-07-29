@@ -10,7 +10,7 @@ import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel
+  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel, Check, ShieldCheck
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -207,7 +207,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       if (hasRejections) {
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.CLOSED;
       }
     }
 
@@ -968,22 +968,109 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
 
 
-      {/* Submit Review Button for Manager/Finance */}
+      {/* Form Closing Card & Submit Review Button for Manager/Finance */}
       {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && request.status !== RequestStatus.CLOSED && onSubmitReview && currentItems.length > 0 && (
-        <div className="space-y-2">
+        <div className="space-y-3 pt-2">
+          {/* Quick Review Bar */}
+          <div className="flex items-center justify-between bg-indigo-50/60 px-4 py-2.5 rounded-2xl border border-indigo-100/80">
+            <span className="text-xs font-semibold text-slate-700">Aksi Cepat Review ({role === Role.MANAGER ? 'Manager' : 'Finance'}):</span>
+            <button
+              type="button"
+              onClick={() => {
+                const allApprovedDecisions: Record<string, { status: ItemStatus; comment: string }> = {};
+                currentItems.forEach(i => {
+                  allApprovedDecisions[i.id] = { status: ItemStatus.APPROVED, comment: '' };
+                });
+                setDecisions(allApprovedDecisions);
+              }}
+              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            >
+              <Check className="w-4 h-4" />
+              <span>Setujui Semua Item</span>
+            </button>
+          </div>
+
+          {/* Form Closing Banner for Finance when all items approved */}
+          {(() => {
+            const allApprovedByFinance = currentItems.length > 0 && currentItems.every(i => {
+              const dec = decisions[i.id];
+              return (dec ? dec.status : i.statusAdmin) === ItemStatus.APPROVED;
+            });
+
+            const totalApproved = currentItems
+              .filter(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
+              .reduce((sum, i) => sum + i.nominal, 0);
+
+            const totalTransfer = parseNumericValue(request.adminActionAmount || request.jumlahPengajuan);
+            const selisih = totalApproved - totalTransfer;
+
+            if (role === Role.FINANCE && allApprovedByFinance) {
+              return (
+                <div className="bg-gradient-to-br from-emerald-950 via-slate-900 to-indigo-950 text-white p-4.5 rounded-2xl border border-emerald-700/60 shadow-xl space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300">
+                        <ShieldCheck className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-white">Form Closing Laporan Keuangan</h4>
+                        <p className="text-[10px] text-emerald-200">Seluruh item laporan telah disetujui Finance. Siap diproses Closing.</p>
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-extrabold uppercase px-2.5 py-1 rounded-lg bg-emerald-500/30 text-emerald-300 border border-emerald-400/30">
+                      Ready for Closing
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2.5 pt-2.5 border-t border-slate-700/60 text-xs">
+                    <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
+                      <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Transfer</span>
+                      <span className="font-bold text-white font-display text-xs">{formatIDR(totalTransfer)}</span>
+                    </div>
+                    <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
+                      <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Laporan</span>
+                      <span className="font-bold text-emerald-300 font-display text-xs">{formatIDR(totalApproved)}</span>
+                    </div>
+                    <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
+                      <span className="text-[9px] text-slate-400 block font-semibold uppercase">Rekonsiliasi</span>
+                      <span className={`font-bold font-display text-xs ${selisih === 0 ? 'text-emerald-400' : selisih > 0 ? 'text-amber-300' : 'text-blue-300'}`}>
+                        {selisih === 0 ? 'Pas / Clear' : selisih > 0 ? `+${formatIDR(selisih)}` : formatIDR(selisih)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            return null;
+          })()}
+
           {actionError && (
             <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
               <span>{actionError}</span>
             </div>
           )}
+
           <button
             onClick={handleSubmitReview}
             disabled={isSubmittingReview}
-            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer mt-2"
+            className={`w-full py-3 text-white font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${
+              role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
+                ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
+                : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'
+            } disabled:bg-slate-300`}
           >
-            <Send className="w-4 h-4" />
-            <span>{isSubmittingReview ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
+            {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) ? (
+              <>
+                <ShieldCheck className="w-4.5 h-4.5 text-emerald-200" />
+                <span>{isSubmittingReview ? 'Memproses Closing...' : 'Selesaikan & Form Closing Laporan (CLOSED)'}</span>
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4" />
+                <span>{isSubmittingReview ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
+              </>
+            )}
           </button>
         </div>
       )}

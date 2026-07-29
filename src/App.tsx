@@ -52,7 +52,7 @@ import {
   RefreshCw, FileSpreadsheet, Eye, Search, AlertTriangle, Check, CreditCard,
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight,
   Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel, X,
-  Settings, LogOut
+  Settings, LogOut, ShieldCheck
 } from 'lucide-react';
 
 export default function App() {
@@ -1677,39 +1677,76 @@ export default function App() {
                   />
                 )}
 
-                {closingConfirmReq && (
-                  <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in">
-                    <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up">
-                      <div className="w-12 h-12 rounded-2xl bg-amber-50 flex items-center justify-center text-amber-600">
-                        <AlertCircle className="w-6 h-6" />
-                      </div>
-                      <div className="space-y-1.5">
-                        <h3 className="text-sm font-bold text-slate-800">Konfirmasi Closing UID {closingConfirmReq.id}</h3>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                          Apakah Anda yakin ingin melakukan **Closing** untuk pengajuan dana ini? Proses ini bersifat final dan mengunci seluruh rincian item penggunaan dana secara permanen.
+                {closingConfirmReq && (() => {
+                  const reqItems = usageItems.filter(i => i.requestId === closingConfirmReq.id);
+                  const approvedUsage = reqItems
+                    .filter(i => i.statusAdmin === ItemStatus.APPROVED)
+                    .reduce((sum, i) => sum + i.nominal, 0);
+                  const totalTransfer = parseNumericValue(closingConfirmReq.adminActionAmount || closingConfirmReq.jumlahPengajuan);
+                  const selisih = approvedUsage - totalTransfer;
+
+                  return (
+                    <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in">
+                      <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up">
+                        <div className="flex items-center gap-3">
+                          <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">
+                            <ShieldCheck className="w-6 h-6" />
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-slate-800">Form Closing Laporan Keuangan</h3>
+                            <p className="text-[11px] text-slate-500 font-medium">
+                              UID: <span className="font-mono font-bold text-slate-700">{closingConfirmReq.id}</span> | Pemohon: <span className="font-semibold text-slate-700">{closingConfirmReq.userEmail}</span>
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 space-y-2 text-xs">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Ringkasan Rekonsiliasi Finansial</span>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="bg-white p-2.5 rounded-xl border border-slate-150">
+                              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Transfer</span>
+                              <span className="font-bold text-slate-800 text-xs font-display">{formatIDR(totalTransfer)}</span>
+                            </div>
+                            <div className="bg-white p-2.5 rounded-xl border border-slate-150">
+                              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Laporan Disetujui</span>
+                              <span className="font-bold text-emerald-600 text-xs font-display">{formatIDR(approvedUsage)}</span>
+                            </div>
+                            <div className="bg-white p-2.5 rounded-xl border border-slate-150">
+                              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Rekonsiliasi</span>
+                              <span className={`font-bold text-xs font-display ${selisih === 0 ? 'text-emerald-600' : selisih > 0 ? 'text-amber-600' : 'text-blue-600'}`}>
+                                {selisih === 0 ? 'Pas / Clear' : selisih > 0 ? `+${formatIDR(selisih)}` : formatIDR(selisih)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-slate-500 leading-relaxed bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-amber-800">
+                          <strong>Perhatian:</strong> Seluruh item laporan telah disetujui Finance. Melakukan Closing akan secara permanen menyelesaikan UID ini dan menyimpan riwayat transaksi secara final.
                         </p>
-                      </div>
-                      <div className="flex gap-3 pt-2">
-                        <button
-                          onClick={() => setClosingConfirmReq(null)}
-                          className="flex-1 py-2.5 px-4 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                        >
-                          Batal
-                        </button>
-                        <button
-                          onClick={async () => {
-                            const req = closingConfirmReq;
-                            setClosingConfirmReq(null);
-                            await handleCloseRequest(req);
-                          }}
-                          className="flex-1 py-2.5 px-4 bg-slate-900 hover:bg-slate-850 text-white font-bold text-xs rounded-xl transition-all shadow-sm cursor-pointer"
-                        >
-                          Ya, Closing
-                        </button>
+
+                        <div className="flex gap-3 pt-1">
+                          <button
+                            onClick={() => setClosingConfirmReq(null)}
+                            className="flex-1 py-2.5 px-4 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                          >
+                            Batal
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const req = closingConfirmReq;
+                              setClosingConfirmReq(null);
+                              await handleCloseRequest(req);
+                            }}
+                            className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <ShieldCheck className="w-4 h-4" />
+                            <span>Selesaikan & Form Closing</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {cancelConfirmReq && (
                   <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in">

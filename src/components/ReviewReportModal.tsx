@@ -8,7 +8,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import {
-  Shield, Check, X, AlertCircle, Info, ExternalLink,
+  Shield, ShieldCheck, Check, X, AlertCircle, Info, ExternalLink,
   MessageSquare, Send, CheckCircle2, AlertTriangle, HelpCircle, Eye,
   Compass, ClipboardList, MapPin, Fuel, Camera
 } from 'lucide-react';
@@ -196,8 +196,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         // If Admin rejects any item, it goes back to User for reporting/correction
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        // If Admin approves all, for Dana Talangan go to PENDING_TALANGAN_TRANSFER, otherwise REPORTING
-        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
+        // If Admin approves all, for Dana Talangan go to PENDING_TALANGAN_TRANSFER, otherwise CLOSED (Closing Form)
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.CLOSED;
       }
     }
 
@@ -245,6 +245,27 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2">
           <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
           <span>{error}</span>
+        </div>
+      )}
+
+      {/* Quick Action Bar for Reviewers */}
+      {request.status !== RequestStatus.CLOSED && currentItems.length > 0 && (
+        <div className="flex items-center justify-between bg-indigo-50/60 px-3.5 py-2 rounded-xl border border-indigo-100/80">
+          <span className="text-[11px] font-semibold text-slate-700">Quick Review:</span>
+          <button
+            type="button"
+            onClick={() => {
+              const allApprovedDecisions: Record<string, { status: ItemStatus; comment: string }> = {};
+              currentItems.forEach(i => {
+                allApprovedDecisions[i.id] = { status: ItemStatus.APPROVED, comment: '' };
+              });
+              setDecisions(allApprovedDecisions);
+            }}
+            className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>Setujui Semua Item</span>
+          </button>
         </div>
       )}
 
@@ -413,15 +434,82 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         })}
       </div>
 
+      {/* Form Closing Card for Finance when all items are approved */}
+      {(() => {
+        const allItemsApprovedByFinance = currentItems.length > 0 && currentItems.every(i => {
+          const dec = decisions[i.id];
+          return (dec ? dec.status : i.statusAdmin) === ItemStatus.APPROVED;
+        });
+
+        const totalApprovedAmount = currentItems
+          .filter(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
+          .reduce((sum, i) => sum + i.nominal, 0);
+
+        const totalTransferAmount = parseNumericValue(request.adminActionAmount || request.jumlahPengajuan);
+        const selisih = totalApprovedAmount - totalTransferAmount;
+
+        if (role === Role.FINANCE && request.status !== RequestStatus.CLOSED && allItemsApprovedByFinance) {
+          return (
+            <div className="bg-gradient-to-br from-emerald-950 via-slate-900 to-indigo-950 text-white p-4 rounded-2xl border border-emerald-700/60 shadow-lg space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/20 border border-emerald-400/40 flex items-center justify-center text-emerald-300">
+                    <ShieldCheck className="w-4.5 h-4.5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Form Closing Laporan Keuangan</h4>
+                    <p className="text-[10px] text-emerald-200">Seluruh item laporan disetujui Finance. Siap diproses Closing.</p>
+                  </div>
+                </div>
+                <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-emerald-500/30 text-emerald-300 border border-emerald-400/30">
+                  Ready for Closing
+                </span>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-700/60 text-xs">
+                <div className="bg-slate-800/60 p-2 rounded-xl border border-slate-700/50">
+                  <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Transfer</span>
+                  <span className="font-bold text-white font-display text-xs">{formatIDR(totalTransferAmount)}</span>
+                </div>
+                <div className="bg-slate-800/60 p-2 rounded-xl border border-slate-700/50">
+                  <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Laporan</span>
+                  <span className="font-bold text-emerald-300 font-display text-xs">{formatIDR(totalApprovedAmount)}</span>
+                </div>
+                <div className="bg-slate-800/60 p-2 rounded-xl border border-slate-700/50">
+                  <span className="text-[9px] text-slate-400 block font-semibold uppercase">Rekonsiliasi</span>
+                  <span className={`font-bold font-display text-xs ${selisih === 0 ? 'text-emerald-400' : selisih > 0 ? 'text-amber-300' : 'text-blue-300'}`}>
+                    {selisih === 0 ? 'Pas / Clear' : selisih > 0 ? `+${formatIDR(selisih)}` : formatIDR(selisih)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        }
+        return null;
+      })()}
+
       {/* Submit Decision Button */}
       {request.status !== RequestStatus.CLOSED && (
         <button
           onClick={handleSubmit}
           disabled={isSubmitting}
-          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
+          className={`w-full py-2.5 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${
+            role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
+              ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
+              : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'
+          } disabled:bg-slate-300`}
         >
-          <Send className="w-4 h-4" />
-          <span>{isSubmitting ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
+          {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) ? (
+            <>
+              <ShieldCheck className="w-4 h-4 text-emerald-200" />
+              <span>{isSubmitting ? 'Memproses Closing...' : 'Selesaikan & Form Closing Laporan (CLOSED)'}</span>
+            </>
+          ) : (
+            <>
+              <Send className="w-4 h-4" />
+              <span>{isSubmitting ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
+            </>
+          )}
         </button>
       )}
 
