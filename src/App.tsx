@@ -250,6 +250,13 @@ export default function App() {
       localStorage.setItem('op_app_cached_sites', JSON.stringify(allSites));
       localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
 
+      if (selectedRequest) {
+        const freshReq = allReqs.find(r => r.id === selectedRequest.id);
+        if (freshReq) {
+          setSelectedRequest(freshReq);
+        }
+      }
+
       // If the user is already logged in, keep their active session and update with the latest data
       const savedUserId = sessionStorage.getItem('op_app_logged_in_user_id');
       const activeUserProf = userProfile || (savedUserId ? allProfs.find(p => p.userId?.toLowerCase() === savedUserId.toLowerCase()) : null);
@@ -770,45 +777,65 @@ export default function App() {
 
   // Workflow Action 4: User Usage Reporting Management
   const handleAddUsageItem = async (newItem: UsageReportItem) => {
-    if (!token || !spreadsheetId) return;
-    const success = await runGoogleAction(
-      () => createUsageItem(token, spreadsheetId, newItem),
-      'Gagal menambahkan item penggunaan.'
-    );
-    if (success !== null) {
-      if (selectedRequest && selectedRequest.status === RequestStatus.TRANSFERRED) {
-        const updatedReq = { ...selectedRequest, status: RequestStatus.REPORTING };
-        await updateBudgetRequest(token, spreadsheetId, updatedReq);
-        setSelectedRequest(updatedReq);
+    setUsageItems(prev => [...prev.filter(i => i.id !== newItem.id), newItem]);
+    if (selectedRequest && selectedRequest.status === RequestStatus.TRANSFERRED) {
+      const updatedReq = { ...selectedRequest, status: RequestStatus.REPORTING };
+      setSelectedRequest(updatedReq);
+      setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
+      if (token && spreadsheetId) {
+        runGoogleAction(
+          () => updateBudgetRequest(token, spreadsheetId, updatedReq),
+          'Gagal memperbarui status pengajuan.'
+        ).catch(console.error);
       }
-      await handleManualRefresh();
+    }
+
+    if (token && spreadsheetId) {
+      const success = await runGoogleAction(
+        () => createUsageItem(token, spreadsheetId, newItem),
+        'Gagal menambahkan item penggunaan.'
+      );
+      if (success !== null) {
+        await handleManualRefresh();
+      }
     }
   };
 
   const handleUpdateUsageItem = async (updatedItem: UsageReportItem) => {
-    if (!token || !spreadsheetId) return;
-    const success = await runGoogleAction(
-      () => updateUsageItem(token, spreadsheetId, updatedItem),
-      'Gagal memperbarui item penggunaan.'
-    );
-    if (success !== null) {
-      if (selectedRequest && selectedRequest.status === RequestStatus.TRANSFERRED) {
-        const updatedReq = { ...selectedRequest, status: RequestStatus.REPORTING };
-        await updateBudgetRequest(token, spreadsheetId, updatedReq);
-        setSelectedRequest(updatedReq);
+    setUsageItems(prev => prev.map(i => i.id === updatedItem.id ? updatedItem : i));
+    if (selectedRequest && selectedRequest.status === RequestStatus.TRANSFERRED) {
+      const updatedReq = { ...selectedRequest, status: RequestStatus.REPORTING };
+      setSelectedRequest(updatedReq);
+      setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
+      if (token && spreadsheetId) {
+        runGoogleAction(
+          () => updateBudgetRequest(token, spreadsheetId, updatedReq),
+          'Gagal memperbarui status pengajuan.'
+        ).catch(console.error);
       }
-      await handleManualRefresh();
+    }
+
+    if (token && spreadsheetId) {
+      const success = await runGoogleAction(
+        () => updateUsageItem(token, spreadsheetId, updatedItem),
+        'Gagal memperbarui item penggunaan.'
+      );
+      if (success !== null) {
+        await handleManualRefresh();
+      }
     }
   };
 
   const handleDeleteUsageItem = async (itemId: string) => {
-    if (!token || !spreadsheetId) return;
-    const success = await runGoogleAction(
-      () => deleteUsageItem(token, spreadsheetId, itemId),
-      'Gagal menghapus item penggunaan.'
-    );
-    if (success !== null) {
-      await handleManualRefresh();
+    setUsageItems(prev => prev.filter(i => i.id !== itemId));
+    if (token && spreadsheetId) {
+      const success = await runGoogleAction(
+        () => deleteUsageItem(token, spreadsheetId, itemId),
+        'Gagal menghapus item penggunaan.'
+      );
+      if (success !== null) {
+        await handleManualRefresh();
+      }
     }
   };
 
@@ -1121,13 +1148,17 @@ export default function App() {
               r.status !== RequestStatus.REVIEW_MANAGER &&
               r.status !== RequestStatus.REVIEW_ADMIN) return false;
         } else if (activeRole === Role.MANAGER) {
-          if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
+          if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
-          if (reqItems.length > 0 && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
-            return false;
-          }
+          if (reqItems.length === 0) return false;
+          if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING)) return false;
         } else if (activeRole === Role.FINANCE) {
           if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
+          const reqItems = usageItems.filter(i => i.requestId === r.id);
+          if (reqItems.length === 0) return false;
+          const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
+          const adminApprovedAll = reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
+          if (!managerApproved || adminApprovedAll) return false;
         } else {
           if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
         }
@@ -1460,12 +1491,12 @@ export default function App() {
             initialIsTalangan={initialIsTalangan}
             sites={sites}
           />
-        ) : activeView === 'report-usage' && selectedRequest && driveFolderId ? (
+        ) : activeView === 'report-usage' && selectedRequest ? (
           <UsageReportForm
             request={selectedRequest}
             items={usageItems}
-            googleToken={token!}
-            driveFolderId={driveFolderId}
+            googleToken={token || ''}
+            driveFolderId={driveFolderId || ''}
             onAddItem={handleAddUsageItem}
             onUpdateItem={handleUpdateUsageItem}
             onDeleteItem={handleDeleteUsageItem}

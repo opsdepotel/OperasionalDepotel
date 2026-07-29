@@ -247,6 +247,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [previewRequestProof, setPreviewRequestProof] = useState(false);
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [viewingActivityItem, setViewingActivityItem] = useState<{ item: UsageReportItem; date: string } | null>(null);
+  const [previewActivityPhoto, setPreviewActivityPhoto] = useState<{ url: string; fileId?: string; title: string } | null>(null);
 
   // Mobile Back Button handlers for UsageReportForm modals
   useBackHandler(isFormOpen, () => setIsFormOpen(false), 'report_isFormOpen');
@@ -255,6 +256,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   useBackHandler(previewRequestProof, () => setPreviewRequestProof(false), 'report_previewRequestProof');
   useBackHandler(!!viewingActivityItem, () => setViewingActivityItem(null), 'report_viewingActivityItem');
   useBackHandler(!!viewingBbmItem, () => setViewingBbmItem(null), 'report_viewingBbmItem');
+  useBackHandler(!!previewActivityPhoto, () => setPreviewActivityPhoto(null), 'report_previewActivityPhoto');
 
   // Form State for Adding/Editing Item
   const [editingItem, setEditingItem] = useState<UsageReportItem | null>(null);
@@ -875,7 +877,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         </button>
                       )}
 
-                      {hasBbmAccess && (role === Role.FINANCE || role === Role.MANAGER || request.status !== RequestStatus.CLOSED) && (
+                      {hasBbmAccess && (role === Role.MANAGER || role === Role.FINANCE) && (
                         <button
                           type="button"
                           onClick={() => setViewingBbmItem({
@@ -1388,12 +1390,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
                       {act.buktiUrl && (
                         <button
+                          type="button"
                           onClick={() => {
-                            const displayUrl = act.buktiFileId?.trim()
-                              ? `https://drive.google.com/thumbnail?sz=w1000&id=${act.buktiFileId.trim()}`
-                              : act.buktiUrl;
-                            
-                            window.open(displayUrl, '_blank');
+                            setPreviewActivityPhoto({
+                              url: act.buktiUrl,
+                              fileId: act.buktiFileId,
+                              title: `Foto Aktivitas Site: ${act.siteId} (${act.siteName})`
+                            });
                           }}
                           className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold rounded-lg transition-colors flex items-center gap-1 cursor-pointer shrink-0 shadow-sm"
                         >
@@ -1490,6 +1493,80 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               >
                 Kembali
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Popup Foto Aktivitas User */}
+      {previewActivityPhoto && (
+        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[70] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest">FOTO AKTIVITAS USER</h3>
+                <h4 className="text-sm font-bold text-slate-800 mt-0.5">{previewActivityPhoto.title}</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewActivityPhoto(null)}
+                className="w-8 h-8 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 flex items-center justify-center transition-all cursor-pointer border border-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content Preview Foto */}
+            <div className="flex-1 overflow-hidden rounded-2xl bg-slate-900 flex items-center justify-center relative min-h-[280px] max-h-[60vh] border border-slate-200 p-2">
+              {previewActivityPhoto.fileId || previewActivityPhoto.url ? (
+                <img
+                  src={
+                    previewActivityPhoto.fileId?.trim()
+                      ? `https://drive.google.com/thumbnail?sz=w1000&id=${previewActivityPhoto.fileId.trim()}`
+                      : previewActivityPhoto.url
+                  }
+                  alt={previewActivityPhoto.title}
+                  className="max-w-full max-h-[55vh] object-contain rounded-xl"
+                  onError={(e) => {
+                    const target = e.target as HTMLElement;
+                    target.style.display = 'none';
+                    const fallback = document.getElementById('activity-photo-fallback');
+                    if (fallback) fallback.classList.remove('hidden');
+                  }}
+                />
+              ) : null}
+
+              <div 
+                id="activity-photo-fallback" 
+                className="hidden flex flex-col items-center justify-center text-center p-6 text-slate-300 space-y-2"
+              >
+                <Camera className="w-12 h-12 text-slate-500" />
+                <p className="text-xs font-bold text-white">Gagal Memuat Preview Gambar</p>
+                <p className="text-[10px] text-slate-400 max-w-[240px]">Gambar tidak dapat ditampilkan secara langsung. Silakan buka foto asli melalui tombol di bawah.</p>
+              </div>
+            </div>
+
+            {/* Action Footer */}
+            <div className="pt-3 border-t border-slate-100 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPreviewActivityPhoto(null)}
+                className="flex-1 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-xs transition-all cursor-pointer text-center"
+              >
+                Tutup
+              </button>
+              {previewActivityPhoto.url && (
+                <a
+                  href={previewActivityPhoto.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-indigo-100 text-center"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>Buka Foto Asli</span>
+                </a>
+              )}
             </div>
           </div>
         </div>

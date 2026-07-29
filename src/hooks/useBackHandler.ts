@@ -9,9 +9,14 @@ interface StackItem {
 
 const stack: StackItem[] = [];
 let isPoppingState = false;
+let ignoreNextPopState = false;
 
 if (typeof window !== 'undefined') {
   window.addEventListener('popstate', () => {
+    if (ignoreNextPopState) {
+      ignoreNextPopState = false;
+      return;
+    }
     isPoppingState = true;
     if (stack.length > 0) {
       const top = stack.pop();
@@ -53,6 +58,7 @@ export function useBackHandler(isOpen: boolean, onClose: CloseHandler, id: strin
         stack.splice(index, 1);
         // If closed via UI button (not popstate), pop history state to keep browser history in sync
         if (!isPoppingState && window.history.state?.backHandlerId === currentId) {
+          ignoreNextPopState = true;
           window.history.back();
         }
       }

@@ -340,14 +340,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     // 1. Initial approval needed: requests in PENDING_APPROVAL
     const pendingBudgetReview = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
 
-    // 2. Report reviews needed: requests in REVIEW_MANAGER, excluding those where all items are approved by manager
+    // 2. Report reviews needed: requests with usage items pending Manager review
     const pendingReportReview = managerReqs.filter(r => {
-      if (r.status !== RequestStatus.REVIEW_MANAGER) return false;
+      if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
       const reqItems = usageItems.filter(item => item.requestId === r.id);
-      if (reqItems.length > 0 && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
-        return false;
-      }
-      return true;
+      if (reqItems.length === 0) return false;
+      return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
     }).length;
 
     const totalTasks = pendingBudgetReview + pendingReportReview;
@@ -355,14 +353,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     // Request Stats for Manager's Team
     const teamPendingAppr = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
     const teamReporting = managerReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING).length;
-    const teamUnderReview = managerReqs.filter(r => {
-      if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
-      const reqItems = usageItems.filter(item => item.requestId === r.id);
-      if (reqItems.length > 0 && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
-        return false;
-      }
-      return true;
-    }).length;
+    const teamUnderReview = pendingReportReview;
     const isBbmRequestManager = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
     const teamClosed = managerReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequestManager(r)).length;
 
@@ -452,7 +443,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
       const reqItems = usageItems.filter(i => i.requestId === r.id);
       if (reqItems.length === 0) return false;
-      return reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
+      const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
+      const adminApprovedAll = reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
+      return managerApproved && !adminApprovedAll;
     }).length;
 
     // Tasks needing Admin action:
