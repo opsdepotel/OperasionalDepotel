@@ -537,12 +537,6 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
                   AMBIL FOTO BUKTI (KAMERA HP LANGSUNG)
                 </label>
-                {isMobileUser && (
-                  <div className="bg-amber-50 border border-amber-200 text-amber-800 p-2.5 rounded-xl text-[11px] font-medium flex items-center gap-2 mb-2">
-                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>User Wajib Mobile: Foto bukti kegiatan harian wajib diambil dari Kamera HP secara langsung (tidak dapat memilih file galeri).</span>
-                  </div>
-                )}
                 <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim())) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
                   {photoPreview ? (
                     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100">

@@ -1245,7 +1245,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     className={`p-3 bg-indigo-50/80 hover:bg-indigo-100/80 text-indigo-700 border border-indigo-200/80 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold cursor-pointer ${isMobileUser ? 'py-3.5 shadow-xs' : ''}`}
                   >
                     <Camera className="w-5 h-5 text-indigo-600" />
-                    <span>{isMobileUser ? 'Ambil Foto Nota dari Kamera HP (Wajib Mobile)' : 'Kamera HP'}</span>
+                    <span>Kamera HP</span>
                   </button>
 
                   {/* Choose file / gallery - Only for non-mobile users */}
@@ -1260,13 +1260,6 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </button>
                   )}
                 </div>
-
-                {isMobileUser && (
-                  <div className="bg-amber-50/90 border border-amber-200 text-amber-800 p-2.5 rounded-xl text-[11px] font-medium flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>User Wajib Mobile: Semua bukti nota harus diambil dari Kamera HP secara langsung (upload galeri ditutup).</span>
-                  </div>
-                )}
               </div>
 
               {/* Submit Action Buttons */}
