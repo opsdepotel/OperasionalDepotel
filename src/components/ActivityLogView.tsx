@@ -226,12 +226,22 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         const year = now.getFullYear();
         const tglStr = `${day} ${monthStr} ${year}`;
         
-        const siteIdUpper = (selectedSiteId || 'SITE_BELUM_DIPILIH').trim().toUpperCase();
-        const siteNameUpper = (siteName || 'Belum Ada Site').trim().toUpperCase();
+        const isVerified = !!matchedSite;
+        const siteIdText = isVerified 
+          ? (selectedSiteId || 'SITE_BELUM_DIPILIH').trim().toUpperCase() 
+          : (selectedSiteId || 'SITE_BELUM_DIPILIH').trim();
+        
+        let siteInfoLine = siteIdText;
+        if (matchedSite) {
+          siteInfoLine = `${siteIdText}_${matchedSite.siteName}`;
+        } else if (siteName.trim() && siteName.trim().toUpperCase() !== 'BELUM ADA SITE') {
+          siteInfoLine = `${siteIdText}_${siteName.trim()}`;
+        }
+
         const coordStr = coordinatesActual || 'GPS Tidak Tersedia';
 
         const watermarkLines = [
-          `${siteIdUpper}_${siteNameUpper}`,
+          siteInfoLine,
           coordStr,
           `${jamStr} - ${tglStr}`
         ];
@@ -380,10 +390,14 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
     setIsSubmitting(true);
     try {
+      const isVerified = !!matchedSite;
+      const finalSiteId = isVerified ? trimmedSiteId.toUpperCase() : trimmedSiteId;
+      const finalSiteName = matchedSite ? matchedSite.siteName : (gpsAddress || siteName.trim() || finalSiteId);
+
       await onSaveActivity({
         tanggal: getTodayStr(), // System date for real-time tracking
-        siteId: trimmedSiteId,
-        siteName: matchedSite ? matchedSite.siteName : (gpsAddress || siteName.trim() || trimmedSiteId),
+        siteId: finalSiteId,
+        siteName: finalSiteName,
         coordinatesDb,
         coordinatesActual,
         keterangan: keterangan.trim()
@@ -757,10 +771,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                 referrerPolicy="no-referrer"
               />
             </div>
-            <div className="p-3 bg-slate-950 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-slate-800">
-              <span className="text-[10px] text-slate-400 font-mono">
-                Watermarked Photo Lapangan
-              </span>
+            <div className="p-3 bg-slate-950 flex items-center justify-end gap-3 border-t border-slate-800">
               {selectedOriginalUrl && (
                 <a
                   href={selectedOriginalUrl}
