@@ -1540,6 +1540,7 @@ export default function App() {
             sites={sites}
             userEmail={userProfile.email}
             userProfile={userProfile}
+            profiles={profiles}
             onSaveActivity={handleSaveActivity}
             onBack={() => setActiveView('dashboard')}
           />

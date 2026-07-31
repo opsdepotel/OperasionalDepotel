@@ -426,6 +426,47 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
           </div>
         </div>
+
+        {/* Kartu Activity User - MANAGER */}
+        {(() => {
+          const getTodayStr = () => {
+            const d = new Date();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          };
+          const todayStr = getTodayStr();
+
+          // Subordinates emails
+          const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === email.toLowerCase() || p.email.toLowerCase() === email.toLowerCase());
+          const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
+
+          const todayTeamActivitiesCount = activities.filter(act => 
+            subEmails.has(act.userEmail.toLowerCase()) && act.tanggal === todayStr
+          ).length;
+
+          return (
+            <div 
+              onClick={onOpenActivities}
+              className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+              id="manager-activity-card"
+            >
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">ACTIVITY USER (TIM BAWAHAN)</p>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-3xl font-display font-bold text-slate-900">{todayTeamActivitiesCount}</span>
+                  <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat daftar activity bawahan &amp; filter per user / tanggal</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                <CalendarCheck className="w-6 h-6" />
+              </div>
+            </div>
+          );
+        })()}
+
         {renderBbmCard()}
       </div>
     );
@@ -774,6 +815,45 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <p className="text-[10px] text-slate-400 mt-2 font-medium">Laporan lengkap & ter-closing</p>
           </div>
         </div>
+
+        {/* Kartu Activity User - DIREKTUR */}
+        {(() => {
+          const getTodayStr = () => {
+            const d = new Date();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+          };
+          const todayStr = getTodayStr();
+
+          const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayStr).length;
+
+          return (
+            <div 
+              onClick={onOpenActivities}
+              className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-sm hover:border-purple-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between bg-gradient-to-r from-purple-50/40 via-white to-indigo-50/30"
+              id="direktur-activity-card"
+            >
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[10px] font-bold text-purple-700 tracking-widest uppercase">ACTIVITY USER (SEMUA USER)</p>
+                  <span className="text-[9px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                    Eksekutif
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-3xl font-display font-bold text-slate-900">{todayAllActivitiesCount}</span>
+                  <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat log kegiatan seluruh user (Filter Divisi, User &amp; Tanggal)</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 shadow-sm">
+                <CalendarCheck className="w-6 h-6" />
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Total Financial Summary Card */}
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
