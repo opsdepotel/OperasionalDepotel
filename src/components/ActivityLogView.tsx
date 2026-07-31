@@ -136,10 +136,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           const marginX = fontSize;
           const lineHeight = fontSize * 1.35;
           const totalHeight = textLines.length * lineHeight;
-          const marginY = fontSize * 1.5;
+          const marginY = fontSize * 1.2;
 
-          // Determine start y-position (bottom left)
-          const startY = img.height - totalHeight - marginY;
+          // Determine start y-position (top left)
+          const startY = marginY + fontSize;
 
           // Calculate the maximum width of the text lines for background rect
           let maxLineWidth = 0;
@@ -152,18 +152,18 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
           ctx.fillRect(
             marginX - 12,
-            startY - fontSize,
+            marginY,
             maxLineWidth + 24,
-            totalHeight + fontSize + 8
+            totalHeight + fontSize * 0.4 + 8
           );
 
           // Draw orange-yellow left accent bar
           ctx.fillStyle = '#f59e0b'; // Amber-500
           ctx.fillRect(
             marginX - 12,
-            startY - fontSize,
+            marginY,
             4,
-            totalHeight + fontSize + 8
+            totalHeight + fontSize * 0.4 + 8
           );
 
           // Reset fill style to white for text drawing
