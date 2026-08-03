@@ -2353,6 +2353,20 @@ export default function App() {
                                       <span>Lihat Rincian</span>
                                     </button>
                                   )}
+
+                                  {/* ADMINISTRATOR ACTIONS */}
+                                  {activeRole === Role.ADMINISTRATOR && (
+                                    <button
+                                      onClick={() => {
+                                        setSelectedRequest(req);
+                                        setActiveView('report-usage');
+                                      }}
+                                      className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-xl transition-all border border-blue-200/60 flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                      <Eye className="w-3.5 h-3.5 text-blue-600" />
+                                      <span>Lihat Rincian</span>
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             </div>

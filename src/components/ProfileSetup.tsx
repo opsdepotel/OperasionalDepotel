@@ -174,7 +174,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
           <div>
             <h2 className="font-display font-bold text-slate-800 text-sm flex items-center gap-2">
               <Shield className="w-4 h-4 text-indigo-600" />
-              Kelola Pengguna (Finance)
+              Kelola Pengguna (Administrator)
             </h2>
             <p className="text-[11px] text-slate-400">Atur akun, role, divisi, dan relasi manager</p>
           </div>
@@ -284,19 +284,19 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
           {/* Role Type */}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1.5">Role Pekerjaan</label>
-            <div className="grid grid-cols-4 gap-1.5">
-              {([Role.USER, Role.MANAGER, Role.FINANCE, Role.DIREKTUR] as Role[]).map((r) => (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+              {([Role.USER, Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR] as Role[]).map((r) => (
                 <button
                   key={r}
                   type="button"
                   onClick={() => setRole(r)}
-                  className={`py-2 px-1.5 text-[11px] font-medium rounded-xl border text-center transition-all cursor-pointer ${
+                  className={`py-2 px-1.5 text-[10px] font-medium rounded-xl border text-center transition-all cursor-pointer ${
                     role === r
                       ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 font-semibold'
                       : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  {r === Role.USER ? 'Staff' : r === Role.MANAGER ? 'Manager' : r === Role.FINANCE ? 'Finance' : 'Direktur'}
+                  {r === Role.USER ? 'Staff' : r === Role.MANAGER ? 'Manager' : r === Role.FINANCE ? 'Finance' : r === Role.DIREKTUR ? 'Direktur' : 'Admin'}
                 </button>
               ))}
             </div>
@@ -451,7 +451,9 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                       <span className="font-bold text-xs text-slate-800">{p.nama || p.userId || 'No ID'}</span>
                       <span className="text-[10px] text-slate-400">({p.userId})</span>
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        p.role === Role.FINANCE
+                        p.role === Role.ADMINISTRATOR
+                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                          : p.role === Role.FINANCE
                           ? 'bg-red-50 text-red-600 border border-red-100'
                           : p.role === Role.MANAGER
                           ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'

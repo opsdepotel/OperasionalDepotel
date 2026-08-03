@@ -183,7 +183,9 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
 
   const rawRole = String(row.Role || row.role || '').trim().toUpperCase();
   let roleVal = Role.USER;
-  if (rawRole === 'FINANCE' || rawRole === 'ADMIN') {
+  if (rawRole === 'ADMINISTRATOR' || rawRole === 'ADMIN') {
+    roleVal = Role.ADMINISTRATOR;
+  } else if (rawRole === 'FINANCE') {
     roleVal = Role.FINANCE;
   } else if (rawRole === 'MANAGER') {
     roleVal = Role.MANAGER;
@@ -343,6 +345,7 @@ const setMockData = <T>(key: string, data: T): void => {
 };
 
 const defaultUsers: UserProfile[] = [
+  { userId: 'admin', password: 'admin123', nama: 'Administrator System', email: 'admin@company.com', role: Role.ADMINISTRATOR, managerEmail: '', divisi: 'HQ-ADMIN', aksesBBM: false },
   { userId: 'direktur', password: 'direktur123', nama: 'Direktur Utama', email: 'direktur@company.com', role: Role.DIREKTUR, managerEmail: '', divisi: 'HQ-EXECUTIVE', aksesBBM: false },
   { userId: 'finance', password: 'finance123', nama: 'Finance Depotel', email: 'ops.depotel@gmail.com', role: Role.FINANCE, managerEmail: '', divisi: 'HQ-CENTRAL', aksesBBM: true },
   { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: '', divisi: 'JKT-SOUTH-02', aksesBBM: false },

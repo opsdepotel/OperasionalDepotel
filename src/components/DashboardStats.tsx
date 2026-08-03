@@ -688,19 +688,137 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               </div>
             </div>
           </div>
-
-          {onManageUsers && (
-            <div className="col-span-2 pt-1">
-              <button
-                onClick={onManageUsers}
-                className="w-full py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 border border-indigo-200 rounded-2xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm"
-              >
-                <ShieldCheck className="w-4 h-4 text-indigo-500" />
-                <span>Kelola User</span>
-              </button>
-            </div>
-          )}
         </div>
+      </div>
+    );
+  }
+
+  // Compute stats for ADMINISTRATOR role
+  if (role === Role.ADMINISTRATOR) {
+    const totalUsers = profiles.length;
+    const staffCount = profiles.filter(p => p.role === Role.USER).length;
+    const managerCount = profiles.filter(p => p.role === Role.MANAGER).length;
+    const financeCount = profiles.filter(p => p.role === Role.FINANCE).length;
+    const direkturCount = profiles.filter(p => p.role === Role.DIREKTUR).length;
+    const adminCount = profiles.filter(p => p.role === Role.ADMINISTRATOR).length;
+    const mobileBindingCount = profiles.filter(p => p.mobile || p.deviceId).length;
+
+    return (
+      <div className="space-y-4">
+        {/* Banner Administrator */}
+        <div className="bg-gradient-to-r from-blue-900 via-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg border border-blue-800/50">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-[10px] font-bold tracking-widest text-blue-300 uppercase bg-blue-950/80 px-2.5 py-1 rounded-lg border border-blue-700/50">
+                System Administrator
+              </span>
+              <h2 className="text-base font-display font-bold mt-2 text-white">Manajemen Pengguna &amp; Perangkat</h2>
+              <p className="text-[11px] text-blue-200 mt-0.5">
+                Kelola akun pengguna, reset Device ID mobile, atur role (Staff, Manager, Finance, Direktur, Admin) &amp; divisi.
+              </p>
+            </div>
+            <div className="hidden sm:flex w-11 h-11 rounded-2xl bg-blue-500/20 border border-blue-400/30 items-center justify-center shrink-0">
+              <ShieldCheck className="w-6 h-6 text-blue-300" />
+            </div>
+          </div>
+        </div>
+
+        {/* Primary Action Card: Kelola User */}
+        {onManageUsers && (
+          <div
+            onClick={onManageUsers}
+            className="p-5 rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/80 via-white to-blue-50/50 shadow-md hover:shadow-lg hover:border-indigo-400 transition-all cursor-pointer group flex items-center justify-between gap-4"
+            id="admin-manage-users-card"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-indigo-200 group-hover:scale-105 transition-transform">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition-colors flex items-center gap-2">
+                  Kelola User / Pengguna System
+                  <span className="text-[9px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase">
+                    Akses Utama
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Tambah user baru, edit akun, atasi reset Device ID, ubah role &amp; relasi manager.
+                </p>
+              </div>
+            </div>
+            <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+              &rarr;
+            </div>
+          </div>
+        )}
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">TOTAL PENGGUNA</p>
+            <p className="text-2xl font-display font-bold text-slate-900 mt-1">{totalUsers} <span className="text-xs text-slate-400 font-normal">Akun</span></p>
+            <p className="text-[10px] text-slate-400 mt-1">Terdaftar dalam database</p>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">STAFF &amp; MANAGER</p>
+            <div className="flex items-baseline gap-2 mt-1">
+              <span className="text-xl font-display font-bold text-indigo-600">{staffCount} <span className="text-[10px] text-slate-400">Staff</span></span>
+              <span className="text-xl font-display font-bold text-emerald-600">{managerCount} <span className="text-[10px] text-slate-400">Manager</span></span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">Struktur operasional</p>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm col-span-2 sm:col-span-1">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PERANGKAT MOBILE</p>
+            <p className="text-2xl font-display font-bold text-purple-600 mt-1">{mobileBindingCount} <span className="text-xs text-slate-400 font-normal">Perangkat</span></p>
+            <p className="text-[10px] text-slate-400 mt-1">Wajib HP / Device ID terikat</p>
+          </div>
+        </div>
+
+        {/* Role Distribution Summary */}
+        <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm space-y-2.5">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">SEBARAN ROLE SISTEM</p>
+          <div className="grid grid-cols-5 gap-2 pt-2 border-t border-slate-100 text-center">
+            <div className="p-2 bg-slate-50 rounded-xl">
+              <span className="text-[9px] text-slate-400 font-bold block">STAFF</span>
+              <span className="text-sm font-bold text-indigo-600">{staffCount}</span>
+            </div>
+            <div className="p-2 bg-slate-50 rounded-xl">
+              <span className="text-[9px] text-slate-400 font-bold block">MANAGER</span>
+              <span className="text-sm font-bold text-emerald-600">{managerCount}</span>
+            </div>
+            <div className="p-2 bg-slate-50 rounded-xl">
+              <span className="text-[9px] text-slate-400 font-bold block">FINANCE</span>
+              <span className="text-sm font-bold text-red-600">{financeCount}</span>
+            </div>
+            <div className="p-2 bg-slate-50 rounded-xl">
+              <span className="text-[9px] text-slate-400 font-bold block">DIREKTUR</span>
+              <span className="text-sm font-bold text-purple-600">{direkturCount}</span>
+            </div>
+            <div className="p-2 bg-slate-50 rounded-xl">
+              <span className="text-[9px] text-slate-400 font-bold block">ADMIN</span>
+              <span className="text-sm font-bold text-blue-600">{adminCount}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Kartu Activity User (Log Kegiatan) */}
+        {onOpenActivities && (
+          <div 
+            onClick={onOpenActivities}
+            className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 transition-all cursor-pointer flex items-center justify-between"
+          >
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">LOG KEGIATAN OPERASIONAL</p>
+              <h4 className="font-display font-bold text-xs text-slate-800 mt-1">Lihat Activity Log Seluruh User</h4>
+              <p className="text-[10px] text-slate-400 mt-0.5">Monitoring lokasi GPS &amp; abnormal check-in kegiatan lapangan</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+              <CalendarCheck className="w-5 h-5" />
+            </div>
+          </div>
+        )}
       </div>
     );
   }
