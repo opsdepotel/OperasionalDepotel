@@ -684,7 +684,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   <div className="flex items-start justify-between">
                     <div>
                       <span className="text-[9px] font-mono text-slate-400 block">{item.id}</span>
-                      <h4 className="text-xs font-bold text-slate-800 mt-0.5">{item.keterangan}</h4>
+                      <h4 className="text-xs font-bold text-slate-800 mt-0.5 whitespace-pre-wrap">{item.keterangan}</h4>
                       <p className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5">
                         <Calendar className="w-3.5 h-3.5 text-slate-400" />
                         {item.tanggalPenggunaan}
@@ -1169,12 +1169,12 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               <div>
                 <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Keterangan Belanja</label>
                 <div className="relative">
-                  <input
-                    type="text"
+                  <textarea
                     value={keterangan}
                     onChange={(e) => setKeterangan(e.target.value)}
                     placeholder="contoh: Makan siang tim survey, Bensin mobil dinas"
-                    className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                    rows={3}
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-y"
                     required
                   />
                   <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
