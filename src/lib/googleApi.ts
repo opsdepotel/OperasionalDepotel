@@ -491,8 +491,23 @@ export async function uploadReceiptFile(
     return { fileId, viewUrl };
   }
 
+  // Extract file extension cleanly if present (e.g. .jpg, .png, .pdf)
+  let ext = '';
+  if (file.name && file.name.includes('.')) {
+    const rawExt = file.name.split('.').pop() || '';
+    if (rawExt && rawExt.length <= 5) {
+      ext = `.${rawExt.toLowerCase()}`;
+    }
+  } else if (file.type) {
+    if (file.type.includes('png')) ext = '.png';
+    else if (file.type.includes('jpeg') || file.type.includes('jpg')) ext = '.jpg';
+    else if (file.type.includes('pdf')) ext = '.pdf';
+  }
+
+  if (ext === '.jpeg') ext = '.jpg';
+
   const metadata = {
-    name: `bukti_${Date.now()}_${file.name}`,
+    name: `bukti_${Date.now()}${ext}`,
     parents: [folderId]
   };
 
@@ -555,7 +570,7 @@ export async function uploadBase64Image(token: string, folderId: string, base64D
       u8arr[n] = bstr.charCodeAt(n);
     }
     const blob = new Blob([u8arr], { type: mime });
-    const file = new File([blob], fileName || `nota_bbm_${Date.now()}.jpg`, { type: mime });
+    const file = new File([blob], fileName || `bukti_${Date.now()}.jpg`, { type: mime });
     return await uploadReceiptFile(token, folderId, file);
   } catch (err: any) {
     console.error('Error uploading base64 image to Google Drive:', err);

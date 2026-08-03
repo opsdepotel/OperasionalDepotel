@@ -741,8 +741,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                   {currentRole === Role.MANAGER ? (
                     <>
                       <option value="ALL">Semua Tim Bawahan ({subProfiles.length})</option>
-                      {subProfiles.map(p => (
-                        <option key={p.email} value={p.email}>
+                      {subProfiles.map((p, idx) => (
+                        <option key={`${p.email}_${p.userId || idx}`} value={p.email}>
                           {p.nama || p.userId || p.email} ({p.email})
                         </option>
                       ))}
@@ -750,8 +750,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                   ) : (
                     <>
                       <option value="ALL">Semua User ({direkturUserOptions.length})</option>
-                      {direkturUserOptions.map(p => (
-                        <option key={p.email} value={p.email}>
+                      {direkturUserOptions.map((p, idx) => (
+                        <option key={`${p.email}_${p.userId || idx}`} value={p.email}>
                           {p.nama || p.userId || p.email} {p.divisi ? `- [${p.divisi}]` : ''} ({p.email})
                         </option>
                       ))}

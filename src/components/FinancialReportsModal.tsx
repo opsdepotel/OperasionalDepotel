@@ -153,9 +153,21 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
     return isoDateStr;
   };
 
+  // Unique profiles deduplicated by email
+  const uniqueProfiles = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    profiles.forEach(p => {
+      const key = (p.email || '').toLowerCase().trim();
+      if (key && !map.has(key)) {
+        map.set(key, p);
+      }
+    });
+    return Array.from(map.values());
+  }, [profiles]);
+
   // Unique list of divisions from user profiles
   const availableDivisions = Array.from(
-    new Set(profiles.map(p => p.divisi?.trim()).filter((d): d is string => !!d))
+    new Set(uniqueProfiles.map(p => p.divisi?.trim()).filter((d): d is string => !!d))
   ).sort();
 
   // Helper check for BBMDS requests
@@ -169,7 +181,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
       const hasTransferAmount = (r.adminActionAmount || 0) > 0;
       if (!hasTransferAmount) return false;
 
-      const userProf = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+      const userProf = uniqueProfiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
       const userDiv = userProf?.divisi?.trim() || '';
 
       // Divisi Filter
@@ -184,7 +196,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
       return true;
     }).sort((a, b) => b.id.localeCompare(a.id));
-  }, [requests, profiles, transferDivisi, transferStartDate, transferEndDate]);
+  }, [requests, uniqueProfiles, transferDivisi, transferStartDate, transferEndDate]);
 
   const totalTransferAmount = useMemo(() => {
     return filteredTransfers.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
@@ -192,7 +204,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
   // 2. FILTERED SALDO DATA
   const filteredSaldoUsers = useMemo(() => {
-    return profiles.filter(user => {
+    return uniqueProfiles.filter(user => {
       if (saldoDivisi !== 'ALL' && (user.divisi?.trim() || '').toLowerCase() !== saldoDivisi.toLowerCase()) {
         return false;
       }
@@ -731,9 +743,9 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
                       onChange={(e) => setSaldoUser(e.target.value)}
                       className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold"
                     >
-                      <option value="ALL">Semua User ({profiles.length})</option>
-                      {profiles.map(p => (
-                        <option key={p.email} value={p.email}>
+                      <option value="ALL">Semua User ({uniqueProfiles.length})</option>
+                      {uniqueProfiles.map((p, idx) => (
+                        <option key={`${p.email}_${p.userId || idx}`} value={p.email}>
                           {p.nama || p.userId || p.email} ({p.divisi || 'HQ'})
                         </option>
                       ))}
@@ -804,7 +816,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
                           const hasPositiveBalance = item.balance > 0;
 
                           return (
-                            <tr key={u.email} className="hover:bg-slate-50/80 transition-colors">
+                            <tr key={`${u.email}_${u.userId || idx}`} className="hover:bg-slate-50/80 transition-colors">
                               <td className="py-2.5 px-3 text-center font-mono text-slate-400">{idx + 1}</td>
                               <td className="py-2.5 px-3">
                                 <div className="font-bold text-slate-800">{u.nama || u.userId || u.email}</div>

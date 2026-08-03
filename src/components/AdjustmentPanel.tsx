@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
 import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar } from 'lucide-react';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
@@ -101,8 +101,20 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     }
   }, [selectedUser]);
 
+  // Unique profiles deduplicated by email
+  const uniqueProfiles = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    profiles.forEach(p => {
+      const key = (p.email || '').toLowerCase().trim();
+      if (key && !map.has(key)) {
+        map.set(key, p);
+      }
+    });
+    return Array.from(map.values());
+  }, [profiles]);
+
   // Filter unbalanced users
-  const unbalancedUsers = profiles.filter(user => {
+  const unbalancedUsers = uniqueProfiles.filter(user => {
     // Exclude users with role ADMIN if they don't have transaction history, or keep them. Let's include all registered profiles with non-zero balance.
     const balance = getUserBalance(user.email);
     const matchSearch = 
@@ -615,13 +627,13 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       {/* Users List Grid */}
       {unbalancedUsers.length > 0 ? (
         <div className="grid grid-cols-1 gap-3.5">
-          {unbalancedUsers.map((user) => {
+          {unbalancedUsers.map((user, idx) => {
             const balance = getUserBalance(user.email);
             const isPositive = balance > 0;
 
             return (
               <div
-                key={user.email}
+                key={`${user.email}_${user.userId || idx}`}
                 onClick={() => {
                   setSelectedUser(user);
                   setError(null);

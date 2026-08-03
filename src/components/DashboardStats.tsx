@@ -651,9 +651,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <h4 className="font-display font-black text-slate-800 text-sm mt-1 group-hover:text-indigo-600 transition-colors">
                   LAPORAN
                 </h4>
-                <p className="text-[10px] text-slate-500 mt-1 font-medium">
-                  Daftar Transfer Finance &amp; Daftar Saldo Operasional User (Filter Range Tanggal, User, &amp; Divisi)
-                </p>
               </div>
               <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
                 <FileText className="w-5.5 h-5.5" />
