@@ -83,8 +83,22 @@ export default function App() {
   const [loginRejectError, setLoginRejectError] = useState<string | null>(null);
 
   // Data arrays
-  const [requests, setRequests] = useState<BudgetRequest[]>([]);
-  const [usageItems, setUsageItems] = useState<UsageReportItem[]>([]);
+  const [requests, setRequests] = useState<BudgetRequest[]>(() => {
+    try {
+      const cached = localStorage.getItem('op_app_cached_requests');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [usageItems, setUsageItems] = useState<UsageReportItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('op_app_cached_usage_items');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [profiles, setProfiles] = useState<UserProfile[]>(() => {
     try {
       const cached = localStorage.getItem('op_app_cached_profiles');
@@ -110,6 +124,7 @@ export default function App() {
     }
   });
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [isTokenExpired, setIsTokenExpired] = useState(false);
 
   // Simulation Role Override
   const [activeRole, setActiveRole] = useState<Role>(Role.USER);
@@ -247,6 +262,10 @@ export default function App() {
       setProfiles(allProfs);
       setSites(allSites);
       setActivities(allActs);
+      setIsTokenExpired(false);
+      localStorage.setItem('op_app_cached_requests', JSON.stringify(allReqs));
+      localStorage.setItem('op_app_cached_usage_items', JSON.stringify(allItems));
+      localStorage.setItem('op_app_cached_profiles', JSON.stringify(allProfs));
       localStorage.setItem('op_app_cached_sites', JSON.stringify(allSites));
       localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
 
@@ -346,19 +365,38 @@ export default function App() {
   };
 
   const handleGoogleAuthError = async () => {
-    console.warn('Google API returned 401 Unauthorized. Resetting auth...');
-    await logout();
-    setToken(null);
-    setUser(null);
-    setNeedsAuth(true);
-    setSpreadsheetId(null);
-    setDriveFolderId(null);
-    setRequests([]);
-    setUsageItems([]);
-    setProfiles([]);
-    setUserProfile(null);
-    setActiveView('dashboard');
-    setError('Sesi Google Anda telah berakhir. Silakan hubungkan kembali akun Google Anda untuk melanjutkan.');
+    console.warn('Google API returned 401 Unauthorized. Sesi token Google expired.');
+    setIsTokenExpired(true);
+    setError('Sesi Google (ops.depotel@gmail.com) telah berakhir (Masa aktif token 1 Jam). Data lokal & login aplikasi Anda tetap aman. Klik "Perbarui Sesi Google" untuk melanjutkan.');
+  };
+
+  const handleRenewGoogleToken = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await googleSignIn();
+      if (result) {
+        setToken(result.accessToken);
+        setUser(result.user);
+        setNeedsAuth(false);
+        setIsTokenExpired(false);
+        let sId = spreadsheetId;
+        if (!sId) {
+          sId = await findOrCreateDatabase(result.accessToken);
+          setSpreadsheetId(sId);
+        }
+        if (!driveFolderId) {
+          const fId = await findOrCreateFolder(result.accessToken);
+          setDriveFolderId(fId);
+        }
+        await syncAllData(result.accessToken, sId);
+      }
+    } catch (err: any) {
+      console.error('Gagal memperbarui token Google:', err);
+      setError('Gagal memperbarui sesi Google. Pastikan tidak memblokir popup Google.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const runGoogleAction = async <T,>(
@@ -1452,16 +1490,36 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 p-4 max-w-md mx-auto w-full space-y-4">
-        {/* Error Banner */}
+        {/* Error / Token Expired Banner */}
         {error && (
-          <div className="bg-red-50 border border-red-150 text-red-700 rounded-2xl p-4 text-xs flex flex-col gap-3 animate-slide-up">
+          <div className={`rounded-2xl p-4 text-xs flex flex-col gap-3 animate-slide-up shadow-sm border ${
+            isTokenExpired || error.toLowerCase().includes('sesi google') || error.includes('401')
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : 'bg-red-50 border-red-150 text-red-700'
+          }`}>
             <div className="flex items-start gap-2.5">
-              <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5 text-red-500" />
-              <div>
-                <p className="font-bold text-red-800">Terjadi Kesalahan</p>
-                <p className="text-[11px] text-red-650 mt-0.5">{error}</p>
+              <AlertCircle className={`w-4.5 h-4.5 shrink-0 mt-0.5 ${
+                isTokenExpired || error.toLowerCase().includes('sesi google') || error.includes('401')
+                  ? 'text-amber-600'
+                  : 'text-red-500'
+              }`} />
+              <div className="flex-1">
+                <p className="font-bold text-slate-800">
+                  {isTokenExpired || error.toLowerCase().includes('sesi google') ? 'Sesi Google Expired (1 Jam)' : 'Terjadi Kesalahan'}
+                </p>
+                <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">{error}</p>
               </div>
             </div>
+            {(isTokenExpired || error.toLowerCase().includes('sesi google') || error.includes('401')) && (
+              <button
+                onClick={handleRenewGoogleToken}
+                disabled={isLoading}
+                className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                <span>Perbarui Sesi Google (1-Klik Connect)</span>
+              </button>
+            )}
           </div>
         )}
 
