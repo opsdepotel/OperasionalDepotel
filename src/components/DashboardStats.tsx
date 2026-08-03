@@ -6,7 +6,7 @@
 import React from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText } from 'lucide-react';
 
 interface DashboardStatsProps {
   role: Role;
@@ -17,6 +17,7 @@ interface DashboardStatsProps {
   onSelectFilter?: (filterKey: string) => void;
   onManageUsers?: () => void;
   onOpenAdjustment?: () => void;
+  onOpenReportsModal?: () => void;
   profiles?: UserProfile[];
   activities?: UserActivity[];
   onOpenActivities?: () => void;
@@ -34,6 +35,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onSelectFilter,
   onManageUsers,
   onOpenAdjustment,
+  onOpenReportsModal,
   profiles = [],
   activities = [],
   onOpenActivities,
@@ -632,6 +634,32 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
 
           {renderAdminBbmCard()}
+
+          {onOpenReportsModal && (
+            <div 
+              onClick={onOpenReportsModal}
+              id="finance-reports-card"
+              className="p-5 rounded-2xl border border-indigo-200/90 bg-gradient-to-br from-indigo-50/70 via-white to-purple-50/40 shadow-sm transition-all cursor-pointer hover:border-indigo-400 hover:shadow-md col-span-2 group flex items-center justify-between"
+            >
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest">REKAP &amp; DAFTAR LAPORAN</p>
+                  <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                    Cetak PDF
+                  </span>
+                </div>
+                <h4 className="font-display font-black text-slate-800 text-sm mt-1 group-hover:text-indigo-600 transition-colors">
+                  LAPORAN
+                </h4>
+                <p className="text-[10px] text-slate-500 mt-1 font-medium">
+                  Daftar Transfer Finance &amp; Daftar Saldo Operasional User (Filter Range Tanggal, User, &amp; Divisi)
+                </p>
+              </div>
+              <div className="w-11 h-11 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                <FileText className="w-5.5 h-5.5" />
+              </div>
+            </div>
+          )}
 
           {onOpenAdjustment && (
             <div 

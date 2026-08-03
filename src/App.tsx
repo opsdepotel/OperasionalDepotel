@@ -50,6 +50,7 @@ import { AdjustmentPanel } from './components/AdjustmentPanel';
 import { ActivityLogView } from './components/ActivityLogView';
 import { BbmRefillModal } from './components/BbmRefillModal';
 import { BbmListModal } from './components/BbmListModal';
+import { FinancialReportsModal } from './components/FinancialReportsModal';
 
 // Icons
 import {
@@ -162,6 +163,7 @@ export default function App() {
   const [cancelConfirmReq, setCancelConfirmReq] = useState<BudgetRequest | null>(null);
   const [isBbmModalOpen, setIsBbmModalOpen] = useState(false);
   const [isBbmListModalOpen, setIsBbmListModalOpen] = useState(false);
+  const [isFinancialReportsModalOpen, setIsFinancialReportsModalOpen] = useState(false);
   const [isDiomsLogoModalOpen, setIsDiomsLogoModalOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<{ url: string; fileId?: string; title: string } | null>(null);
 
@@ -175,6 +177,7 @@ export default function App() {
   useBackHandler(!!cancelConfirmReq, () => setCancelConfirmReq(null), 'cancelConfirmReq');
   useBackHandler(isBbmModalOpen, () => setIsBbmModalOpen(false), 'isBbmModalOpen');
   useBackHandler(isBbmListModalOpen, () => setIsBbmListModalOpen(false), 'isBbmListModalOpen');
+  useBackHandler(isFinancialReportsModalOpen, () => setIsFinancialReportsModalOpen(false), 'isFinancialReportsModalOpen');
   useBackHandler(isDiomsLogoModalOpen, () => setIsDiomsLogoModalOpen(false), 'isDiomsLogoModalOpen');
   useBackHandler(!!previewDocument, () => setPreviewDocument(null), 'previewDocument');
 
@@ -1849,6 +1852,7 @@ export default function App() {
                   onSelectFilter={setStatusFilter}
                   onManageUsers={() => setActiveView('setup-profile')}
                   onOpenAdjustment={() => setActiveView('adjustment')}
+                  onOpenReportsModal={() => setIsFinancialReportsModalOpen(true)}
                   profiles={profiles}
                   activities={activities}
                   onOpenActivities={() => setActiveView('activities')}
@@ -2721,6 +2725,16 @@ export default function App() {
             setPreviewDocument({ url: rawUrl, title: 'Nota Pengisian BBM Duren Sawit' });
           }
         }}
+      />
+
+      {/* Modal Laporan Keuangan Finance */}
+      <FinancialReportsModal
+        isOpen={isFinancialReportsModalOpen}
+        onClose={() => setIsFinancialReportsModalOpen(false)}
+        requests={requests}
+        usageItems={usageItems}
+        profiles={profiles}
+        role={activeRole}
       />
 
       {/* Modal Popup Preview Logo DIOMS */}
