@@ -27,9 +27,12 @@ import {
   createUserActivity,
   fetchResetDeviceLogs,
   createResetDeviceLog,
+  fetchItemReviewHistories,
+  createItemReviewHistory,
+  createBatchItemReviewHistories,
   parseNumericValue
 } from './lib/googleApi';
-import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog } from './types';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory } from './types';
 import { validateDeviceAccessAndBind } from './lib/deviceUtils';
 
 // Components
@@ -128,6 +131,14 @@ export default function App() {
   const [resetDeviceLogs, setResetDeviceLogs] = useState<ResetDeviceLog[]>(() => {
     try {
       const cached = localStorage.getItem('op_app_cached_reset_device_logs');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [itemReviewHistories, setItemReviewHistories] = useState<ItemReviewHistory[]>(() => {
+    try {
+      const cached = localStorage.getItem('op_app_cached_item_review_histories');
       return cached ? JSON.parse(cached) : [];
     } catch {
       return [];
@@ -259,13 +270,14 @@ export default function App() {
 
   const syncAllData = async (accessToken: string, sheetId: string) => {
     try {
-      const [allReqs, allItems, allProfs, allSites, allActs, allResetLogs] = await Promise.all([
+      const [allReqs, allItems, allProfs, allSites, allActs, allResetLogs, allHistories] = await Promise.all([
         fetchBudgetRequests(accessToken, sheetId),
         fetchUsageItems(accessToken, sheetId),
         fetchProfiles(accessToken, sheetId),
         fetchSites(accessToken, sheetId),
         fetchUserActivities(accessToken, sheetId),
-        fetchResetDeviceLogs(accessToken, sheetId)
+        fetchResetDeviceLogs(accessToken, sheetId),
+        fetchItemReviewHistories(accessToken, sheetId)
       ]);
 
       setRequests(allReqs.sort((a, b) => b.id.localeCompare(a.id))); // Newest first
@@ -274,6 +286,7 @@ export default function App() {
       setSites(allSites);
       setActivities(allActs);
       setResetDeviceLogs(allResetLogs.sort((a, b) => b.id.localeCompare(a.id)));
+      setItemReviewHistories(allHistories.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
       setIsTokenExpired(false);
       localStorage.setItem('op_app_cached_requests', JSON.stringify(allReqs));
       localStorage.setItem('op_app_cached_usage_items', JSON.stringify(allItems));
@@ -281,6 +294,7 @@ export default function App() {
       localStorage.setItem('op_app_cached_sites', JSON.stringify(allSites));
       localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
       localStorage.setItem('op_app_cached_reset_device_logs', JSON.stringify(allResetLogs));
+      localStorage.setItem('op_app_cached_item_review_histories', JSON.stringify(allHistories));
 
       if (selectedRequest) {
         const freshReq = allReqs.find(r => r.id === selectedRequest.id);
@@ -884,14 +898,41 @@ export default function App() {
       }
     }
 
-    if (token && spreadsheetId) {
-      const success = await runGoogleAction(
-        () => createUsageItem(token, spreadsheetId, newItem),
-        'Gagal menambahkan item penggunaan.'
-      );
-      if (success !== null) {
-        await handleManualRefresh();
-      }
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const timestampStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    const createHistoryLog: ItemReviewHistory = {
+      id: `IRH-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      itemUid: newItem.id,
+      requestUid: newItem.requestId,
+      timestamp: timestampStr,
+      actorRole: activeRole || userProfile?.role || 'USER',
+      actorEmail: userProfile?.email || user?.email || '',
+      actorNama: userProfile?.nama || userProfile?.userId || user?.displayName || 'User',
+      actionType: 'ITEM_CREATED',
+      status: 'PENDING',
+      catatan: 'Item laporan baru dibuat oleh user',
+      tanggalPenggunaan: newItem.tanggalPenggunaan,
+      nominal: newItem.nominal,
+      keterangan: newItem.keterangan,
+      buktiFileId: newItem.buktiFileId,
+      buktiUrl: newItem.buktiUrl
+    };
+
+    const success = await runGoogleAction(
+      async () => {
+        await createUsageItem(currentToken, currentSheetId, newItem);
+        await createItemReviewHistory(currentToken, currentSheetId, createHistoryLog);
+      },
+      'Gagal menambahkan item penggunaan.'
+    );
+
+    if (success !== null) {
+      setItemReviewHistories(prev => [createHistoryLog, ...prev]);
+      await handleManualRefresh();
     }
   };
 
@@ -909,16 +950,44 @@ export default function App() {
       }
     }
 
-    if (token && spreadsheetId) {
-      const success = await runGoogleAction(
-        () => updateUsageItem(token, spreadsheetId, updatedItem),
-        'Gagal memperbarui item penggunaan.'
-      );
-      if (success !== null) {
-        await handleManualRefresh();
-      }
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const timestampStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    const editHistoryLog: ItemReviewHistory = {
+      id: `IRH-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      itemUid: updatedItem.id,
+      requestUid: updatedItem.requestId,
+      timestamp: timestampStr,
+      actorRole: activeRole || userProfile?.role || 'USER',
+      actorEmail: userProfile?.email || user?.email || '',
+      actorNama: userProfile?.nama || userProfile?.userId || user?.displayName || 'User',
+      actionType: 'PERBAIKAN_USER',
+      status: 'PERBAIKAN',
+      catatan: 'Perbaikan item/bukti nota dilakukan oleh user',
+      tanggalPenggunaan: updatedItem.tanggalPenggunaan,
+      nominal: updatedItem.nominal,
+      keterangan: updatedItem.keterangan,
+      buktiFileId: updatedItem.buktiFileId,
+      buktiUrl: updatedItem.buktiUrl
+    };
+
+    const success = await runGoogleAction(
+      async () => {
+        await updateUsageItem(currentToken, currentSheetId, updatedItem);
+        await createItemReviewHistory(currentToken, currentSheetId, editHistoryLog);
+      },
+      'Gagal memperbarui item penggunaan.'
+    );
+
+    if (success !== null) {
+      setItemReviewHistories(prev => [editHistoryLog, ...prev]);
+      await handleManualRefresh();
     }
   };
+
 
   const handleDeleteUsageItem = async (itemId: string) => {
     setUsageItems(prev => prev.filter(i => i.id !== itemId));
@@ -1017,7 +1086,17 @@ export default function App() {
     targetReq?: BudgetRequest
   ) => {
     const reqToUse = targetReq || reviewReportReq || selectedRequest;
-    if (!token || !spreadsheetId || !reqToUse) return;
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+
+    if (!reqToUse) return;
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const timestampStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    const isManager = activeRole === Role.MANAGER;
+    const historyLogs: ItemReviewHistory[] = [];
 
     const success = await runGoogleAction(async () => {
       const targetItems = usageItems.filter(i => i.requestId === reqToUse.id);
@@ -1026,24 +1105,53 @@ export default function App() {
         if (original) {
           const updatedItem: UsageReportItem = {
             ...original,
-            statusManager: activeRole === Role.MANAGER ? dec.status : original.statusManager,
-            managerComment: activeRole === Role.MANAGER ? dec.comment : original.managerComment,
-            statusAdmin: activeRole === Role.FINANCE ? dec.status : original.statusAdmin,
-            adminComment: activeRole === Role.FINANCE ? dec.comment : original.adminComment,
+            statusManager: isManager ? dec.status : original.statusManager,
+            managerComment: isManager ? dec.comment : original.managerComment,
+            statusAdmin: !isManager ? dec.status : original.statusAdmin,
+            adminComment: !isManager ? dec.comment : original.adminComment,
             updatedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
           };
-          await updateUsageItem(token, spreadsheetId, updatedItem);
+          await updateUsageItem(currentToken, currentSheetId, updatedItem);
+
+          const actionType = isManager
+            ? (dec.status === ItemStatus.APPROVED ? 'APPROVAL_MANAGER' : 'REVISI_MANAGER')
+            : (dec.status === ItemStatus.APPROVED ? 'APPROVAL_FINANCE' : 'REVISI_FINANCE');
+
+          historyLogs.push({
+            id: `IRH-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+            itemUid: original.id,
+            requestUid: original.requestId,
+            timestamp: timestampStr,
+            actorRole: isManager ? 'MANAGER' : 'FINANCE',
+            actorEmail: userProfile?.email || user?.email || '',
+            actorNama: userProfile?.nama || userProfile?.userId || user?.displayName || (isManager ? 'Manager' : 'Finance'),
+            actionType: actionType as any,
+            status: dec.status,
+            catatan: dec.comment || (dec.status === ItemStatus.APPROVED ? 'Disetujui' : 'Minta Revisi'),
+            tanggalPenggunaan: original.tanggalPenggunaan,
+            nominal: original.nominal,
+            keterangan: original.keterangan,
+            buktiFileId: original.buktiFileId,
+            buktiUrl: original.buktiUrl
+          });
         }
+      }
+
+      if (historyLogs.length > 0) {
+        await createBatchItemReviewHistories(currentToken, currentSheetId, historyLogs);
       }
 
       const updatedReq: BudgetRequest = {
         ...reqToUse,
         status: nextRequestStatus
       };
-      await updateBudgetRequest(token, spreadsheetId, updatedReq);
+      await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
     }, 'Gagal memproses review penggunaan.');
 
     if (success !== null) {
+      if (historyLogs.length > 0) {
+        setItemReviewHistories(prev => [...historyLogs, ...prev]);
+      }
       setReviewReportReq(null);
       setSelectedRequest(null);
       setActiveView('dashboard');
@@ -1058,6 +1166,7 @@ export default function App() {
       }
     }
   };
+
 
   // Workflow Action 6: Closing Process (Admin Action)
   const handleCloseRequest = async (req: BudgetRequest) => {
@@ -1638,6 +1747,7 @@ export default function App() {
             activities={activities}
             profiles={profiles}
             requests={requests}
+            histories={itemReviewHistories}
           />
         ) : activeView === 'adjustment' && userProfile ? (
           <AdjustmentPanel
@@ -1657,6 +1767,7 @@ export default function App() {
             userEmail={userProfile.email}
             userProfile={userProfile}
             profiles={profiles}
+            role={activeRole}
             onSaveActivity={handleSaveActivity}
             onBack={() => setActiveView('dashboard')}
           />
@@ -1783,6 +1894,7 @@ export default function App() {
                     activities={activities}
                     profiles={profiles}
                     requests={requests}
+                    histories={itemReviewHistories}
                   />
                 )}
 
@@ -2599,6 +2711,7 @@ export default function App() {
         usageItems={usageItems}
         profiles={profiles}
         activities={activities}
+        role={activeRole}
         onOpenBbmRefillModal={userProfile?.aksesBBM ? () => setIsBbmModalOpen(true) : undefined}
         onPreviewDocument={(rawUrl) => {
           const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);

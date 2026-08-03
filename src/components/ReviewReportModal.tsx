@@ -5,12 +5,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile } from '../types';
+import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile, ItemReviewHistory } from '../types';
+import { ItemHistoryModal } from './ItemHistoryModal';
 import { parseNumericValue } from '../lib/googleApi';
 import {
   Shield, ShieldCheck, Check, X, AlertCircle, Info, ExternalLink,
   MessageSquare, Send, CheckCircle2, AlertTriangle, HelpCircle, Eye,
-  Compass, ClipboardList, MapPin, Fuel, Camera
+  Compass, ClipboardList, MapPin, Fuel, Camera, History
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -61,6 +62,7 @@ interface ReviewReportModalProps {
   activities?: UserActivity[];
   profiles?: UserProfile[];
   requests?: BudgetRequest[];
+  histories?: ItemReviewHistory[];
 }
 
 export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
@@ -73,7 +75,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   onPreviewDocument,
   activities = [],
   profiles = [],
-  requests = []
+  requests = [],
+  histories = []
 }) => {
   // Filter items for this request
   const currentItems = items.filter(item => item.requestId === request.id);
@@ -93,10 +96,12 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [viewingActivityItem, setViewingActivityItem] = useState<{ item: UsageReportItem; date: string } | null>(null);
   const [previewActivityPhoto, setPreviewActivityPhoto] = useState<{ url: string; fileId?: string; title: string } | null>(null);
+  const [historyModalItem, setHistoryModalItem] = useState<UsageReportItem | null>(null);
 
   useBackHandler(!!viewingBbmItem, () => setViewingBbmItem(null), 'reviewReport_bbmItem');
   useBackHandler(!!viewingActivityItem, () => setViewingActivityItem(null), 'reviewReport_activityItem');
   useBackHandler(!!previewActivityPhoto, () => setPreviewActivityPhoto(null), 'reviewReport_previewActivityPhoto');
+  useBackHandler(!!historyModalItem, () => setHistoryModalItem(null), 'reviewReport_historyModal');
 
   // Pre-fill local decisions with current values
   useEffect(() => {
@@ -317,6 +322,16 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                     <Fuel className="w-3.5 h-3.5 text-amber-600" />
                   </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => setHistoryModalItem(item)}
+                  className="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-200"
+                  title="Lihat Riwayat Approval & Revisi Item ini"
+                >
+                  <span>Riwayat ({histories.filter(h => h.itemUid === item.id).length})</span>
+                  <History className="w-3.5 h-3.5 text-indigo-600" />
+                </button>
               </div>
 
               {/* Reviewer Action selectors */}
@@ -636,6 +651,9 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                         {(() => {
                           const dist = getDistanceInMeters(act.coordinatesDb, act.coordinatesActual);
                           if (dist === null) return null;
+                          const currentRole = role || Role.USER;
+                          if (currentRole === Role.USER) return null;
+
                           const isWarning = dist > 500;
                           return (
                             <div className="space-y-1.5 pt-1.5 border-t border-indigo-100/30">
@@ -886,6 +904,17 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
           </div>
         );
       })()}
+
+      {/* Item Review History Modal */}
+      {historyModalItem && (
+        <ItemHistoryModal
+          item={historyModalItem}
+          histories={histories}
+          onClose={() => setHistoryModalItem(null)}
+          onPreviewDocument={onPreviewDocument}
+        />
+      )}
     </div>
   );
 };
+

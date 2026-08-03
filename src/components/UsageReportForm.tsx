@@ -5,12 +5,13 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile } from '../types';
+import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile, ItemReviewHistory } from '../types';
+import { ItemHistoryModal } from './ItemHistoryModal';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel, Check, ShieldCheck
+  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel, Check, ShieldCheck, History
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -68,6 +69,7 @@ interface UsageReportFormProps {
   activities?: UserActivity[];
   profiles?: UserProfile[];
   requests?: BudgetRequest[];
+  histories?: ItemReviewHistory[];
 }
 
 export const UsageReportForm: React.FC<UsageReportFormProps> = ({
@@ -86,7 +88,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   sites = [],
   activities = [],
   profiles = [],
-  requests = []
+  requests = [],
+  histories = []
 }) => {
   // Extract and match site IDs from request.siteId. Format is "XXXNNN" (3 letters, 3 digits)
   const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
@@ -252,6 +255,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [viewingActivityItem, setViewingActivityItem] = useState<{ item: UsageReportItem; date: string } | null>(null);
   const [previewActivityPhoto, setPreviewActivityPhoto] = useState<{ url: string; fileId?: string; title: string } | null>(null);
+  const [historyModalItem, setHistoryModalItem] = useState<UsageReportItem | null>(null);
 
   // Mobile Back Button handlers for UsageReportForm modals
   useBackHandler(isFormOpen, () => setIsFormOpen(false), 'report_isFormOpen');
@@ -261,6 +265,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   useBackHandler(!!viewingActivityItem, () => setViewingActivityItem(null), 'report_viewingActivityItem');
   useBackHandler(!!viewingBbmItem, () => setViewingBbmItem(null), 'report_viewingBbmItem');
   useBackHandler(!!previewActivityPhoto, () => setPreviewActivityPhoto(null), 'report_previewActivityPhoto');
+  useBackHandler(!!historyModalItem, () => setHistoryModalItem(null), 'report_historyModalItem');
 
   // Form State for Adding/Editing Item
   const [editingItem, setEditingItem] = useState<UsageReportItem | null>(null);
@@ -902,6 +907,16 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                           <Fuel className="w-3.5 h-3.5 text-amber-600" />
                         </button>
                       )}
+
+                      <button
+                        type="button"
+                        onClick={() => setHistoryModalItem(item)}
+                        className="text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 cursor-pointer border-l border-slate-200 pl-3"
+                        title="Lihat Riwayat Approval & Revisi Item ini"
+                      >
+                        <History className="w-3.5 h-3.5 text-indigo-500" />
+                        <span>Riwayat ({histories.filter(h => h.itemUid === item.id).length})</span>
+                      </button>
                     </div>
 
                      {/* Show delete or edit options ONLY for Role.USER, and only if the item has not been approved by either Manager or Admin (isLocked) */}
@@ -1569,6 +1584,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         {(() => {
                           const dist = getDistanceInMeters(act.coordinatesDb, act.coordinatesActual);
                           if (dist === null) return null;
+                          const currentRole = role || Role.USER;
+                          if (currentRole === Role.USER) return null;
+
                           const isWarning = dist > 500;
                           return (
                             <div className="space-y-1.5 pt-1.5 border-t border-indigo-100/30">
@@ -1820,6 +1838,27 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         );
       })()}
 
+      {/* Item Review History Modal */}
+      {historyModalItem && (
+        <ItemHistoryModal
+          item={historyModalItem}
+          histories={histories}
+          onClose={() => setHistoryModalItem(null)}
+          onPreviewDocument={(doc) => {
+            setPreviewItem({
+              id: doc.fileId || 'preview',
+              requestId: historyModalItem.requestId,
+              tanggalPenggunaan: historyModalItem.tanggalPenggunaan,
+              nominal: historyModalItem.nominal,
+              keterangan: doc.title || historyModalItem.keterangan,
+              buktiFileId: doc.fileId || '',
+              buktiUrl: doc.url,
+              statusManager: historyModalItem.statusManager,
+              statusAdmin: historyModalItem.statusAdmin
+            });
+          }}
+        />
+      )}
     </div>
   );
 };

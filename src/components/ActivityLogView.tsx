@@ -48,6 +48,7 @@ interface ActivityLogViewProps {
   userEmail: string;
   userProfile?: UserProfile;
   profiles?: UserProfile[];
+  role?: Role;
   onSaveActivity: (activityData: {
     tanggal: string;
     siteId: string;
@@ -65,6 +66,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   userEmail,
   userProfile,
   profiles = [],
+  role,
   onSaveActivity,
   onBack
 }) => {
@@ -881,6 +883,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           : null;
                         
                         const isAbnormal = isSiteVerified && distanceMeters !== null && distanceMeters > 500;
+                        const currentRole = role || userProfile?.role || Role.USER;
+                        const isAllowedAbnormalAndDistance = currentRole !== Role.USER;
 
                         const handleOpenRoute = (e: React.MouseEvent) => {
                           e.stopPropagation();
@@ -901,14 +905,14 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                               <span className="text-indigo-900 font-bold">
                                 {actualCoords || dbCoords}
                               </span>
-                              {distanceMeters !== null && isSiteVerified && (
+                              {distanceMeters !== null && isSiteVerified && isAllowedAbnormalAndDistance && (
                                 <span className="text-[9px] text-slate-400 font-normal">
                                   ({Math.round(distanceMeters)}m)
                                 </span>
                               )}
                             </div>
 
-                            {isAbnormal && (
+                            {isAbnormal && isAllowedAbnormalAndDistance && (
                               <button
                                 type="button"
                                 onClick={handleOpenRoute}

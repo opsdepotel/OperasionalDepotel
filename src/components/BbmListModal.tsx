@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { BudgetRequest, UsageReportItem, UserProfile, UserActivity } from '../types';
+import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink } from 'lucide-react';
 
@@ -16,6 +16,7 @@ interface BbmListModalProps {
   usageItems: UsageReportItem[];
   profiles?: UserProfile[];
   activities?: UserActivity[];
+  role?: Role;
   onOpenBbmRefillModal?: () => void;
   onPreviewDocument?: (url: string) => void;
 }
@@ -90,6 +91,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   usageItems,
   profiles = [],
   activities = [],
+  role,
   onOpenBbmRefillModal,
   onPreviewDocument
 }) => {
@@ -607,23 +609,27 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                             </button>
                           ) : <div />}
 
-                          {gmapsUrl && (
-                            <a
-                              href={gmapsUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-2xs ${
-                                isDistanceFar
-                                  ? 'bg-red-50 hover:bg-red-100 text-red-600 border-red-200'
-                                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200/60'
-                              }`}
-                            >
-                              <MapPin className={`w-3.5 h-3.5 ${isDistanceFar ? 'text-red-600' : 'text-emerald-600'}`} />
-                              <span className={isDistanceFar ? 'text-red-600 font-bold' : ''}>
-                                GPS Terdeteksi (Lihat Peta){isDistanceFar ? ` [>${Math.round(distMeters)}m]` : ''}
-                              </span>
-                            </a>
-                          )}
+                          {gmapsUrl && (() => {
+                            const currentRole = role || Role.USER;
+                            const showDistanceWarning = isDistanceFar && currentRole !== Role.USER;
+                            return (
+                              <a
+                                href={gmapsUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-2xs ${
+                                  showDistanceWarning
+                                    ? 'bg-red-50 hover:bg-red-100 text-red-600 border-red-200'
+                                    : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200/60'
+                                }`}
+                              >
+                                <MapPin className={`w-3.5 h-3.5 ${showDistanceWarning ? 'text-red-600' : 'text-emerald-600'}`} />
+                                <span className={showDistanceWarning ? 'text-red-600 font-bold' : ''}>
+                                  GPS Terdeteksi (Lihat Peta){showDistanceWarning ? ` [>${Math.round(distMeters)}m]` : ''}
+                                </span>
+                              </a>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>

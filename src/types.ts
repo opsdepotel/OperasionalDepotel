@@ -111,3 +111,21 @@ export interface ResetDeviceLog {
   keterangan: string;
 }
 
+export interface ItemReviewHistory {
+  id: string; // Map to HistoryID
+  itemUid: string; // Map to ItemUID
+  requestUid: string; // Map to RequestUID
+  timestamp: string; // YYYY-MM-DD HH:mm:ss
+  actorRole: Role | string;
+  actorEmail: string;
+  actorNama: string;
+  actionType: 'APPROVAL_MANAGER' | 'REVISI_MANAGER' | 'APPROVAL_FINANCE' | 'REVISI_FINANCE' | 'PERBAIKAN_USER' | 'ITEM_CREATED';
+  status: string; // 'DISETUJUI' | 'REVISI' | 'SUBMITTED' | 'PERBAIKAN SUBMITTED'
+  catatan: string;
+  tanggalPenggunaan: string;
+  nominal: number;
+  keterangan: string;
+  buktiFileId?: string;
+  buktiUrl?: string;
+}
+

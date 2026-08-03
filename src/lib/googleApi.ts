@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog } from '../types';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory } from '../types';
 
 const originalFetch = window.fetch;
 async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
@@ -55,6 +55,10 @@ const ACTIVITY_HEADERS = [
 
 const RESET_DEVICE_LOG_HEADERS = [
   'LogID', 'Timestamp', 'AdminEmail', 'AdminNama', 'TargetUserEmail', 'TargetUserNama', 'OldDeviceId', 'Keterangan'
+];
+
+const ITEM_REVIEW_HISTORY_HEADERS = [
+  'HistoryID', 'ItemUID', 'RequestUID', 'Timestamp', 'ActorRole', 'ActorEmail', 'ActorNama', 'ActionType', 'Status', 'Catatan', 'TanggalPenggunaan', 'Nominal', 'Keterangan', 'BuktiFileId', 'BuktiUrl'
 ];
 
 // Helper to convert sheet rows (2D array) to JSON objects
@@ -244,6 +248,28 @@ function mapToResetDeviceLog(row: Record<string, any>): ResetDeviceLog {
   };
 }
 
+// Map row map to ItemReviewHistory
+function mapToItemReviewHistory(row: Record<string, any>): ItemReviewHistory {
+  const ts = String(row.Timestamp || row.timestamp || '');
+  return {
+    id: String(row.HistoryID || row.historyId || row.id || ''),
+    itemUid: String(row.ItemUID || row.itemUid || ''),
+    requestUid: String(row.RequestUID || row.requestUid || ''),
+    timestamp: ts,
+    actorRole: String(row.ActorRole || row.actorRole || ''),
+    actorEmail: String(row.ActorEmail || row.actorEmail || ''),
+    actorNama: String(row.ActorNama || row.actorNama || ''),
+    actionType: String(row.ActionType || row.actionType || 'APPROVAL_MANAGER') as any,
+    status: String(row.Status || row.status || ''),
+    catatan: String(row.Catatan || row.catatan || ''),
+    tanggalPenggunaan: String(row.TanggalPenggunaan || row.tanggalPenggunaan || ''),
+    nominal: parseNumericValue(row.Nominal || row.nominal || 0),
+    keterangan: String(row.Keterangan || row.keterangan || ''),
+    buktiFileId: String(row.BuktiFileId || row.buktiFileId || ''),
+    buktiUrl: String(row.BuktiUrl || row.buktiUrl || '')
+  };
+}
+
 // Dynamic Database and Folder names
 export const SPREADSHEET_ID_KEY = 'op_company_sheet_id';
 export const DRIVE_FOLDER_ID_KEY = 'op_company_folder_id';
@@ -271,7 +297,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
   const meta = await res.json();
   const sheetTitles = meta.sheets ? meta.sheets.map((s: any) => s.properties.title) : [];
 
-  const requiredSheets = ['Pengajuan', 'Laporan', 'Users', 'Activity', 'ResetDeviceLog'];
+  const requiredSheets = ['Pengajuan', 'Laporan', 'Users', 'Activity', 'ResetDeviceLog', 'ItemReviewHistory'];
   const sheetsToAdd = requiredSheets.filter(title => !sheetTitles.includes(title));
 
   if (sheetsToAdd.length > 0) {
@@ -306,10 +332,12 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
         { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
         { range: 'Users!A1:J1', values: [USERS_HEADERS] },
         { range: 'Activity!A1:L1', values: [ACTIVITY_HEADERS] },
-        { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] }
+        { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
+        { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
       ]
     })
   });
+
   if (!headersRes.ok) {
     let errDetail = '';
     try {
@@ -613,6 +641,22 @@ export async function fetchResetDeviceLogs(token: string, spreadsheetId: string)
   if (!res.ok) return [];
   const data = await res.json();
   return parseSheetRows<ResetDeviceLog>(RESET_DEVICE_LOG_HEADERS, data.values, mapToResetDeviceLog);
+}
+
+// Fetch Item Review Histories
+export async function fetchItemReviewHistories(token: string, spreadsheetId: string): Promise<ItemReviewHistory[]> {
+  if (token === 'mock_demo_token') {
+    return getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
+  }
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ItemReviewHistory!A1:O2000`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (res.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
+  if (!res.ok) return [];
+  const data = await res.json();
+  return parseSheetRows<ItemReviewHistory>(ITEM_REVIEW_HISTORY_HEADERS, data.values, mapToItemReviewHistory);
 }
 
 // Helper to convert object to spreadsheet row according to header list
@@ -1124,6 +1168,58 @@ export async function createResetDeviceLog(token: string, spreadsheetId: string,
   if (!appendRes.ok) {
     const txt = await appendRes.text();
     throw new Error(`Gagal menyimpan Riwayat Reset Device ID: ${txt}`);
+  }
+}
+
+// Create single Item Review History
+export async function createItemReviewHistory(token: string, spreadsheetId: string, log: ItemReviewHistory): Promise<void> {
+  return createBatchItemReviewHistories(token, spreadsheetId, [log]);
+}
+
+// Create batch Item Review Histories
+export async function createBatchItemReviewHistories(token: string, spreadsheetId: string, logs: ItemReviewHistory[]): Promise<void> {
+  if (logs.length === 0) return;
+  if (token === 'mock_demo_token') {
+    const existing = getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
+    setMockData('mock_db_item_review_history', [...logs, ...existing]);
+    return;
+  }
+  const rowsData = logs.map(log => objectToRow(ITEM_REVIEW_HISTORY_HEADERS, {
+    HistoryID: log.id,
+    ItemUID: log.itemUid,
+    RequestUID: log.requestUid,
+    Timestamp: log.timestamp,
+    ActorRole: log.actorRole,
+    ActorEmail: log.actorEmail,
+    ActorNama: log.actorNama,
+    ActionType: log.actionType,
+    Status: log.status,
+    Catatan: log.catatan,
+    TanggalPenggunaan: log.tanggalPenggunaan,
+    Nominal: log.nominal,
+    Keterangan: log.keterangan,
+    BuktiFileId: log.buktiFileId || '',
+    BuktiUrl: log.buktiUrl || ''
+  }));
+
+  const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ItemReviewHistory!A1:append?valueInputOption=USER_ENTERED`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      values: rowsData
+    })
+  });
+
+  if (appendRes.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
+
+  if (!appendRes.ok) {
+    const txt = await appendRes.text();
+    throw new Error(`Gagal menyimpan Riwayat Review Item: ${txt}`);
   }
 }
 
