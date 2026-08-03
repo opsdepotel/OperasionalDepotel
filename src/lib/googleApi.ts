@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity } from '../types';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog } from '../types';
 
 const originalFetch = window.fetch;
 async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
@@ -51,6 +51,10 @@ const USERS_HEADERS = [
 const ACTIVITY_HEADERS = [
   'ActivityID', 'UserEmail', 'Tanggal', 'CreatedAt', 'SiteID', 'SiteName', 'CoordinatesDb', 'CoordinatesActual', 'Keterangan', 'BuktiUrl', 'BuktiFileId',
   'Timestamp'
+];
+
+const RESET_DEVICE_LOG_HEADERS = [
+  'LogID', 'Timestamp', 'AdminEmail', 'AdminNama', 'TargetUserEmail', 'TargetUserNama', 'OldDeviceId', 'Keterangan'
 ];
 
 // Helper to convert sheet rows (2D array) to JSON objects
@@ -225,6 +229,21 @@ function mapToUserActivity(row: Record<string, any>): UserActivity {
   };
 }
 
+// Map row map to ResetDeviceLog
+function mapToResetDeviceLog(row: Record<string, any>): ResetDeviceLog {
+  const ts = String(row.Timestamp || row.timestamp || '');
+  return {
+    id: String(row.LogID || row.logId || row.id || ''),
+    timestamp: ts,
+    adminEmail: String(row.AdminEmail || row.adminEmail || ''),
+    adminNama: String(row.AdminNama || row.adminNama || ''),
+    targetUserEmail: String(row.TargetUserEmail || row.targetUserEmail || ''),
+    targetUserNama: String(row.TargetUserNama || row.targetUserNama || ''),
+    oldDeviceId: String(row.OldDeviceId || row.oldDeviceId || ''),
+    keterangan: String(row.Keterangan || row.keterangan || '')
+  };
+}
+
 // Dynamic Database and Folder names
 export const SPREADSHEET_ID_KEY = 'op_company_sheet_id';
 export const DRIVE_FOLDER_ID_KEY = 'op_company_folder_id';
@@ -252,7 +271,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
   const meta = await res.json();
   const sheetTitles = meta.sheets ? meta.sheets.map((s: any) => s.properties.title) : [];
 
-  const requiredSheets = ['Pengajuan', 'Laporan', 'Users', 'Activity'];
+  const requiredSheets = ['Pengajuan', 'Laporan', 'Users', 'Activity', 'ResetDeviceLog'];
   const sheetsToAdd = requiredSheets.filter(title => !sheetTitles.includes(title));
 
   if (sheetsToAdd.length > 0) {
@@ -286,7 +305,8 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
         { range: 'Pengajuan!A1:P1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
         { range: 'Users!A1:J1', values: [USERS_HEADERS] },
-        { range: 'Activity!A1:L1', values: [ACTIVITY_HEADERS] }
+        { range: 'Activity!A1:L1', values: [ACTIVITY_HEADERS] },
+        { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] }
       ]
     })
   });
@@ -577,6 +597,22 @@ export async function fetchUserActivities(token: string, spreadsheetId: string):
   if (!res.ok) return [];
   const data = await res.json();
   return parseSheetRows<UserActivity>(ACTIVITY_HEADERS, data.values, mapToUserActivity);
+}
+
+// Fetch Reset Device Logs
+export async function fetchResetDeviceLogs(token: string, spreadsheetId: string): Promise<ResetDeviceLog[]> {
+  if (token === 'mock_demo_token') {
+    return getMockData<ResetDeviceLog[]>('mock_db_reset_device_log', []);
+  }
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ResetDeviceLog!A1:H1000`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (res.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
+  if (!res.ok) return [];
+  const data = await res.json();
+  return parseSheetRows<ResetDeviceLog>(RESET_DEVICE_LOG_HEADERS, data.values, mapToResetDeviceLog);
 }
 
 // Helper to convert object to spreadsheet row according to header list
@@ -1049,6 +1085,45 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
   if (!appendRes.ok) {
     const txt = await appendRes.text();
     throw new Error(`Gagal menyimpan kegiatan: ${txt}`);
+  }
+}
+
+// Create Reset Device Log
+export async function createResetDeviceLog(token: string, spreadsheetId: string, log: ResetDeviceLog): Promise<void> {
+  if (token === 'mock_demo_token') {
+    const existing = getMockData<ResetDeviceLog[]>('mock_db_reset_device_log', []);
+    setMockData('mock_db_reset_device_log', [log, ...existing]);
+    return;
+  }
+  const rowData = objectToRow(RESET_DEVICE_LOG_HEADERS, {
+    LogID: log.id,
+    Timestamp: log.timestamp,
+    AdminEmail: log.adminEmail,
+    AdminNama: log.adminNama,
+    TargetUserEmail: log.targetUserEmail,
+    TargetUserNama: log.targetUserNama,
+    OldDeviceId: log.oldDeviceId,
+    Keterangan: log.keterangan
+  });
+
+  const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ResetDeviceLog!A1:append?valueInputOption=USER_ENTERED`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      values: [rowData]
+    })
+  });
+
+  if (appendRes.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
+
+  if (!appendRes.ok) {
+    const txt = await appendRes.text();
+    throw new Error(`Gagal menyimpan Riwayat Reset Device ID: ${txt}`);
   }
 }
 

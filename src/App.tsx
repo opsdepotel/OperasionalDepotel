@@ -25,9 +25,11 @@ import {
   fetchSites,
   fetchUserActivities,
   createUserActivity,
+  fetchResetDeviceLogs,
+  createResetDeviceLog,
   parseNumericValue
 } from './lib/googleApi';
-import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity } from './types';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog } from './types';
 import { validateDeviceAccessAndBind } from './lib/deviceUtils';
 
 // Components
@@ -118,6 +120,14 @@ export default function App() {
   const [activities, setActivities] = useState<UserActivity[]>(() => {
     try {
       const cached = localStorage.getItem('op_app_cached_activities');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [resetDeviceLogs, setResetDeviceLogs] = useState<ResetDeviceLog[]>(() => {
+    try {
+      const cached = localStorage.getItem('op_app_cached_reset_device_logs');
       return cached ? JSON.parse(cached) : [];
     } catch {
       return [];
@@ -249,12 +259,13 @@ export default function App() {
 
   const syncAllData = async (accessToken: string, sheetId: string) => {
     try {
-      const [allReqs, allItems, allProfs, allSites, allActs] = await Promise.all([
+      const [allReqs, allItems, allProfs, allSites, allActs, allResetLogs] = await Promise.all([
         fetchBudgetRequests(accessToken, sheetId),
         fetchUsageItems(accessToken, sheetId),
         fetchProfiles(accessToken, sheetId),
         fetchSites(accessToken, sheetId),
-        fetchUserActivities(accessToken, sheetId)
+        fetchUserActivities(accessToken, sheetId),
+        fetchResetDeviceLogs(accessToken, sheetId)
       ]);
 
       setRequests(allReqs.sort((a, b) => b.id.localeCompare(a.id))); // Newest first
@@ -262,12 +273,14 @@ export default function App() {
       setProfiles(allProfs);
       setSites(allSites);
       setActivities(allActs);
+      setResetDeviceLogs(allResetLogs.sort((a, b) => b.id.localeCompare(a.id)));
       setIsTokenExpired(false);
       localStorage.setItem('op_app_cached_requests', JSON.stringify(allReqs));
       localStorage.setItem('op_app_cached_usage_items', JSON.stringify(allItems));
       localStorage.setItem('op_app_cached_profiles', JSON.stringify(allProfs));
       localStorage.setItem('op_app_cached_sites', JSON.stringify(allSites));
       localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
+      localStorage.setItem('op_app_cached_reset_device_logs', JSON.stringify(allResetLogs));
 
       if (selectedRequest) {
         const freshReq = allReqs.find(r => r.id === selectedRequest.id);
@@ -595,6 +608,49 @@ export default function App() {
       setActiveRole(newProfile.role);
       setActiveView('dashboard');
       await handleManualRefresh();
+    }
+  };
+
+  // Reset Device ID by Administrator
+  const handleResetUserDeviceId = async (targetUser: UserProfile, reason: string) => {
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+
+    const updatedProfile: UserProfile = {
+      ...targetUser,
+      deviceId: ''
+    };
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const timestampStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    const logEntry: ResetDeviceLog = {
+      id: `RDL-${Date.now()}`,
+      timestamp: timestampStr,
+      adminEmail: userProfile?.email || user?.email || 'admin@company.com',
+      adminNama: userProfile?.nama || userProfile?.userId || user?.displayName || 'Administrator',
+      targetUserEmail: targetUser.email,
+      targetUserNama: targetUser.nama || targetUser.userId || targetUser.email,
+      oldDeviceId: targetUser.deviceId || '-',
+      keterangan: reason || 'Reset Device ID oleh Administrator'
+    };
+
+    const success = await runGoogleAction(
+      async () => {
+        await saveUserProfile(currentToken, currentSheetId, updatedProfile);
+        await createResetDeviceLog(currentToken, currentSheetId, logEntry);
+      },
+      'Gagal mereset Device ID pengguna.'
+    );
+
+    if (success !== null) {
+      setProfiles(prev => prev.map(p => p.email.toLowerCase() === targetUser.email.toLowerCase() ? updatedProfile : p));
+      setResetDeviceLogs(prev => [logEntry, ...prev]);
+      localStorage.setItem('op_app_cached_reset_device_logs', JSON.stringify([logEntry, ...resetDeviceLogs]));
+      if (userProfile && userProfile.email.toLowerCase() === targetUser.email.toLowerCase()) {
+        setUserProfile(updatedProfile);
+      }
     }
   };
 
@@ -1538,7 +1594,9 @@ export default function App() {
           <ProfileSetup
             profiles={profiles}
             requests={requests}
+            resetDeviceLogs={resetDeviceLogs}
             onSave={handleSaveProfile}
+            onResetDeviceId={handleResetUserDeviceId}
             onClose={() => setActiveView('dashboard')}
           />
         ) : activeView === 'profile-settings' && userProfile ? (

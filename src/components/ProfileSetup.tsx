@@ -4,23 +4,30 @@
  */
 
 import React, { useState } from 'react';
-import { UserProfile, Role, BudgetRequest } from '../types';
-import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel, Smartphone, RotateCcw } from 'lucide-react';
+import { UserProfile, Role, BudgetRequest, ResetDeviceLog } from '../types';
+import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel, Smartphone, RotateCcw, CheckCircle2, History, FileSpreadsheet, Clock } from 'lucide-react';
 
 interface ProfileSetupProps {
   profiles: UserProfile[];
   requests: BudgetRequest[];
+  resetDeviceLogs?: ResetDeviceLog[];
   onSave: (profile: UserProfile) => Promise<void>;
+  onResetDeviceId?: (targetUser: UserProfile, reason: string) => Promise<void>;
   onClose: () => void;
 }
 
 export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   profiles,
   requests,
+  resetDeviceLogs = [],
   onSave,
+  onResetDeviceId,
   onClose
 }) => {
+  const [activeTab, setActiveTab] = useState<'users' | 'reset-logs'>('users');
   const [searchQuery, setSearchQuery] = useState('');
+  const [logSearchQuery, setLogSearchQuery] = useState('');
+  
   const [editingProfile, setEditingProfile] = useState<UserProfile | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false);
 
@@ -37,7 +44,13 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   const [deviceId, setDeviceId] = useState<string>('');
   
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Reset Modal state
+  const [resetModalUser, setResetModalUser] = useState<UserProfile | null>(null);
+  const [resetReason, setResetReason] = useState<string>('User ganti perangkat HP baru');
+  const [isResetting, setIsResetting] = useState<boolean>(false);
 
   // Filter profiles based on search
   const filteredProfiles = profiles.filter(p => {
@@ -51,7 +64,21 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     );
   });
 
-  // Get list of manager emails for auto-complete/selection helper
+  // Filter reset logs based on search
+  const filteredLogs = resetDeviceLogs.filter(log => {
+    const q = logSearchQuery.toLowerCase();
+    return (
+      (log.targetUserNama || '').toLowerCase().includes(q) ||
+      (log.targetUserEmail || '').toLowerCase().includes(q) ||
+      (log.adminNama || '').toLowerCase().includes(q) ||
+      (log.adminEmail || '').toLowerCase().includes(q) ||
+      (log.oldDeviceId || '').toLowerCase().includes(q) ||
+      (log.keterangan || '').toLowerCase().includes(q) ||
+      (log.id || '').toLowerCase().includes(q)
+    );
+  });
+
+  // Get list of manager emails for selection helper
   const managerEmails = Array.from(
     new Set(
       profiles
@@ -79,6 +106,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setMobile(isMob);
     setDeviceId(p.deviceId || '');
     setError(null);
+    setSuccessMsg(null);
   };
 
   const startAdd = () => {
@@ -95,6 +123,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setMobile(false);
     setDeviceId('');
     setError(null);
+    setSuccessMsg(null);
   };
 
   const cancelForm = () => {
@@ -103,9 +132,49 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setError(null);
   };
 
+  const openResetModal = (p: UserProfile) => {
+    setResetModalUser(p);
+    setResetReason('User ganti perangkat HP baru');
+    setError(null);
+  };
+
+  const handleConfirmResetDevice = async () => {
+    if (!resetModalUser) return;
+    if (!resetReason.trim()) {
+      setError('Mohon isi alasan / keterangan reset Device ID.');
+      return;
+    }
+
+    setIsResetting(true);
+    setError(null);
+    try {
+      if (onResetDeviceId) {
+        await onResetDeviceId(resetModalUser, resetReason.trim());
+      } else {
+        await onSave({
+          ...resetModalUser,
+          deviceId: ''
+        });
+      }
+
+      if (editingProfile && editingProfile.email.toLowerCase() === resetModalUser.email.toLowerCase()) {
+        setDeviceId('');
+      }
+
+      setSuccessMsg(`Device ID pengguna ${resetModalUser.nama || resetModalUser.email} berhasil di-reset dan tersimpan ke Sheet Google "ResetDeviceLog".`);
+      setResetModalUser(null);
+      setResetReason('User ganti perangkat HP baru');
+    } catch (err: any) {
+      setError(err.message || 'Gagal mereset Device ID.');
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setSuccessMsg(null);
 
     if (!userId.trim()) {
       setError('User ID wajib diisi.');
@@ -149,7 +218,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
         mobile,
         deviceId: mobile ? deviceId.trim() : ''
       });
-      // Reset form states
+      setSuccessMsg(`Data pengguna ${nama || userId} berhasil disimpan!`);
       setEditingProfile(null);
       setIsAddingNew(false);
     } catch (err: any) {
@@ -160,9 +229,9 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 animate-slide-up">
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 animate-slide-up relative">
       {/* Header section with back button */}
-      <div className="flex items-center justify-between mb-5 border-b border-slate-100 pb-4">
+      <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-4">
         <div className="flex items-center gap-3">
           <button
             onClick={onClose}
@@ -176,11 +245,11 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
               <Shield className="w-4 h-4 text-indigo-600" />
               Kelola Pengguna (Administrator)
             </h2>
-            <p className="text-[11px] text-slate-400">Atur akun, role, divisi, dan relasi manager</p>
+            <p className="text-[11px] text-slate-400">Atur akun, role, divisi, dan wewenang reset Device ID HP</p>
           </div>
         </div>
 
-        {!isAddingNew && !editingProfile && (
+        {!isAddingNew && !editingProfile && activeTab === 'users' && (
           <button
             onClick={startAdd}
             className="py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center gap-1 shadow-sm transition-all cursor-pointer"
@@ -191,19 +260,62 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
         )}
       </div>
 
-      {/* Main layout routing: List View vs Add/Edit Form */}
+      {/* Tabs */}
+      {!isAddingNew && !editingProfile && (
+        <div className="flex items-center gap-2 mb-4 bg-slate-50 p-1 rounded-xl border border-slate-150">
+          <button
+            onClick={() => { setActiveTab('users'); setError(null); }}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeTab === 'users'
+                ? 'bg-white text-indigo-600 shadow-xs border border-slate-200'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <User className="w-3.5 h-3.5" />
+            <span>Daftar User ({profiles.length})</span>
+          </button>
+
+          <button
+            onClick={() => { setActiveTab('reset-logs'); setError(null); }}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+              activeTab === 'reset-logs'
+                ? 'bg-white text-indigo-600 shadow-xs border border-slate-200'
+                : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <History className="w-3.5 h-3.5 text-amber-600" />
+            <span>Riwayat Reset Device ID</span>
+            {resetDeviceLogs.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.2 text-[10px] bg-amber-100 text-amber-800 rounded-full font-mono">
+                {resetDeviceLogs.length}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* Success Notification */}
+      {successMsg && (
+        <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl p-3 text-xs flex items-start gap-2.5 animate-slide-up">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+          <span className="font-medium leading-relaxed">{successMsg}</span>
+        </div>
+      )}
+
+      {/* Error Notification */}
+      {error && !resetModalUser && (
+        <div className="mb-4 bg-red-50 border border-red-200 text-red-700 rounded-xl p-3 text-xs flex items-start gap-2 animate-slide-up">
+          <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+          <span className="font-medium leading-relaxed">{error}</span>
+        </div>
+      )}
+
+      {/* Main layout routing: Add/Edit Form vs List View vs Reset Logs Tab */}
       {isAddingNew || editingProfile ? (
         <form onSubmit={handleSubmit} className="space-y-4 animate-slide-up">
           <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
             {editingProfile ? `Edit Pengguna: ${editingProfile.userId}` : 'Tambah Pengguna Baru'}
           </h3>
-
-          {error && (
-            <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span>{error}</span>
-            </div>
-          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* User ID */}
@@ -215,7 +327,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   value={userId}
                   onChange={(e) => setUserId(e.target.value)}
                   placeholder="contoh: joko"
-                  disabled={!!editingProfile} // UserID is the primary key and shouldn't change
+                  disabled={!!editingProfile}
                   className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none disabled:bg-slate-50 disabled:text-slate-400"
                 />
                 <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -232,12 +344,13 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   onChange={(e) => setNama(e.target.value)}
                   placeholder="contoh: Joko Susilo"
                   className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  required
                 />
                 <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               </div>
             </div>
 
-            {/* Email */}
+            {/* Email Pengguna */}
             <div>
               <label className="block text-xs font-semibold text-slate-500 mb-1">Email Pengguna</label>
               <div className="relative">
@@ -245,126 +358,134 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="joko@company.com"
-                  disabled={editingProfile ? requests.some(r => 
-                    r.userEmail.toLowerCase() === editingProfile.email.toLowerCase() ||
-                    r.managerEmail.toLowerCase() === editingProfile.email.toLowerCase()
-                  ) : false}
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed"
+                  placeholder="contoh: joko@company.com"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  required
                 />
                 <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               </div>
-              {editingProfile && requests.some(r => 
-                r.userEmail.toLowerCase() === editingProfile.email.toLowerCase() ||
-                r.managerEmail.toLowerCase() === editingProfile.email.toLowerCase()
-              ) && (
-                <p className="text-[10px] text-amber-600 font-semibold mt-1 flex items-start gap-1">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
-                  <span>Email tidak dapat diedit karena telah tercatat dalam riwayat transaksi pengajuan atau laporan.</span>
-                </p>
-              )}
+            </div>
+
+            {/* Password */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">Password Login</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="123456"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-mono"
+                  required
+                />
+                <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+            </div>
+
+            {/* Role */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">Role / Peran</label>
+              <div className="relative">
+                <select
+                  value={role}
+                  onChange={(e) => setRole(e.target.value as Role)}
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none appearance-none"
+                >
+                  <option value={Role.USER}>STAFF / USER</option>
+                  <option value={Role.MANAGER}>MANAGER</option>
+                  <option value={Role.FINANCE}>FINANCE (ADMIN KEUANGAN)</option>
+                  <option value={Role.DIREKTUR}>DIREKTUR</option>
+                  <option value={Role.ADMINISTRATOR}>ADMINISTRATOR SYSTEM</option>
+                </select>
+                <Shield className="w-4 h-4 text-slate-400 absolute left-3 top-2.5 pointer-events-none" />
+              </div>
             </div>
 
             {/* Divisi */}
             <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Divisi</label>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">Divisi / Departemen</label>
               <div className="relative">
                 <input
                   type="text"
                   value={divisi}
-                  onChange={(e) => setDivisi(e.target.value.toUpperCase())}
-                  placeholder="contoh: FINANCE, MARKETING, IT"
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  onChange={(e) => setDivisi(e.target.value)}
+                  placeholder="contoh: OPERASIONAL / LOGISTIK / IT"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none uppercase"
                 />
                 <Briefcase className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               </div>
             </div>
-          </div>
 
-          {/* Role Type */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5">Role Pekerjaan</label>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
-              {([Role.USER, Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR] as Role[]).map((r) => (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setRole(r)}
-                  className={`py-2 px-1.5 text-[10px] font-medium rounded-xl border text-center transition-all cursor-pointer ${
-                    role === r
-                      ? 'border-indigo-600 bg-indigo-50/50 text-indigo-700 font-semibold'
-                      : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {r === Role.USER ? 'Staff' : r === Role.MANAGER ? 'Manager' : r === Role.FINANCE ? 'Finance' : r === Role.DIREKTUR ? 'Direktur' : 'Admin'}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Manager Email (For standard USER role) */}
-          {role === Role.USER && (
-            <div className="pt-2 border-t border-slate-50 animate-slide-up">
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Email Manager</label>
-              <div className="relative">
-                <input
-                  type="email"
-                  value={managerEmail}
-                  onChange={(e) => setManagerEmail(e.target.value)}
-                  placeholder="manager@company.com"
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                  list="admin-managers-list"
-                />
-                <Shield className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <datalist id="admin-managers-list">
-                  {managerEmails.map(m => (
-                    <option key={m} value={m} />
-                  ))}
-                </datalist>
+            {/* Email Manager (Only for Staff/User) */}
+            {role === Role.USER && (
+              <div className="md:col-span-2">
+                <label className="block text-xs font-semibold text-slate-500 mb-1">
+                  Email Manager Atasan <span className="text-red-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    value={managerEmail}
+                    onChange={(e) => setManagerEmail(e.target.value)}
+                    placeholder="Pilih atau ketik email manager..."
+                    list="manager-options"
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                    required
+                  />
+                  <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  <datalist id="manager-options">
+                    {managerEmails.map(m => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Pengajuan anggaran dari user ini akan diteruskan ke email Manager di atas untuk diapprove.
+                </p>
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">
-                Relasikan user Staff ini ke email Manager tertentu untuk proses persetujuan berjenjang.
-              </p>
-            </div>
-          )}
+            )}
+          </div>
 
-          {/* Checkmark Akses Perangkat Mobile & Pengisian BBM */}
+          {/* Special Permissions Checkboxes */}
           <div className="pt-2 border-t border-slate-100 space-y-2">
-            <label className="flex items-center gap-3 p-2.5 bg-slate-50/80 hover:bg-slate-100/80 border border-slate-200 rounded-xl transition-all cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={mobile}
-                onChange={(e) => setMobile(e.target.checked)}
-                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0"
-              />
-              <div className="flex-1">
-                <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
-                  <Smartphone className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Wajib Perangkat Mobile (Mobile Device Only)</span>
+            <label className="block text-xs font-semibold text-slate-500">Izin Akses Khusus</label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <label className="flex items-start gap-2.5 p-2.5 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-100/60 transition-all">
+                <input
+                  type="checkbox"
+                  checked={aksesBBM}
+                  onChange={(e) => setAksesBBM(e.target.checked)}
+                  className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
+                />
+                <div>
+                  <div className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                    <Fuel className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Pengisian BBM Duren Sawit</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                    Berikan hak akses untuk pengisian BBM di lokasi Duren Sawit.
+                  </p>
                 </div>
-                <p className="text-[10px] text-slate-500 font-normal mt-0.5">
-                  Jika aktif (TRUE), pengguna wajib menggunakan perangkat mobile (Android/iPhone). Login via PC/Windows akan ditolak.
-                </p>
-              </div>
-            </label>
+              </label>
 
-            <label className="flex items-center gap-3 p-2.5 bg-slate-50/80 hover:bg-slate-100/80 border border-slate-200 rounded-xl transition-all cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={aksesBBM}
-                onChange={(e) => setAksesBBM(e.target.checked)}
-                className="w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 cursor-pointer shrink-0"
-              />
-              <div className="flex-1">
-                <div className="flex items-center gap-1.5 font-bold text-xs text-slate-800">
-                  <Fuel className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Pengisian BBM Duren Sawit</span>
+              <label className="flex items-start gap-2.5 p-2.5 bg-slate-50 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-100/60 transition-all">
+                <input
+                  type="checkbox"
+                  checked={mobile}
+                  onChange={(e) => setMobile(e.target.checked)}
+                  className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500"
+                />
+                <div>
+                  <div className="text-xs font-bold text-slate-700 flex items-center gap-1">
+                    <Smartphone className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Akses Khusus Perangkat Mobile</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-normal mt-0.5">
+                    Mewajibkan login terikat dengan Device ID HP pengguna.
+                  </p>
                 </div>
-                <p className="text-[10px] text-slate-500 font-normal mt-0.5">
-                  Berikan hak akses untuk pengisian BBM di lokasi Duren Sawit.
-                </p>
-              </div>
-            </label>
+              </label>
+            </div>
           </div>
 
           {/* Device ID Field & Reset */}
@@ -386,7 +507,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
               {deviceId && (
                 <button
                   type="button"
-                  onClick={() => setDeviceId('')}
+                  onClick={() => editingProfile ? openResetModal(editingProfile) : setDeviceId('')}
                   className="py-2 px-3 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer shrink-0"
                   title="Reset Device ID agar pengguna dapat mendaftarkan HP baru saat login"
                 >
@@ -419,6 +540,87 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
             </button>
           </div>
         </form>
+      ) : activeTab === 'reset-logs' ? (
+        /* Tab 2: Reset Device ID Logs */
+        <div className="space-y-3.5 animate-slide-up">
+          <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 text-xs text-amber-900 flex items-start gap-2.5">
+            <FileSpreadsheet className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Pencatatan Otomatis Google Sheets (Sheet: ResetDeviceLog)</p>
+              <p className="text-[11px] text-amber-800/90 mt-0.5">
+                Setiap kali Administrator me-reset Device ID pengguna, riwayat tindakan ini secara otomatis tersimpan permanen di sheet <code className="font-mono bg-amber-100 px-1 py-0.5 rounded text-[10px]">ResetDeviceLog</code>.
+              </p>
+            </div>
+          </div>
+
+          {/* Search Box Log */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Cari riwayat reset berdasarkan user, admin, device ID, atau alasan..."
+              value={logSearchQuery}
+              onChange={(e) => setLogSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+            />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          </div>
+
+          {/* Logs List */}
+          <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1">
+            {filteredLogs.length === 0 ? (
+              <div className="text-center py-10 bg-slate-50 rounded-2xl border border-dashed border-slate-200 text-slate-400 text-xs space-y-1">
+                <History className="w-6 h-6 mx-auto text-slate-300 mb-1" />
+                <p className="font-semibold text-slate-600">Belum ada riwayat reset Device ID</p>
+                <p className="text-[11px]">Riwayat reset oleh Administrator akan tampil di sini.</p>
+              </div>
+            ) : (
+              filteredLogs.map((log) => (
+                <div
+                  key={log.id}
+                  className="p-3 bg-white border border-slate-200 rounded-xl hover:border-slate-300 transition-all space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-mono text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                          {log.id}
+                        </span>
+                        <span className="font-bold text-xs text-slate-800">{log.targetUserNama}</span>
+                        <span className="text-[10px] text-slate-400">({log.targetUserEmail})</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 text-[10px] text-slate-400 shrink-0 font-medium">
+                      <Clock className="w-3 h-3 text-slate-400" />
+                      <span>{log.timestamp}</span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <div>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Administrator yang Mereset</span>
+                      <span className="font-semibold text-slate-700 block">{log.adminNama || log.adminEmail}</span>
+                    </div>
+                    <div>
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">Device ID Lama</span>
+                      <span className="font-mono text-[10px] text-slate-600 block truncate" title={log.oldDeviceId}>
+                        {log.oldDeviceId || '-'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {log.keterangan && (
+                    <div className="pt-1.5 border-t border-slate-100">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block mb-0.5">Alasan / Keterangan Reset</span>
+                      <p className="text-xs text-slate-700 font-medium italic bg-slate-50 p-2 rounded-lg border border-slate-100">
+                        "{log.keterangan}"
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
       ) : (
         /* List of Users with Search Filter */
         <div className="space-y-3.5 animate-slide-up">
@@ -446,7 +648,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   key={p.userId || p.email}
                   className="p-3 border border-slate-150 rounded-xl hover:border-slate-300 hover:bg-slate-50/40 transition-all flex items-start justify-between gap-3"
                 >
-                  <div className="space-y-1">
+                  <div className="space-y-1 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-xs text-slate-800">{p.nama || p.userId || 'No ID'}</span>
                       <span className="text-[10px] text-slate-400">({p.userId})</span>
@@ -487,21 +689,100 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                         <span className="block text-slate-400">Manager: {p.managerEmail}</span>
                       )}
                       {p.deviceId && (
-                        <span className="block text-slate-400 font-mono text-[9px]">Device ID: {p.deviceId}</span>
+                        <span className="block text-slate-500 font-mono text-[9px]">
+                          Device ID: <span className="font-bold text-slate-700">{p.deviceId}</span>
+                        </span>
                       )}
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => startEdit(p)}
-                    className="p-1.5 hover:bg-white text-slate-400 hover:text-indigo-600 rounded-lg border border-transparent hover:border-slate-100 transition-all cursor-pointer shrink-0"
-                    title="Edit User"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {p.deviceId && (
+                      <button
+                        onClick={() => openResetModal(p)}
+                        className="py-1 px-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                        title="Reset Device ID user dan catat ke log"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>Reset ID</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => startEdit(p)}
+                      className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-indigo-600 rounded-lg border border-slate-200 transition-all cursor-pointer"
+                      title="Edit User"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               ))
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal for Reset Device ID */}
+      {resetModalUser && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 space-y-4 animate-scale-up">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-amber-100 text-amber-700 rounded-xl shrink-0">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-sm text-slate-800">Reset Device ID Pengguna</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Tindakan ini akan mengosongkan Device ID terikat dan mencatat riwayat ke Google Sheet <code className="font-mono text-indigo-600">ResetDeviceLog</code>.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-150 text-xs space-y-1 font-medium">
+              <p className="text-slate-700 font-bold">{resetModalUser.nama || resetModalUser.userId}</p>
+              <p className="text-slate-500 text-[11px]">Email: {resetModalUser.email}</p>
+              <p className="text-slate-500 text-[11px] font-mono truncate">Device ID: {resetModalUser.deviceId || '-'}</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Alasan / Keterangan Reset <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={resetReason}
+                onChange={(e) => setResetReason(e.target.value)}
+                placeholder="misal: User ganti HP Android baru, HP lama hilang/rusak..."
+                rows={3}
+                className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 transition-all outline-none resize-none"
+                required
+              />
+            </div>
+
+            {error && (
+              <div className="p-2.5 bg-red-50 border border-red-200 text-red-600 text-xs rounded-xl flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => { setResetModalUser(null); setError(null); }}
+                className="flex-1 py-2 text-xs border border-slate-200 hover:bg-slate-50 font-bold text-slate-600 rounded-xl transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmResetDevice}
+                disabled={isResetting}
+                className="flex-1 py-2 text-xs bg-amber-600 hover:bg-amber-700 font-bold text-white rounded-xl shadow-sm transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${isResetting ? 'animate-spin' : ''}`} />
+                <span>{isResetting ? 'Memproses...' : 'Proses Reset'}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

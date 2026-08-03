@@ -100,3 +100,14 @@ export interface UserActivity {
   buktiFileId?: string;
 }
 
+export interface ResetDeviceLog {
+  id: string; // Map to LogID
+  timestamp: string;
+  adminEmail: string;
+  adminNama: string;
+  targetUserEmail: string;
+  targetUserNama: string;
+  oldDeviceId: string;
+  keterangan: string;
+}
+
