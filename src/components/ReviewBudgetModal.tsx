@@ -109,6 +109,11 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
     e.preventDefault();
     setError(null);
 
+    if (!comment.trim()) {
+      setError('Catatan / komentar Manager wajib diisi.');
+      return;
+    }
+
     const amt = isTalangan ? 0 : parseNumericValue(approvedAmount);
     if (!isTalangan) {
       if (amt <= 0) {
@@ -312,7 +317,9 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
           )}
 
           <div>
-            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">Komentar / Catatan Manager (Opsional)</label>
+            <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
+              Catatan / Komentar Manager <span className="text-red-500">*</span> (Wajib)
+            </label>
             <div className="relative">
               <input
                 type="text"
@@ -320,6 +327,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
                 onChange={(e) => setComment(e.target.value)}
                 placeholder="Misal: Disetujui penuh untuk pembelian sparepart"
                 className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                required
               />
               <MessageSquare className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
             </div>
