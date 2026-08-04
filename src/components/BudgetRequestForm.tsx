@@ -115,7 +115,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         siteId: siteId.toUpperCase().trim(),
         jumlahPengajuan: amount,
         keterangan: isTalangan ? `[DANA TALANGAN] ${keterangan.trim()}` : keterangan.trim(),
-        status: isTalangan ? RequestStatus.TRANSFERRED : RequestStatus.PENDING_APPROVAL,
+        status: RequestStatus.PENDING_APPROVAL,
         managerActionAmount: 0,
         managerComment: '',
         adminActionAmount: 0,

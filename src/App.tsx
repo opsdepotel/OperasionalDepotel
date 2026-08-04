@@ -762,13 +762,7 @@ export default function App() {
     if (success !== null) {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setEditingRequest(null);
-      const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
-      if (isReqTalangan) {
-        setSelectedRequest(newRequest);
-        setActiveView('report-usage');
-      } else {
-        setActiveView('dashboard');
-      }
+      setActiveView('dashboard');
       await handleManualRefresh();
     }
   };
@@ -2481,7 +2475,7 @@ export default function App() {
                                 <div>
                                   <span className="block text-[8px] font-bold text-slate-400 uppercase">Diajukan</span>
                                   <span className="font-semibold text-slate-700">
-                                    {isReqTalangan ? 'Rp 0' : formatIDR(req.jumlahPengajuan)}
+                                    {formatIDR(req.jumlahPengajuan)}
                                   </span>
                                 </div>
                                 <div>

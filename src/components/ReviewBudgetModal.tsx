@@ -118,7 +118,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
       return;
     }
 
-    const amt = isTalangan ? 0 : parseNumericValue(approvedAmount);
+    const amt = isTalangan ? request.jumlahPengajuan : parseNumericValue(approvedAmount);
     if (!isTalangan) {
       if (amt <= 0) {
         setError('Nominal persetujuan harus lebih besar dari Rp 0.');
@@ -341,7 +341,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
                 <span>Persetujuan Dana Talangan Pribadi</span>
               </p>
               <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                Persetujuan aktivitas ini bernilai <strong>Rp 0</strong> di awal karena menggunakan dana mandiri pemohon. Rincian pengeluaran riil akan dimasukkan oleh pemohon dan diperiksa kemudian.
+                Menyetujui estimasi pengajuan Dana Talangan Pribadi sebesar <strong>{formatIDR(request.jumlahPengajuan)}</strong>. Setelah disetujui Manager, Finance akan mengonfirmasi UID agar pemohon dapat mengunggah bukti rincian pemakaian dana.
               </p>
             </div>
           )}
