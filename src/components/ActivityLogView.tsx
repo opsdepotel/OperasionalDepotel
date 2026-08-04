@@ -128,6 +128,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [siteName, setSiteName] = useState('');
   const [coordinatesDb, setCoordinatesDb] = useState('');
   const [coordinatesActual, setCoordinatesActual] = useState('');
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
   const [gpsAddress, setGpsAddress] = useState('');
   const [isGeocoding, setIsGeocoding] = useState(false);
   const [keterangan, setKeterangan] = useState('');
@@ -271,7 +272,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           siteInfoLine = `${siteIdText}_${siteName.trim()}`;
         }
 
-        const coordStr = coordinatesActual || 'GPS Tidak Tersedia';
+        const coordStr = coordinatesActual 
+          ? (gpsAccuracy !== null ? `GPS: ${coordinatesActual} (±${gpsAccuracy}m)` : `GPS: ${coordinatesActual}`)
+          : 'GPS Tidak Tersedia';
 
         const watermarkLines = [
           siteInfoLine,
@@ -397,7 +400,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       (position) => {
         const lat = position.coords.latitude.toFixed(6);
         const lon = position.coords.longitude.toFixed(6);
+        const acc = position.coords.accuracy;
         setCoordinatesActual(`${lat}, ${lon}`);
+        setGpsAccuracy(acc ? Math.round(acc) : null);
         setGpsError(null);
         setIsFetchingGps(false);
       },
@@ -413,6 +418,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         }
         setGpsError(msg);
         setCoordinatesActual('');
+        setGpsAccuracy(null);
         setIsFetchingGps(false);
       },
       { enableHighAccuracy: true, timeout: 10000 }
@@ -461,6 +467,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setSiteName('');
       setCoordinatesDb('');
       setCoordinatesActual('');
+      setGpsAccuracy(null);
       setGpsAddress('');
       setKeterangan('');
       setOriginalPhotoFile(null);
@@ -620,9 +627,21 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                   </div>
                 ) : coordinatesActual ? (
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-bold font-mono">
-                      <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span className="truncate">{coordinatesActual}</span>
+                    <div className="flex items-center justify-between gap-2 p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-bold font-mono">
+                      <div className="flex items-center gap-2 truncate">
+                        <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span className="truncate">{coordinatesActual}</span>
+                      </div>
+                      {gpsAccuracy !== null ? (
+                        <span className="text-[10px] font-sans font-bold px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200/80 rounded-md shrink-0 flex items-center gap-1 shadow-2xs">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                          Akurasi: ±{gpsAccuracy}m
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-sans font-medium text-emerald-700 bg-emerald-100/80 px-1.5 py-0.5 rounded shrink-0">
+                          GPS Terdeteksi
+                        </span>
+                      )}
                     </div>
                     {gpsAddress && (
                       <p className="text-[10px] text-slate-500 font-medium px-1 flex items-center gap-1 truncate">
