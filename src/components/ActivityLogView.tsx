@@ -555,39 +555,84 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     return (p.divisi?.trim() || '').toLowerCase() === divisiFilter.trim().toLowerCase();
   });
 
-  // Filter activities based on Role & Filter selections
-  const filteredActivities = activities.filter(act => {
-    const actEmail = act.userEmail.toLowerCase();
-    const actProf = profiles.find(p => p.email.toLowerCase() === actEmail);
+  const parseActivityTime = (act: UserActivity): number => {
+    if (act.createdAt) {
+      const parsedIso = Date.parse(act.createdAt);
+      if (!isNaN(parsedIso)) return parsedIso;
 
-    // 1. Role Scoping
-    if (currentRole === Role.MANAGER) {
-      // Manager only views subordinates (or self)
-      if (!subEmails.has(actEmail)) return false;
-    } else if (currentRole === Role.USER) {
-      // User only views self
-      if (actEmail !== userEmail.toLowerCase()) return false;
+      const parts = act.createdAt.split(/[, ]+/);
+      if (parts.length >= 2) {
+        const datePart = parts[0];
+        const timePart = parts[1];
+        const dParts = datePart.split('/');
+        if (dParts.length === 3) {
+          const day = parseInt(dParts[0], 10);
+          const month = parseInt(dParts[1], 10) - 1;
+          const year = parseInt(dParts[2], 10);
+          const tParts = timePart.split(':');
+          const hh = parseInt(tParts[0] || '0', 10);
+          const mm = parseInt(tParts[1] || '0', 10);
+          const ss = parseInt(tParts[2] || '0', 10);
+          const t = new Date(year, month, day, hh, mm, ss).getTime();
+          if (!isNaN(t)) return t;
+        }
+      }
     }
-    // DIREKTUR sees all users' activities
-
-    // 2. Filter Divisi (For DIREKTUR)
-    if (currentRole === Role.DIREKTUR && divisiFilter !== 'ALL') {
-      const userDivisi = (actProf?.divisi?.trim() || '').toLowerCase();
-      if (userDivisi !== divisiFilter.trim().toLowerCase()) return false;
+    if (act.timestamp) {
+      const parsedIso = Date.parse(act.timestamp);
+      if (!isNaN(parsedIso)) return parsedIso;
     }
-
-    // 3. Filter Nama User (For MANAGER & DIREKTUR)
-    if (selectedUserFilter !== 'ALL') {
-      if (actEmail !== selectedUserFilter.toLowerCase()) return false;
+    if (act.tanggal) {
+      const parsedIso = Date.parse(act.tanggal);
+      if (!isNaN(parsedIso)) return parsedIso;
     }
+    return 0;
+  };
 
-    // 4. Filter Tanggal Activity
-    if (dateFilter) {
-      if (act.tanggal !== dateFilter) return false;
-    }
+  // Filter activities based on Role & Filter selections and sort newest first
+  const filteredActivities = activities
+    .filter(act => {
+      const actEmail = act.userEmail.toLowerCase();
+      const actProf = profiles.find(p => p.email.toLowerCase() === actEmail);
 
-    return true;
-  });
+      // 1. Role Scoping
+      if (currentRole === Role.MANAGER) {
+        // Manager only views subordinates (or self)
+        if (!subEmails.has(actEmail)) return false;
+      } else if (currentRole === Role.USER) {
+        // User only views self
+        if (actEmail !== userEmail.toLowerCase()) return false;
+      }
+      // DIREKTUR sees all users' activities
+
+      // 2. Filter Divisi (For DIREKTUR)
+      if (currentRole === Role.DIREKTUR && divisiFilter !== 'ALL') {
+        const userDivisi = (actProf?.divisi?.trim() || '').toLowerCase();
+        if (userDivisi !== divisiFilter.trim().toLowerCase()) return false;
+      }
+
+      // 3. Filter Nama User (For MANAGER & DIREKTUR)
+      if (selectedUserFilter !== 'ALL') {
+        if (actEmail !== selectedUserFilter.toLowerCase()) return false;
+      }
+
+      // 4. Filter Tanggal Activity
+      if (dateFilter) {
+        if (act.tanggal !== dateFilter) return false;
+      }
+
+      return true;
+    })
+    .sort((a, b) => {
+      const timeA = parseActivityTime(a);
+      const timeB = parseActivityTime(b);
+      if (timeA !== timeB) {
+        return timeB - timeA; // Newest first
+      }
+      const dateComp = (b.tanggal || '').localeCompare(a.tanggal || '');
+      if (dateComp !== 0) return dateComp;
+      return (b.id || '').localeCompare(a.id || '');
+    });
 
   // If showAddForm is active, render the Add Form View FULL SCREEN to replace the list view
   if (showAddForm) {
