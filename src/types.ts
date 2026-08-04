@@ -119,7 +119,7 @@ export interface ItemReviewHistory {
   actorRole: Role | string;
   actorEmail: string;
   actorNama: string;
-  actionType: 'APPROVAL_MANAGER' | 'REVISI_MANAGER' | 'APPROVAL_FINANCE' | 'REVISI_FINANCE' | 'PERBAIKAN_USER' | 'ITEM_CREATED';
+  actionType: 'APPROVAL_MANAGER' | 'REVISI_MANAGER' | 'APPROVAL_FINANCE' | 'REVISI_FINANCE' | 'PERBAIKAN_USER' | 'ITEM_CREATED' | 'PENGAJUAN_CREATED' | 'PENGAJUAN_REVISED';
   status: string; // 'DISETUJUI' | 'REVISI' | 'SUBMITTED' | 'PERBAIKAN SUBMITTED'
   catatan: string;
   tanggalPenggunaan: string;

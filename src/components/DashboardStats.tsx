@@ -159,7 +159,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 {[
                   taskReportNeeded > 0 ? `${taskReportNeeded} pengajuan siap dilaporkan` : '',
                   taskCorrections > 0 ? `${taskCorrections} laporan perlu perbaikan` : '',
-                  taskRejected > 0 ? `${taskRejected} pengajuan ditolak Manager` : ''
+                  taskRejected > 0 ? `${taskRejected} pengajuan perlu revisi Manager` : ''
                 ].filter(Boolean).join(', ')}.
               </p>
             </div>
@@ -265,13 +265,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             }`}
           >
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN DITOLAK</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN PERLU REVISI</p>
               <div className="flex items-end justify-between mt-2">
                 <span className="text-3xl font-display font-bold text-rose-600">{rejectedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Ditolak</span>
+                <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Perlu Revisi</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Ditolak Manager, klik untuk lihat & batalkan</p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Diminta revisi Manager, klik untuk lihat, revisi & batalkan</p>
           </div>
         </div>
 

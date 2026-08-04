@@ -26,9 +26,9 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
 }) => {
   useBackHandler(true, onClose, 'itemHistoryModal');
 
-  // Filter histories for this specific item
+  // Filter histories for this specific item or request
   const itemHistories = histories
-    .filter(h => h.itemUid === item.id)
+    .filter(h => h.itemUid === item.id || h.requestUid === item.id)
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); // Newest first
 
   const formatIDR = (num: number) => {
@@ -74,6 +74,20 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
             <Edit3 className="w-3 h-3 text-blue-600" />
             <span>Perbaikan oleh User</span>
+          </span>
+        );
+      case 'PENGAJUAN_CREATED':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">
+            <PlusCircle className="w-3 h-3 text-indigo-600" />
+            <span>Pengajuan Anggaran Dibuat</span>
+          </span>
+        );
+      case 'PENGAJUAN_REVISED':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+            <Edit3 className="w-3 h-3 text-blue-600" />
+            <span>Revisi Pengajuan Dikirim</span>
           </span>
         );
       case 'ITEM_CREATED':

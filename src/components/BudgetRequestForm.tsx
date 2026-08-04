@@ -16,6 +16,7 @@ interface BudgetRequestFormProps {
   onClose: () => void;
   initialIsTalangan?: boolean;
   sites?: SiteInfo[];
+  initialRequest?: BudgetRequest;
 }
 
 export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
@@ -25,17 +26,29 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   onSubmit,
   onClose,
   initialIsTalangan = false,
-  sites = []
+  sites = [],
+  initialRequest
 }) => {
-  const [isTalangan, setIsTalangan] = useState(initialIsTalangan);
+  const [isTalangan, setIsTalangan] = useState(() => {
+    if (initialRequest) {
+      return initialRequest.id.startsWith('OPT-') || initialRequest.keterangan.startsWith('[DANA TALANGAN]');
+    }
+    return initialIsTalangan;
+  });
+
   const [tanggalPemakaian, setTanggalPemakaian] = useState(() => {
-    // Default to today
+    if (initialRequest?.tanggalPemakaian) return initialRequest.tanggalPemakaian;
     const d = new Date();
     return d.toISOString().split('T')[0];
   });
-  const [siteId, setSiteId] = useState(defaultSiteId || '');
-  const [jumlahPengajuan, setJumlahPengajuan] = useState<string>('');
-  const [keterangan, setKeterangan] = useState('');
+
+  const [siteId, setSiteId] = useState(() => initialRequest?.siteId || defaultSiteId || '');
+  const [jumlahPengajuan, setJumlahPengajuan] = useState<string>(() => 
+    initialRequest?.jumlahPengajuan ? String(initialRequest.jumlahPengajuan) : ''
+  );
+  const [keterangan, setKeterangan] = useState(() => 
+    initialRequest?.keterangan ? initialRequest.keterangan.replace(/^\[DANA TALANGAN\]\s*/, '') : ''
+  );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -93,11 +106,11 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 
     setIsSubmitting(true);
     try {
-      const uid = generateUID();
+      const uid = initialRequest ? initialRequest.id : generateUID();
       const newRequest: BudgetRequest = {
         id: uid,
-        userEmail,
-        managerEmail,
+        userEmail: initialRequest ? initialRequest.userEmail : userEmail,
+        managerEmail: initialRequest ? initialRequest.managerEmail : managerEmail,
         tanggalPemakaian,
         siteId: siteId.toUpperCase().trim(),
         jumlahPengajuan: amount,
@@ -106,7 +119,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         managerActionAmount: 0,
         managerComment: '',
         adminActionAmount: 0,
-        createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+        createdAt: initialRequest?.createdAt || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
       };
       await onSubmit(newRequest);
     } catch (err: any) {
@@ -121,10 +134,14 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-50">
         <div>
           <h2 className="font-display font-bold text-slate-800 text-sm">
-            {isTalangan ? 'Lapor Dana Talangan Pribadi' : 'Pengajuan Anggaran Baru'}
+            {initialRequest 
+              ? 'Revisi Pengajuan Anggaran' 
+              : (isTalangan ? 'Lapor Dana Talangan Pribadi' : 'Pengajuan Anggaran Baru')}
           </h2>
           <p className="text-[10px] text-slate-400">
-            {isTalangan ? 'Pelaporan penggunaan dana talangan pribadi' : 'Pengajuan dana operasional'}
+            {initialRequest
+              ? `Perbaiki rincian pengajuan untuk UID ${initialRequest.id}`
+              : (isTalangan ? 'Pelaporan penggunaan dana talangan pribadi' : 'Pengajuan dana operasional')}
           </p>
         </div>
         <button
@@ -341,8 +358,10 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           <Sparkles className="w-4 h-4" />
           <span>
             {isSubmitting 
-              ? (isTalangan ? 'Membuat Laporan...' : 'Mengirim Pengajuan...') 
-              : (isTalangan ? 'Buat Laporan Dana Talangan' : 'Kirim Pengajuan Anggaran')}
+              ? 'Memproses...' 
+              : (initialRequest
+                  ? 'Kirim Revisi Pengajuan'
+                  : (isTalangan ? 'Buat Laporan Dana Talangan' : 'Kirim Pengajuan Anggaran'))}
           </span>
         </button>
       </form>

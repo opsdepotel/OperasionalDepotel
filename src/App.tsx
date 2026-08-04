@@ -51,14 +51,15 @@ import { ActivityLogView } from './components/ActivityLogView';
 import { BbmRefillModal } from './components/BbmRefillModal';
 import { BbmListModal } from './components/BbmListModal';
 import { FinancialReportsModal } from './components/FinancialReportsModal';
+import { ItemHistoryModal } from './components/ItemHistoryModal';
 
 // Icons
 import {
   Coins, ClipboardList, CheckCircle2, AlertCircle, Clock, Plus, LogIn,
   RefreshCw, FileSpreadsheet, Eye, Search, AlertTriangle, Check, CreditCard,
-  Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight,
+  Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight, Edit2,
   Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel, X,
-  Settings, LogOut, ShieldCheck
+  Settings, LogOut, ShieldCheck, History
 } from 'lucide-react';
 
 export default function App() {
@@ -154,6 +155,7 @@ export default function App() {
   // Navigation / Views
   const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'profile-settings' | 'activities'>('dashboard');
   const [selectedRequest, setSelectedRequest] = useState<BudgetRequest | null>(null);
+  const [editingRequest, setEditingRequest] = useState<BudgetRequest | null>(null);
 
   // Review Modals Active
   const [reviewBudgetReq, setReviewBudgetReq] = useState<BudgetRequest | null>(null);
@@ -161,6 +163,7 @@ export default function App() {
   const [transferReq, setTransferReq] = useState<BudgetRequest | null>(null);
   const [closingConfirmReq, setClosingConfirmReq] = useState<BudgetRequest | null>(null);
   const [cancelConfirmReq, setCancelConfirmReq] = useState<BudgetRequest | null>(null);
+  const [requestHistoryModalItem, setRequestHistoryModalItem] = useState<UsageReportItem | null>(null);
   const [isBbmModalOpen, setIsBbmModalOpen] = useState(false);
   const [isBbmListModalOpen, setIsBbmListModalOpen] = useState(false);
   const [isFinancialReportsModalOpen, setIsFinancialReportsModalOpen] = useState(false);
@@ -695,14 +698,40 @@ export default function App() {
     return false;
   };
 
-  // Workflow Action 1: Create Budget Request
+  // Workflow Action 1: Create or Revise Budget Request
   const handleAddBudgetRequest = async (newRequest: BudgetRequest) => {
     if (!token || !spreadsheetId) return;
+    const isExisting = requests.some(r => r.id === newRequest.id);
+    const actionFn = isExisting
+      ? () => updateBudgetRequest(token, spreadsheetId, newRequest)
+      : () => createBudgetRequest(token, spreadsheetId, newRequest);
+
+    const historyLog: ItemReviewHistory = {
+      id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      itemUid: newRequest.id,
+      requestUid: newRequest.id,
+      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      actorRole: userProfile?.role || activeRole || Role.USER,
+      actorEmail: userProfile?.email || newRequest.userEmail,
+      actorNama: userProfile?.nama || userProfile?.email || newRequest.userEmail,
+      actionType: isExisting ? 'PENGAJUAN_REVISED' : 'PENGAJUAN_CREATED',
+      status: isExisting ? 'PENGAJUAN REVISI' : 'SUBMITTED',
+      catatan: isExisting ? 'Revisi pengajuan anggaran dikirim ulang oleh pemohon' : 'Pengajuan anggaran baru dibuat oleh pemohon',
+      tanggalPenggunaan: newRequest.tanggalPemakaian,
+      nominal: newRequest.jumlahPengajuan,
+      keterangan: newRequest.keterangan
+    };
+
     const success = await runGoogleAction(
-      () => createBudgetRequest(token, spreadsheetId, newRequest),
-      'Gagal menambahkan pengajuan.'
+      async () => {
+        await actionFn();
+        await createItemReviewHistory(token, spreadsheetId, historyLog);
+      },
+      isExisting ? 'Gagal mengupdate revisi pengajuan.' : 'Gagal menambahkan pengajuan.'
     );
     if (success !== null) {
+      setItemReviewHistories(prev => [historyLog, ...prev]);
+      setEditingRequest(null);
       const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
       if (isReqTalangan) {
         setSelectedRequest(newRequest);
@@ -830,11 +859,31 @@ export default function App() {
       createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
     };
 
+    const historyLog: ItemReviewHistory = {
+      id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      itemUid: reviewBudgetReq.id,
+      requestUid: reviewBudgetReq.id,
+      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      actorRole: userProfile?.role || activeRole || Role.MANAGER,
+      actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
+      actorNama: userProfile?.nama || userProfile?.email || 'Manager',
+      actionType: 'APPROVAL_MANAGER',
+      status: 'DISETUJUI',
+      catatan: comment,
+      tanggalPenggunaan: reviewBudgetReq.tanggalPemakaian,
+      nominal: approvedAmount,
+      keterangan: reviewBudgetReq.keterangan
+    };
+
     const success = await runGoogleAction(
-      () => updateBudgetRequest(token, spreadsheetId, updated),
+      async () => {
+        await updateBudgetRequest(token, spreadsheetId, updated);
+        await createItemReviewHistory(token, spreadsheetId, historyLog);
+      },
       'Gagal menyimpan persetujuan anggaran.'
     );
     if (success !== null) {
+      setItemReviewHistories(prev => [historyLog, ...prev]);
       setReviewBudgetReq(null);
       await handleManualRefresh();
     }
@@ -850,11 +899,31 @@ export default function App() {
       managerComment: reason
     };
 
+    const historyLog: ItemReviewHistory = {
+      id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      itemUid: reviewBudgetReq.id,
+      requestUid: reviewBudgetReq.id,
+      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      actorRole: userProfile?.role || activeRole || Role.MANAGER,
+      actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
+      actorNama: userProfile?.nama || userProfile?.email || 'Manager',
+      actionType: 'REVISI_MANAGER',
+      status: 'REVISI',
+      catatan: reason,
+      tanggalPenggunaan: reviewBudgetReq.tanggalPemakaian,
+      nominal: reviewBudgetReq.jumlahPengajuan,
+      keterangan: reviewBudgetReq.keterangan
+    };
+
     const success = await runGoogleAction(
-      () => updateBudgetRequest(token, spreadsheetId, updated),
+      async () => {
+        await updateBudgetRequest(token, spreadsheetId, updated);
+        await createItemReviewHistory(token, spreadsheetId, historyLog);
+      },
       'Gagal menolak anggaran.'
     );
     if (success !== null) {
+      setItemReviewHistories(prev => [historyLog, ...prev]);
       setReviewBudgetReq(null);
       await handleManualRefresh();
     }
@@ -876,11 +945,73 @@ export default function App() {
       adminComment: adminComment || ''
     };
 
+    const historyLog: ItemReviewHistory = {
+      id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      itemUid: transferReq.id,
+      requestUid: transferReq.id,
+      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      actorRole: userProfile?.role || activeRole || Role.FINANCE,
+      actorEmail: userProfile?.email || '',
+      actorNama: userProfile?.nama || userProfile?.email || 'Finance',
+      actionType: 'APPROVAL_FINANCE',
+      status: 'TRANSFERRED',
+      catatan: adminComment || `Dana ditransfer sebesar ${formatIDR(transferredAmount)}`,
+      tanggalPenggunaan: transferReq.tanggalPemakaian,
+      nominal: transferredAmount,
+      keterangan: transferReq.keterangan,
+      buktiFileId: buktiFileId,
+      buktiUrl: buktiUrl
+    };
+
     const success = await runGoogleAction(
-      () => updateBudgetRequest(token, spreadsheetId, updated),
+      async () => {
+        await updateBudgetRequest(token, spreadsheetId, updated);
+        await createItemReviewHistory(token, spreadsheetId, historyLog);
+      },
       (isReqTalangan && isPendingTalanganTransfer) ? 'Gagal memproses transfer dana talangan.' : 'Gagal memproses transfer anggaran.'
     );
     if (success !== null) {
+      setItemReviewHistories(prev => [historyLog, ...prev]);
+      setTransferReq(null);
+      await handleManualRefresh();
+    }
+  };
+
+  const handleRejectTransfer = async (reason: string) => {
+    if (!token || !spreadsheetId || !transferReq) return;
+
+    const updated: BudgetRequest = {
+      ...transferReq,
+      status: RequestStatus.REJECTED,
+      managerComment: reason,
+      adminComment: reason
+    };
+
+    const historyLog: ItemReviewHistory = {
+      id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      itemUid: transferReq.id,
+      requestUid: transferReq.id,
+      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      actorRole: userProfile?.role || activeRole || Role.FINANCE,
+      actorEmail: userProfile?.email || '',
+      actorNama: userProfile?.nama || userProfile?.email || 'Finance',
+      actionType: 'REVISI_FINANCE',
+      status: 'REVISI',
+      catatan: reason,
+      tanggalPenggunaan: transferReq.tanggalPemakaian,
+      nominal: transferReq.jumlahPengajuan,
+      keterangan: transferReq.keterangan
+    };
+
+    const success = await runGoogleAction(
+      async () => {
+        await updateBudgetRequest(token, spreadsheetId, updated);
+        await createItemReviewHistory(token, spreadsheetId, historyLog);
+      },
+      'Gagal meminta revisi pengajuan anggaran.'
+    );
+    if (success !== null) {
+      setItemReviewHistories(prev => [historyLog, ...prev]);
       setTransferReq(null);
       await handleManualRefresh();
     }
@@ -1296,7 +1427,25 @@ export default function App() {
         ...req,
         status: RequestStatus.CANCELLED
       };
+      const historyLog: ItemReviewHistory = {
+        id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+        itemUid: req.id,
+        requestUid: req.id,
+        timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+        actorRole: userProfile?.role || activeRole || Role.USER,
+        actorEmail: userProfile?.email || req.userEmail,
+        actorNama: userProfile?.nama || userProfile?.email || req.userEmail,
+        actionType: 'PERBAIKAN_USER',
+        status: 'CANCELLED',
+        catatan: 'Pengajuan dibatalkan oleh pemohon',
+        tanggalPenggunaan: req.tanggalPemakaian,
+        nominal: req.jumlahPengajuan,
+        keterangan: req.keterangan
+      };
+
       await updateBudgetRequest(token, spreadsheetId, updatedReq);
+      await createItemReviewHistory(token, spreadsheetId, historyLog);
+      setItemReviewHistories(prev => [historyLog, ...prev]);
       setRequests(prev => prev.map(r => r.id === req.id ? updatedReq : r));
       setCancelConfirmReq(null);
     } catch (err: any) {
@@ -1428,7 +1577,7 @@ export default function App() {
       case RequestStatus.PARTIALLY_APPROVED:
         return 'bg-blue-50 text-blue-600 border border-blue-150';
       case RequestStatus.REJECTED:
-        return 'bg-red-50 text-red-600 border border-red-150';
+        return 'bg-amber-50 text-amber-700 border border-amber-200';
       case RequestStatus.TRANSFERRED:
         return 'bg-emerald-50 text-emerald-600 border border-emerald-150';
       case RequestStatus.REPORTING:
@@ -1456,7 +1605,7 @@ export default function App() {
       case RequestStatus.PARTIALLY_APPROVED:
         return 'border-l-blue-500';
       case RequestStatus.REJECTED:
-        return 'border-l-red-500';
+        return 'border-l-amber-500';
       case RequestStatus.TRANSFERRED:
         return 'border-l-emerald-500';
       case RequestStatus.REPORTING:
@@ -1479,7 +1628,7 @@ export default function App() {
       case RequestStatus.PENDING_APPROVAL: return 'Menunggu Review Manager';
       case RequestStatus.APPROVED: return 'Disetujui Penuh Manager';
       case RequestStatus.PARTIALLY_APPROVED: return 'Disetujui Sebagian Manager';
-      case RequestStatus.REJECTED: return 'Ditolak Manager';
+      case RequestStatus.REJECTED: return 'Diminta Revisi Manager';
       case RequestStatus.TRANSFERRED: return 'Dana Ditransfer Finance';
       case RequestStatus.REPORTING: return 'Pelaporan Penggunaan';
       case RequestStatus.REVIEW_MANAGER: return 'Review Laporan (Manager)';
@@ -1725,9 +1874,13 @@ export default function App() {
             managerEmail={userProfile.managerEmail}
             defaultSiteId=""
             onSubmit={handleAddBudgetRequest}
-            onClose={() => setActiveView('dashboard')}
+            onClose={() => {
+              setEditingRequest(null);
+              setActiveView('dashboard');
+            }}
             initialIsTalangan={initialIsTalangan}
             sites={sites}
+            initialRequest={editingRequest || undefined}
           />
         ) : activeView === 'report-usage' && selectedRequest ? (
           <UsageReportForm
@@ -1880,9 +2033,19 @@ export default function App() {
                     request={reviewBudgetReq}
                     requesterName={profiles.find(p => p.email.toLowerCase() === reviewBudgetReq.userEmail.toLowerCase())?.nama || reviewBudgetReq.userEmail}
                     sites={sites}
+                    histories={itemReviewHistories}
                     onApprove={handleReviewBudget}
                     onReject={handleRejectBudget}
                     onClose={() => setReviewBudgetReq(null)}
+                  />
+                )}
+
+                {requestHistoryModalItem && (
+                  <ItemHistoryModal
+                    item={requestHistoryModalItem}
+                    histories={itemReviewHistories}
+                    onClose={() => setRequestHistoryModalItem(null)}
+                    onPreviewDocument={setPreviewDocument}
                   />
                 )}
 
@@ -1907,6 +2070,8 @@ export default function App() {
                     request={transferReq}
                     requesterName={profiles.find(p => p.email.toLowerCase() === transferReq.userEmail.toLowerCase())?.nama || transferReq.userEmail}
                     onTransfer={handleAdminTransfer}
+                    onReject={handleRejectTransfer}
+                    histories={itemReviewHistories}
                     onClose={() => setTransferReq(null)}
                     googleToken={token!}
                     driveFolderId={driveFolderId}
@@ -2005,7 +2170,7 @@ export default function App() {
                           <p className="text-slate-700 font-medium">Keterangan: <strong>{cancelConfirmReq.keterangan}</strong></p>
                           <p className="text-slate-700 font-medium">Nominal: <strong className="text-indigo-600">{formatIDR(cancelConfirmReq.jumlahPengajuan)}</strong></p>
                           {cancelConfirmReq.managerComment && (
-                            <p className="text-rose-600 font-medium text-[11px] pt-1">Alasan Ditolak: "{cancelConfirmReq.managerComment}"</p>
+                            <p className="text-amber-700 font-medium text-[11px] pt-1">Catatan Revisi Manager: "{cancelConfirmReq.managerComment}"</p>
                           )}
                         </div>
                       </div>
@@ -2170,6 +2335,7 @@ export default function App() {
                               if (!userProfile?.managerEmail) {
                                 alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
                               } else {
+                                setEditingRequest(null);
                                 setInitialIsTalangan(false);
                                 setActiveView('new-request');
                               }
@@ -2184,6 +2350,7 @@ export default function App() {
                               if (!userProfile?.managerEmail) {
                                 alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
                               } else {
+                                setEditingRequest(null);
                                 setInitialIsTalangan(true);
                                 setActiveView('new-request');
                               }
@@ -2379,9 +2546,37 @@ export default function App() {
                               )}
 
                               {/* Comments if any */}
-                              {req.status === RequestStatus.REJECTED && req.managerComment && (
-                                <div className="bg-red-50 text-red-700 p-2.5 rounded-xl text-[10px] border border-red-100">
-                                  <strong>Alasan Ditolak:</strong> {req.managerComment}
+                              {req.status === RequestStatus.REJECTED && (
+                                <div className="bg-amber-50 text-amber-800 p-2.5 rounded-xl text-[10px] border border-amber-200 space-y-2">
+                                  {req.managerComment && (
+                                    <p>
+                                      <strong>Catatan Revisi Manager:</strong> {req.managerComment}
+                                    </p>
+                                  )}
+                                  <div className="flex items-center justify-between pt-1 border-t border-amber-200/60">
+                                    <span className="text-[9px] text-amber-700 font-medium">Riwayat Approval & Revisi:</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setRequestHistoryModalItem({
+                                        id: req.id,
+                                        requestId: req.id,
+                                        tanggalPenggunaan: req.tanggalPemakaian,
+                                        nominal: req.jumlahPengajuan,
+                                        keterangan: req.keterangan,
+                                        buktiUrl: req.buktiTransferUrl || '',
+                                        buktiFileId: req.buktiTransferFileId || '',
+                                        statusManager: req.status === RequestStatus.APPROVED ? ItemStatus.APPROVED : req.status === RequestStatus.REJECTED ? ItemStatus.REJECTED : ItemStatus.PENDING,
+                                        managerComment: req.managerComment || '',
+                                        statusAdmin: req.adminActionAmount > 0 ? ItemStatus.APPROVED : ItemStatus.PENDING,
+                                        adminComment: req.adminComment || '',
+                                        updatedAt: req.createdAt
+                                      })}
+                                      className="px-2.5 py-1 bg-white hover:bg-amber-100 text-amber-900 font-bold rounded-lg text-[10px] transition-all flex items-center gap-1 cursor-pointer border border-amber-300 shrink-0 shadow-xs"
+                                    >
+                                      <History className="w-3.5 h-3.5 text-indigo-600" />
+                                      <span>Riwayat ({itemReviewHistories.filter(h => h.requestUid === req.id || h.itemUid === req.id).length})</span>
+                                    </button>
+                                  </div>
                                 </div>
                               )}
 
@@ -2419,9 +2614,36 @@ export default function App() {
 
                               {/* Action buttons on card based on role & status */}
                               <div className="flex items-center justify-between pt-2 border-t border-slate-50 text-xs">
-                                <span className="text-[9px] font-mono text-slate-400">
-                                  {req.createdAt ? `Dibuat: ${req.createdAt}` : ''}
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] font-mono text-slate-400">
+                                    {req.createdAt ? `Dibuat: ${req.createdAt}` : ''}
+                                  </span>
+
+                                  {req.status !== RequestStatus.REJECTED && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setRequestHistoryModalItem({
+                                        id: req.id,
+                                        requestId: req.id,
+                                        tanggalPenggunaan: req.tanggalPemakaian,
+                                        nominal: req.jumlahPengajuan,
+                                        keterangan: req.keterangan,
+                                        buktiUrl: req.buktiTransferUrl || '',
+                                        buktiFileId: req.buktiTransferFileId || '',
+                                        statusManager: req.status === RequestStatus.APPROVED ? ItemStatus.APPROVED : req.status === RequestStatus.REJECTED ? ItemStatus.REJECTED : ItemStatus.PENDING,
+                                        managerComment: req.managerComment || '',
+                                        statusAdmin: req.adminActionAmount > 0 ? ItemStatus.APPROVED : ItemStatus.PENDING,
+                                        adminComment: req.adminComment || '',
+                                        updatedAt: req.createdAt
+                                      })}
+                                      className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg text-[10px] transition-all flex items-center gap-1 cursor-pointer border border-slate-200/80 shrink-0"
+                                      title="Lihat Riwayat Approval & Revisi Pengajuan"
+                                    >
+                                      <History className="w-3 h-3 text-indigo-600" />
+                                      <span>Riwayat ({itemReviewHistories.filter(h => h.requestUid === req.id || h.itemUid === req.id).length})</span>
+                                    </button>
+                                  )}
+                                </div>
 
                                 <div className="flex items-center gap-1.5">
                                   {/* USER ACTIONS */}
@@ -2477,14 +2699,27 @@ export default function App() {
                                       )}
 
                                       {req.status === RequestStatus.REJECTED && (
-                                        <button
-                                          type="button"
-                                          onClick={() => setCancelConfirmReq(req)}
-                                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
-                                        >
-                                          <XCircle className="w-3.5 h-3.5" />
-                                          <span>Batalkan Pengajuan</span>
-                                        </button>
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setEditingRequest(req);
+                                              setActiveView('new-request');
+                                            }}
+                                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
+                                          >
+                                            <Edit2 className="w-3.5 h-3.5" />
+                                            <span>Revisi</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setCancelConfirmReq(req)}
+                                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                          >
+                                            <XCircle className="w-3.5 h-3.5" />
+                                            <span>Batalkan</span>
+                                          </button>
+                                        </div>
                                       )}
                                     </>
                                   )}
