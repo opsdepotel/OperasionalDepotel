@@ -83,6 +83,31 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     return `${year}-${month}-${day}`;
   };
 
+  const isValidGpsCoordinates = (coord: string | null | undefined): boolean => {
+    if (!coord) return false;
+    const trimmed = coord.trim();
+    if (!trimmed) return false;
+    const lower = trimmed.toLowerCase();
+    if (
+      lower.includes('tidak') ||
+      lower.includes('belum') ||
+      lower.includes('gagal') ||
+      lower.includes('error') ||
+      lower.includes('mencari') ||
+      lower.includes('null') ||
+      lower.includes('undefined')
+    ) {
+      return false;
+    }
+    const parts = trimmed.split(',').map(p => p.trim());
+    if (parts.length === 2) {
+      const lat = parseFloat(parts[0]);
+      const lon = parseFloat(parts[1]);
+      return !isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0;
+    }
+    return false;
+  };
+
   const [dateFilter, setDateFilter] = useState<string>(getTodayStr());
   const [divisiFilter, setDivisiFilter] = useState<string>('ALL');
   const [selectedUserFilter, setSelectedUserFilter] = useState<string>('ALL');
@@ -349,6 +374,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setErrorMsg('Wajib mengisi SiteID dan Keterangan Kegiatan terlebih dahulu.');
       return;
     }
+    if (!isValidGpsCoordinates(coordinatesActual)) {
+      setErrorMsg('Data koordinat GPS wajib ada sebelum mengambil foto bukti kegiatan. Silakan aktifkan lokasi (GPS) dan klik "Ambil Ulang GPS".');
+      return;
+    }
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setOriginalPhotoFile(file);
@@ -399,8 +428,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setErrorMsg('SiteID wajib diisi.');
       return;
     }
-    if (!coordinatesActual || !coordinatesActual.trim()) {
-      setErrorMsg('Data koordinat GPS wajib ada untuk menyimpan kegiatan harian. Silakan aktifkan fitur lokasi (GPS) dan klik "Ambil Ulang GPS".');
+    if (!isValidGpsCoordinates(coordinatesActual)) {
+      setErrorMsg('Data koordinat GPS wajib ada dan valid untuk menyimpan Log Kegiatan Harian. Silakan aktifkan fitur lokasi (GPS) dan klik "Ambil Ulang GPS".');
       return;
     }
     if (!keterangan.trim()) {
@@ -645,7 +674,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
                   AMBIL FOTO BUKTI (KAMERA HP LANGSUNG)
                 </label>
-                <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim())) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
+                <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim() || !isValidGpsCoordinates(coordinatesActual))) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
                   {photoPreview ? (
                     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100">
                       <img 
@@ -665,12 +694,20 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         Ulangi Foto
                       </button>
                     </div>
-                  ) : (!selectedSiteId.trim() || !keterangan.trim()) ? (
+                  ) : (!selectedSiteId.trim() || !keterangan.trim() || !isValidGpsCoordinates(coordinatesActual)) ? (
                     <div className="flex flex-col items-center justify-center py-5 w-full text-slate-400 select-none">
                       <Camera className="w-8 h-8 text-slate-300 mb-2" />
                       <span className="text-xs font-bold text-slate-400">Buka Kamera HP (Terkunci)</span>
                       <span className="text-[10px] text-slate-400 mt-1.5 font-medium text-center px-4 leading-relaxed">
-                        Silakan pilih <strong className="text-slate-500 font-bold">Site ID</strong> dan isi <strong className="text-slate-500 font-bold">Keterangan Kegiatan</strong> terlebih dahulu untuk mengaktifkan kamera.
+                        {!isValidGpsCoordinates(coordinatesActual) ? (
+                          <span className="text-amber-700 font-bold">
+                            Data koordinat GPS wajib ada. Silakan aktifkan fitur lokasi (GPS) dan klik "Ambil Ulang GPS" terlebih dahulu.
+                          </span>
+                        ) : (
+                          <span>
+                            Silakan pilih <strong className="text-slate-500 font-bold">Site ID</strong> dan isi <strong className="text-slate-500 font-bold">Keterangan Kegiatan</strong> terlebih dahulu untuk mengaktifkan kamera.
+                          </span>
+                        )}
                       </span>
                     </div>
                   ) : (
@@ -695,7 +732,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               {/* Submit Button */}
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || !isValidGpsCoordinates(coordinatesActual)}
                 className="w-full bg-indigo-600 text-white font-display font-bold text-xs py-3 px-4 rounded-xl shadow-md hover:bg-indigo-700 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
                 id="activity-submit-btn"
               >

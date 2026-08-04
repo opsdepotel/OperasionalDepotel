@@ -1198,6 +1198,12 @@ export default function App() {
       throw new Error('Koneksi database tidak aktif. Hubungkan Google Account Anda.');
     }
 
+    const rawCoord = (activityData.coordinatesActual || '').trim().toLowerCase();
+    const isInvalidGps = !rawCoord || rawCoord.includes('tidak') || rawCoord.includes('belum') || rawCoord.includes('gagal') || rawCoord.includes('error');
+    if (isInvalidGps) {
+      throw new Error('Data koordinat GPS wajib ada untuk menyimpan Log Kegiatan Harian.');
+    }
+
     let finalBuktiUrl = '';
     let finalBuktiFileId = '';
 
