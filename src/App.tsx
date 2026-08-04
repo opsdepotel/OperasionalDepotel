@@ -30,7 +30,8 @@ import {
   fetchItemReviewHistories,
   createItemReviewHistory,
   createBatchItemReviewHistories,
-  parseNumericValue
+  parseNumericValue,
+  defaultUsers
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory } from './types';
 import { validateDeviceAccessAndBind } from './lib/deviceUtils';
@@ -512,108 +513,137 @@ export default function App() {
           setToken(result.accessToken);
           setUser(result.user);
           setNeedsAuth(false);
-        } else {
-          throw new Error('Gagal mendapatkan token akses Google.');
+          setIsTokenExpired(false);
         }
       } catch (err: any) {
-        console.error('Auto Google auth error:', err);
-        setIsLoading(false);
-        setLoadingStep('');
-        onFormError('Gagal menghubungkan ke Google Account. Pastikan Anda masuk menggunakan email ops.depotel@gmail.com.');
-        return;
+        console.warn('Auto Google auth error:', err);
+        // Continue to local credential check if token connection popup fails or closed
       }
     }
 
-    // 2. Validate credentials against Google Sheets
+    // 2. Validate credentials against Google Sheets or Cached profiles
     setIsLoading(true);
     setLoadingStep('Memverifikasi kredensial login...');
-    try {
-      const sheetId = spreadsheetId || await findOrCreateDatabase(currentToken!);
-      setSpreadsheetId(sheetId);
-      
-      const folderId = driveFolderId || await findOrCreateFolder(currentToken!);
-      setDriveFolderId(folderId);
 
-      const allProfs = await fetchProfiles(currentToken!, sheetId);
-      setProfiles(allProfs);
-      localStorage.setItem('op_app_cached_profiles', JSON.stringify(allProfs));
+    let fetchedProfs: UserProfile[] | null = null;
+    let sheetId = spreadsheetId;
 
-      const matched = allProfs.find(
-        (p) =>
-          p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
-          p.password === password
-      );
-
-      if (matched) {
-        const deviceCheck = await validateDeviceAccessAndBind(matched, async (updated) => {
-          await saveUserProfile(currentToken!, sheetId, updated);
-        }, allProfs);
-
-        if (!deviceCheck.success) {
-          const errMsg = deviceCheck.errorMessage || 'Akses ditolak.';
-          setLoginRejectError(errMsg);
-          onFormError(errMsg);
-          return;
+    if (currentToken) {
+      try {
+        if (!sheetId) {
+          sheetId = await findOrCreateDatabase(currentToken);
+          setSpreadsheetId(sheetId);
+        }
+        if (!driveFolderId) {
+          const folderId = await findOrCreateFolder(currentToken);
+          setDriveFolderId(folderId);
         }
 
-        const finalUser = deviceCheck.updatedUser || matched;
-        if (deviceCheck.updatedUser) {
-          const updatedProfs = allProfs.map(p => p.email.toLowerCase() === finalUser.email.toLowerCase() ? finalUser : p);
-          setProfiles(updatedProfs);
-          localStorage.setItem('op_app_cached_profiles', JSON.stringify(updatedProfs));
-        }
+        fetchedProfs = await fetchProfiles(currentToken, sheetId);
+        setProfiles(fetchedProfs);
+        localStorage.setItem('op_app_cached_profiles', JSON.stringify(fetchedProfs));
+        setIsTokenExpired(false);
+      } catch (err: any) {
+        console.warn('Google API validation attempt error:', err);
+        const isAuthError = err.message && (
+          err.message.includes('401') ||
+          err.message.toLowerCase().includes('authentication credentials') ||
+          err.message.toLowerCase().includes('invalid_grant') ||
+          err.message.toLowerCase().includes('unauthorized') ||
+          err.message.toLowerCase().includes('token')
+        );
 
-        await syncAllData(currentToken!, sheetId);
-        handleAppLoginSuccess(finalUser);
-      } else {
-        const errMsg = 'User ID atau Password salah. Silakan coba lagi.';
-        setLoginRejectError(errMsg);
-        onFormError(errMsg);
+        if (isAuthError) {
+          setIsTokenExpired(true);
+          // Try to transparently prompt Google re-authorization
+          try {
+            const reAuth = await googleSignIn();
+            if (reAuth) {
+              currentToken = reAuth.accessToken;
+              currentUser = reAuth.user;
+              setToken(reAuth.accessToken);
+              setUser(reAuth.user);
+              setNeedsAuth(false);
+              setIsTokenExpired(false);
+
+              if (!sheetId) {
+                sheetId = await findOrCreateDatabase(reAuth.accessToken);
+                setSpreadsheetId(sheetId);
+              }
+              fetchedProfs = await fetchProfiles(reAuth.accessToken, sheetId);
+              setProfiles(fetchedProfs);
+              localStorage.setItem('op_app_cached_profiles', JSON.stringify(fetchedProfs));
+            }
+          } catch (reAuthErr) {
+            console.warn('Google re-authentication skipped or cancelled, using local user profiles:', reAuthErr);
+          }
+        }
       }
-    } catch (err: any) {
-      console.error('Login validation error:', err);
+    }
 
-      const isAuthError = err.message && (
-        err.message.includes('401') ||
-        err.message.toLowerCase().includes('authentication credentials') ||
-        err.message.toLowerCase().includes('invalid_grant') ||
-        err.message.toLowerCase().includes('unauthorized') ||
-        err.message.toLowerCase().includes('token')
+    // Get candidate profiles list from fetched, state, localStorage, or defaults
+    let cachedProfsList: UserProfile[] = [];
+    try {
+      const cachedStr = localStorage.getItem('op_app_cached_profiles');
+      if (cachedStr) cachedProfsList = JSON.parse(cachedStr);
+    } catch {}
+
+    const candidateProfiles = fetchedProfs || (profiles.length > 0 ? profiles : (cachedProfsList.length > 0 ? cachedProfsList : defaultUsers));
+
+    const matched = candidateProfiles.find(
+      (p) =>
+        p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
+        p.password === password
+    );
+
+    if (matched) {
+      const deviceCheck = await validateDeviceAccessAndBind(
+        matched,
+        currentToken && sheetId && !isTokenExpired
+          ? async (updated) => {
+              try {
+                await saveUserProfile(currentToken!, sheetId!, updated);
+              } catch (e) {
+                console.warn('Failed to save updated user profile deviceId to sheet:', e);
+              }
+            }
+          : undefined,
+        candidateProfiles
       );
 
-      if (isAuthError) {
-        console.warn('Google API returned 401 during login validation. Resetting Google auth...');
-        await handleGoogleAuthError();
-        const errMsg = 'Sesi Google OAuth telah berakhir atau tidak valid. Silakan hubungkan kembali Google Account Anda (ops.depotel@gmail.com).';
+      if (!deviceCheck.success) {
+        const errMsg = deviceCheck.errorMessage || 'Akses ditolak.';
         setLoginRejectError(errMsg);
         onFormError(errMsg);
+        setIsLoading(false);
+        setLoadingStep('');
         return;
       }
 
-      // Fallback to cache if offline / Sheet request fails
-      const matched = profiles.find(
-        (p) =>
-          p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
-          p.password === password
-      );
-      if (matched) {
-        const deviceCheck = await validateDeviceAccessAndBind(matched, undefined, profiles);
-        if (!deviceCheck.success) {
-          const errMsg = deviceCheck.errorMessage || 'Akses ditolak.';
-          setLoginRejectError(errMsg);
-          onFormError(errMsg);
-          return;
-        }
-        handleAppLoginSuccess(deviceCheck.updatedUser || matched);
-      } else {
-        const errMsg = err.message || 'Gagal memproses verifikasi login.';
-        setLoginRejectError(errMsg);
-        onFormError(errMsg);
+      const finalUser = deviceCheck.updatedUser || matched;
+      if (deviceCheck.updatedUser) {
+        const updatedProfs = candidateProfiles.map(p => p.email.toLowerCase() === finalUser.email.toLowerCase() ? finalUser : p);
+        setProfiles(updatedProfs);
+        localStorage.setItem('op_app_cached_profiles', JSON.stringify(updatedProfs));
       }
-    } finally {
-      setIsLoading(false);
-      setLoadingStep('');
+
+      if (currentToken && sheetId && !isTokenExpired) {
+        try {
+          await syncAllData(currentToken, sheetId);
+        } catch (syncErr) {
+          console.warn('Background sync on login encountered an error, continuing locally:', syncErr);
+        }
+      }
+
+      handleAppLoginSuccess(finalUser);
+    } else {
+      const errMsg = 'User ID atau Password salah. Silakan periksa kembali.';
+      setLoginRejectError(errMsg);
+      onFormError(errMsg);
     }
+
+    setIsLoading(false);
+    setLoadingStep('');
   };
 
   // Profile Save
@@ -1471,7 +1501,7 @@ export default function App() {
     }
     // Finance sees everything!
     if (activeRole === Role.FINANCE) {
-      if (r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) {
+      if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && statusFilter === 'REPORTING') {
         const reqItems = usageItems.filter(i => i.requestId === r.id);
         if (reqItems.length === 0 || !reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
           return false;
@@ -1562,7 +1592,9 @@ export default function App() {
           }
         }
       } else if (statusFilter === 'REJECTED') {
-        if (r.status !== RequestStatus.REJECTED) return false;
+        const isReqRejected = r.status === RequestStatus.REJECTED;
+        const hasAdminRejectedItems = usageItems.some(i => i.requestId === r.id && i.statusAdmin === ItemStatus.REJECTED);
+        if (!isReqRejected && !hasAdminRejectedItems) return false;
       }
     }
 
@@ -2012,6 +2044,7 @@ export default function App() {
                   userProfile={userProfile}
                   onOpenBbmModal={() => setIsBbmModalOpen(true)}
                   onOpenBbmListModal={() => setIsBbmListModalOpen(true)}
+                  histories={itemReviewHistories}
                 />
               </>
             ) : (
@@ -2205,6 +2238,7 @@ export default function App() {
                            statusFilter === 'REPORTING' && activeRole === Role.FINANCE ? 'Review Finansial' :
                            statusFilter === 'REPORTING' && activeRole === Role.DIREKTUR ? 'Proses Laporan Operasional' :
                            statusFilter === 'CLOSED' ? 'Arsip / UID Selesai (Closed)' :
+                           statusFilter === 'REJECTED' && activeRole === Role.FINANCE ? 'Pengajuan Rejected (Revisi Finance)' :
                            getStatusLabel(statusFilter as RequestStatus) || statusFilter}
                         </span>
                       </h3>

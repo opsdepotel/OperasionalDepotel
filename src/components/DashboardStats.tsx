@@ -4,9 +4,9 @@
  */
 
 import React from 'react';
-import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity } from '../types';
+import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle } from 'lucide-react';
 
 interface DashboardStatsProps {
   role: Role;
@@ -24,6 +24,7 @@ interface DashboardStatsProps {
   userProfile?: UserProfile | null;
   onOpenBbmModal?: () => void;
   onOpenBbmListModal?: () => void;
+  histories?: ItemReviewHistory[];
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -500,6 +501,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
     const closedCount = requests.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequestAdmin(r)).length;
 
+    const financeRejectedReqs = requests.filter(r => {
+      if (r.status === RequestStatus.CANCELLED) return false;
+      const isReqRejected = r.status === RequestStatus.REJECTED;
+      const hasAdminRejectedItems = usageItems.some(i => i.requestId === r.id && i.statusAdmin === ItemStatus.REJECTED);
+      return isReqRejected || hasAdminRejectedItems;
+    });
+    const financeRejectedCount = financeRejectedReqs.length;
+
     const totalTransferred = requests.filter(r => !isBbmRequestAdmin(r)).reduce((sum, r) => sum + r.adminActionAmount, 0);
     const totalClosed = usageItems
       .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItemAdmin(item))
@@ -631,6 +640,21 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <span className="text-3xl font-display font-bold text-slate-900">{closedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
               <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Arsip / Selesai</span>
             </div>
+          </div>
+
+          <div 
+            onClick={() => handleCardClick('REJECTED')}
+            className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-rose-300 hover:shadow-md ${
+              activeFilter === 'REJECTED' ? 'border-rose-500 bg-rose-50/20 ring-2 ring-rose-500/20' : 'bg-white border-slate-200'
+            }`}
+            id="finance-rejected-card"
+          >
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN REJECTED</p>
+            <div className="flex items-end justify-between mt-2">
+              <span className="text-3xl font-display font-bold text-rose-600">{financeRejectedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Revisi Finance</span>
+            </div>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Berisi UID yang pengajuannya di-reject oleh Finance</p>
           </div>
 
           {renderAdminBbmCard()}

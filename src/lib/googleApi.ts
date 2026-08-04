@@ -392,7 +392,7 @@ const setMockData = <T>(key: string, data: T): void => {
   localStorage.setItem(key, JSON.stringify(data));
 };
 
-const defaultUsers: UserProfile[] = [
+export const defaultUsers: UserProfile[] = [
   { userId: 'admin', password: 'admin123', nama: 'Administrator System', email: 'admin@company.com', role: Role.ADMINISTRATOR, managerEmail: '', divisi: 'HQ-ADMIN', aksesBBM: false },
   { userId: 'direktur', password: 'direktur123', nama: 'Direktur Utama', email: 'direktur@company.com', role: Role.DIREKTUR, managerEmail: '', divisi: 'HQ-EXECUTIVE', aksesBBM: false },
   { userId: 'finance', password: 'finance123', nama: 'Finance Depotel', email: 'ops.depotel@gmail.com', role: Role.FINANCE, managerEmail: '', divisi: 'HQ-CENTRAL', aksesBBM: true },

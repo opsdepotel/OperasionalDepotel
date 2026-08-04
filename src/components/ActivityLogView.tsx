@@ -110,6 +110,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [isFetchingGps, setIsFetchingGps] = useState(false);
+  const [gpsError, setGpsError] = useState<string | null>(null);
 
   // Canvas utility to apply watermark to captured photo
   const applyWatermarkToImage = (
@@ -356,8 +357,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
   // Get real GPS location
   const handleGetGps = () => {
+    setGpsError(null);
     if (!navigator.geolocation) {
-      console.warn('Perangkat atau browser Anda tidak mendukung pencarian lokasi GPS.');
+      setGpsError('Perangkat atau browser Anda tidak mendukung pencarian lokasi GPS.');
       return;
     }
 
@@ -367,10 +369,21 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         const lat = position.coords.latitude.toFixed(6);
         const lon = position.coords.longitude.toFixed(6);
         setCoordinatesActual(`${lat}, ${lon}`);
+        setGpsError(null);
         setIsFetchingGps(false);
       },
       (error) => {
         console.error('Error fetching GPS:', error);
+        let msg = 'Gagal mendapatkan koordinat GPS.';
+        if (error.code === error.PERMISSION_DENIED) {
+          msg = 'Akses lokasi (GPS) ditolak oleh pengguna/browser. Mohon aktifkan izin lokasi di browser/perangkat Anda.';
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          msg = 'Informasi posisi GPS tidak tersedia pada perangkat.';
+        } else if (error.code === error.TIMEOUT) {
+          msg = 'Waktu permintaan posisi GPS habis (timeout). Silakan coba lagi.';
+        }
+        setGpsError(msg);
+        setCoordinatesActual('');
         setIsFetchingGps(false);
       },
       { enableHighAccuracy: true, timeout: 10000 }
@@ -384,6 +397,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     const trimmedSiteId = selectedSiteId.trim();
     if (!trimmedSiteId) {
       setErrorMsg('SiteID wajib diisi.');
+      return;
+    }
+    if (!coordinatesActual || !coordinatesActual.trim()) {
+      setErrorMsg('Data koordinat GPS wajib ada untuk menyimpan kegiatan harian. Silakan aktifkan fitur lokasi (GPS) dan klik "Ambil Ulang GPS".');
       return;
     }
     if (!keterangan.trim()) {
@@ -544,44 +561,69 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                 </div>
               )}
 
-              {/* Coordinates Display (Hidden from view but kept in background for storage & watermarking) */}
-              <div className="hidden">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">KOORDINAT LOKASI</span>
-                
-                {/* Coordinates from Database */}
-                <div className="space-y-0.5">
-                  <span className="text-[9px] font-medium text-slate-500 block">Koordinat dari Database:</span>
-                  <span className="text-xs font-semibold font-mono text-slate-600 block">
-                    {coordinatesDb || (selectedSiteId ? 'Tidak tersedia di database' : '-')}
+              {/* Visible Coordinates GPS Input/Status & Warning Box */}
+              <div className="space-y-2 bg-slate-50 border border-slate-200/80 p-3.5 rounded-xl">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+                    <Compass className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>KOORDINAT GPS LOKASI (WAJIB)</span>
                   </span>
+                  <button
+                    type="button"
+                    onClick={handleGetGps}
+                    disabled={isFetchingGps}
+                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 px-2.5 py-1 bg-white hover:bg-indigo-50 border border-indigo-200 rounded-lg shadow-2xs transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isFetchingGps ? (
+                      <Loader2 className="w-3 h-3 animate-spin text-indigo-600" />
+                    ) : (
+                      <RefreshCw className="w-3 h-3 text-indigo-600" />
+                    )}
+                    <span>{isFetchingGps ? 'Mencari...' : 'Ambil Ulang GPS'}</span>
+                  </button>
                 </div>
 
-                {/* Actual Coordinates (Real GPS) */}
-                <div className="space-y-1 pt-1.5 border-t border-slate-200/50">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-medium text-indigo-600 block font-semibold">Koordinat Aktual Saat Ini:</span>
-                    <button
-                      type="button"
-                      onClick={handleGetGps}
-                      disabled={isFetchingGps}
-                      className="text-[9px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 disabled:opacity-50"
-                    >
-                      {isFetchingGps ? (
-                        <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                      ) : (
-                        <Compass className="w-2.5 h-2.5" />
-                      )}
-                      Ambil Ulang GPS
-                    </button>
+                {/* GPS Status or Warning */}
+                {isFetchingGps ? (
+                  <div className="flex items-center gap-2 p-2.5 bg-indigo-50/80 border border-indigo-100 rounded-lg text-xs text-indigo-700 font-medium">
+                    <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
+                    <span>Sedang mendeteksi posisi koordinat GPS...</span>
                   </div>
-                  {isFetchingGps ? (
-                    <span className="text-xs font-medium text-slate-400 italic block">Mendapatkan lokasi GPS...</span>
-                  ) : (
-                    <span className="text-xs font-semibold font-mono text-slate-700 block bg-white px-2 py-1 rounded border border-slate-100">
-                      {coordinatesActual || 'GPS tidak terdeteksi (Pastikan izin lokasi aktif)'}
-                    </span>
-                  )}
-                </div>
+                ) : coordinatesActual ? (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 p-2 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-800 font-bold font-mono">
+                      <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span className="truncate">{coordinatesActual}</span>
+                    </div>
+                    {gpsAddress && (
+                      <p className="text-[10px] text-slate-500 font-medium px-1 flex items-center gap-1 truncate">
+                        <span>{gpsAddress}</span>
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-amber-900 text-xs space-y-2">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="w-4.5 h-4.5 text-amber-600 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-amber-900">Peringatan: Koordinat GPS Tidak Tersedia!</p>
+                        <p className="text-[11px] text-amber-800 leading-relaxed">
+                          {gpsError || 'Koordinat GPS belum terdeteksi. Data koordinat GPS wajib ada untuk menyimpan Log Kegiatan Harian. Mohon pastikan fitur Lokasi/GPS dan izin browser sudah aktif.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="pt-1.5 border-t border-amber-200/80 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleGetGps}
+                        className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-[10px] rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-xs"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>Coba Dapatkan GPS Lagi</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Keterangan */}
