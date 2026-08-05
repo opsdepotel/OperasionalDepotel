@@ -484,10 +484,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
     ).length;
     const pendingAdminReportReview = requests.filter(r => {
-      if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER) return false;
+      if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
       const reqItems = usageItems.filter(i => i.requestId === r.id);
-      const adminApprovedAll = reqItems.length > 0 && reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
-      return !adminApprovedAll;
+      if (reqItems.length === 0) return false;
+      const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
+      const adminApprovedAll = reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
+      return managerApproved && !adminApprovedAll;
     }).length;
 
     // Tasks needing Admin action:

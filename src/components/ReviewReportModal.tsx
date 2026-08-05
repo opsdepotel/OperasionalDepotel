@@ -82,7 +82,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   const currentItems = items.filter(item => item.requestId === request.id);
 
   // Check user BBM access
-  const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('OP-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
+  const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
   const userForRequest = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
   const hasBbmAccess = !!userForRequest?.aksesBBM;
 
@@ -184,7 +184,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       return dec?.status === ItemStatus.REJECTED;
     });
 
-    const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('OP-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
+    const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
     let nextRequestStatus: RequestStatus;
 
     if (role === Role.MANAGER) {
