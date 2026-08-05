@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role } from '../types';
+import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, RequestStatus } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink } from 'lucide-react';
 
@@ -17,6 +17,7 @@ interface BbmListModalProps {
   profiles?: UserProfile[];
   activities?: UserActivity[];
   role?: Role;
+  userEmail?: string;
   onOpenBbmRefillModal?: () => void;
   onPreviewDocument?: (url: string) => void;
 }
@@ -92,6 +93,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   profiles = [],
   activities = [],
   role,
+  userEmail,
   onOpenBbmRefillModal,
   onPreviewDocument
 }) => {
@@ -116,6 +118,16 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   };
 
   const todayStr = getTodayDateStr();
+
+  const userEmailToMatch = (userEmail || '').toLowerCase();
+  const hasRefilledToday = userEmailToMatch ? requests.some(r => {
+    const isBbmReq = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+    if (!isBbmReq) return false;
+    if (r.status === RequestStatus.CANCELLED) return false;
+    const isSameUser = r.userEmail.toLowerCase() === userEmailToMatch;
+    const isSameDate = r.tanggalPemakaian === todayStr || (r.createdAt && r.createdAt.substring(0, 10) === todayStr);
+    return isSameUser && isSameDate;
+  }) : false;
 
   // Selected date filter (default: today's date)
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -195,11 +207,19 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
 
   // Filter all BBM Duren Sawit requests
   const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
-  const bbmRequests = requests.filter(isBbmRequest);
+  const allBbmRequests = requests.filter(isBbmRequest);
+
+  // For Role USER, filter by own email. For Finance / Manager / Admin, show ALL requests across all UIDs
+  const bbmRequests = (userEmailToMatch && role === Role.USER)
+    ? allBbmRequests.filter(r => r.userEmail.toLowerCase() === userEmailToMatch)
+    : allBbmRequests;
 
   // Filter by selected date
   const filteredByDate = selectedDate
-    ? bbmRequests.filter(r => r.tanggalPemakaian === selectedDate)
+    ? bbmRequests.filter(r => {
+        const reqDate = getNormalizedYmd(r.tanggalPemakaian) || getNormalizedYmd(r.createdAt);
+        return reqDate === selectedDate || r.tanggalPemakaian === selectedDate;
+      })
     : bbmRequests;
 
   // Filter by search query
@@ -235,6 +255,15 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
               <h2 className="font-display font-extrabold text-slate-800 text-sm sm:text-base">
                 Daftar Pengisian BBM Duren Sawit
               </h2>
+              {role === Role.USER && userEmailToMatch ? (
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Menampilkan riwayat untuk: <span className="font-bold text-slate-700">{userEmail}</span>
+                </p>
+              ) : (
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Menampilkan pengisian BBM <span className="font-bold text-amber-700">seluruh UID / Petugas</span>
+                </p>
+              )}
             </div>
           </div>
 
@@ -250,14 +279,25 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
         <div className="p-4 sm:p-5 border-b border-slate-100 bg-white space-y-3 shrink-0">
           
           {/* Top Control Row: Date Filter & Search */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className={`grid grid-cols-1 ${role !== Role.USER ? 'sm:grid-cols-2' : ''} gap-3`}>
             
             {/* Date Input */}
             <div>
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-amber-500" />
-                <span>Pilih Tanggal Pengisian</span>
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                  <Calendar className="w-3 h-3 text-amber-500" />
+                  <span>Pilih Tanggal Pengisian</span>
+                </label>
+                {selectedDate !== todayStr && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDate(todayStr)}
+                    className="text-[10px] font-bold text-amber-600 hover:text-amber-800 underline cursor-pointer"
+                  >
+                    Hari Ini ({todayStr})
+                  </button>
+                )}
+              </div>
               <div>
                 <input
                   type="date"
@@ -268,38 +308,51 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
               </div>
             </div>
 
-            {/* Search Input */}
-            <div>
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
-                <Search className="w-3 h-3 text-indigo-500" />
-                <span>Cari Pengisi / Plat Nomor / UID</span>
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Ketik plat nomor, pengisi, site..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
-                />
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+            {/* Search Input (Hidden for Role.USER) */}
+            {role !== Role.USER && (
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                  <Search className="w-3 h-3 text-indigo-500" />
+                  <span>Cari Pengisi / Plat Nomor / UID</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Ketik plat nomor, pengisi, site..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"
+                  />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Action Bar */}
           {onOpenBbmRefillModal && (
             <div className="flex justify-end pt-1">
-              <button
-                onClick={() => {
-                  onClose();
-                  onOpenBbmRefillModal();
-                }}
-                className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/80 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-sm"
-              >
-                <Fuel className="w-3.5 h-3.5 text-amber-600" />
-                <span>+ Input BBM Baru</span>
-              </button>
+              {hasRefilledToday ? (
+                <button
+                  disabled
+                  className="px-3.5 py-2 bg-slate-100 text-slate-600 border border-slate-200/90 rounded-xl text-xs font-bold opacity-90 cursor-not-allowed flex items-center gap-1.5 shadow-sm pointer-events-none select-none"
+                  id="bbm-refill-modal-disabled-btn"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Telah melakukan pengisian BBM di POM Duren Sawit</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    onOpenBbmRefillModal();
+                  }}
+                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white border border-amber-600 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-200 active:scale-[0.98]"
+                  id="bbm-refill-modal-active-btn"
+                >
+                  <Fuel className="w-4 h-4 text-white shrink-0" />
+                  <span>+ Tambahkan Aktifitas Pengisian BBM Duren Sawit</span>
+                </button>
+              )}
             </div>
           )}
 

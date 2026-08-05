@@ -63,10 +63,33 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   const renderBbmCard = () => {
     if (!userProfile?.aksesBBM) return null;
+
+    const getTodayStr = () => {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const todayStr = getTodayStr();
+
+    const userEmailToMatch = (userProfile?.email || email || '').toLowerCase();
+
+    const hasRefilledToday = requests.some(r => {
+      const isBbmReq = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+      if (!isBbmReq) return false;
+      if (r.status === RequestStatus.CANCELLED) return false;
+      const isSameUser = r.userEmail.toLowerCase() === userEmailToMatch;
+      const isSameDate = r.tanggalPemakaian === todayStr || (r.createdAt && r.createdAt.substring(0, 10) === todayStr);
+      return isSameUser && isSameDate;
+    });
+
     return (
-      <div
-        onClick={onOpenBbmModal}
-        className="bg-gradient-to-r from-amber-500/10 via-amber-50/80 to-orange-50/80 border border-amber-200/80 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3 transition-all cursor-pointer hover:border-amber-400 hover:shadow-md active:scale-[0.99] group"
+      <button
+        type="button"
+        onClick={onOpenBbmListModal || onOpenBbmModal}
+        className="w-full text-left bg-gradient-to-r from-amber-500/10 via-amber-50/80 to-orange-50/80 border border-amber-200/80 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3 transition-all cursor-pointer hover:border-amber-400 hover:shadow-md active:scale-[0.99] group"
+        id="bbm-refill-dashboard-card"
       >
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-200/60 group-hover:scale-105 transition-transform">
@@ -77,11 +100,23 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               Pengisian BBM Duren Sawit
             </h3>
             <p className="text-[10px] text-slate-500 font-medium mt-0.5">
-              Akun ini memiliki hak akses resmi pengisian BBM operasional di SPBU Duren Sawit.
+              {hasRefilledToday
+                ? `Telah melakukan pengisian BBM di POM Duren Sawit hari ini (${todayStr}). Klik untuk melihat daftar.`
+                : 'Klik untuk melihat daftar & catat pengisian BBM Duren Sawit.'}
             </p>
           </div>
         </div>
-      </div>
+        {hasRefilledToday ? (
+          <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-lg shrink-0 border border-emerald-200 flex items-center gap-1">
+            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+            Terisi
+          </span>
+        ) : (
+          <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-lg shrink-0 border border-amber-200">
+            Pengisian BBM
+          </span>
+        )}
+      </button>
     );
   };
 
@@ -488,8 +523,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       const reqItems = usageItems.filter(i => i.requestId === r.id);
       if (reqItems.length === 0) return false;
       const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
-      const adminApprovedAll = reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
-      return managerApproved && !adminApprovedAll;
+      return managerApproved;
     }).length;
 
     // Tasks needing Admin action:

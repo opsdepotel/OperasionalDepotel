@@ -507,35 +507,47 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         return null;
       })()}
 
-      {/* Submit Decision Button */}
+      {/* Submit Decision Button / Closing UID option */}
       {request.status !== RequestStatus.CLOSED && (
-        <button
-          onClick={handleSubmit}
-          disabled={isSubmitting}
-          className={`w-full py-2.5 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${
-            role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
-              ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
-              : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'
-          } disabled:bg-slate-300`}
-        >
-          {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) ? (
-            <>
-              <ShieldCheck className="w-4 h-4 text-emerald-200" />
-              <span>
-                {isSubmitting
-                  ? 'Memproses Review...'
-                  : isTalangan
-                  ? 'Simpan Review & Masuk Menunggu Transfer'
-                  : 'Simpan Review & Buka Form Closing'}
-              </span>
-            </>
-          ) : (
-            <>
-              <Send className="w-4 h-4" />
-              <span>{isSubmitting ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
-            </>
+        <div className="space-y-2">
+          {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2.5 text-xs text-emerald-900 shadow-xs">
+              <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
+              <div>
+                <p className="font-bold text-emerald-950">Seluruh Item Laporan Telah Disetujui</p>
+                <p className="text-[10px] text-emerald-700 font-medium leading-tight">Laporan item ini lengkap dan terverifikasi. Klik tombol di bawah ini untuk melakukan Closing UID.</p>
+              </div>
+            </div>
           )}
-        </button>
+
+          <button
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            className={`w-full py-2.5 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${
+              role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
+                ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
+                : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'
+            } disabled:bg-slate-300`}
+          >
+            {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) ? (
+              <>
+                <ShieldCheck className="w-4 h-4 text-emerald-200" />
+                <span>
+                  {isSubmitting
+                    ? 'Memproses Closing UID...'
+                    : isTalangan
+                    ? 'Simpan Review & Masuk Menunggu Transfer'
+                    : 'Closing UID'}
+                </span>
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4" />
+                <span>{isSubmitting ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
+              </>
+            )}
+          </button>
+        </div>
       )}
 
       {/* Activities Popup Modal */}

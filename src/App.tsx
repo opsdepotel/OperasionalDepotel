@@ -872,7 +872,8 @@ export default function App() {
     if (savedItem !== null) {
       setRequests(prev => [req, ...prev]);
       setUsageItems(prev => [...prev, savedItem]);
-      setIsBbmModalOpen(false);
+    } else {
+      throw new Error('Gagal menyimpan transaksi BBM Duren Sawit. Silakan periksa koneksi atau coba lagi.');
     }
   };
 
@@ -1556,8 +1557,7 @@ export default function App() {
           const reqItems = usageItems.filter(i => i.requestId === r.id);
           if (reqItems.length === 0) return false;
           const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
-          const adminApprovedAll = reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
-          if (!managerApproved || adminApprovedAll) return false;
+          if (!managerApproved) return false;
         } else if (activeRole === Role.DIREKTUR) {
           if (![RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
         } else {
@@ -1605,6 +1605,18 @@ export default function App() {
     }
 
     return true;
+  });
+
+  const sortedRequests = [...filteredRequests].sort((a, b) => {
+    if (activeRole === Role.FINANCE && (statusFilter === 'APPROVED' || statusFilter === RequestStatus.APPROVED)) {
+      const timeA = getRequestCreatedDate(a)?.getTime() || 0;
+      const timeB = getRequestCreatedDate(b)?.getTime() || 0;
+      if (timeA !== timeB) {
+        return timeA - timeB; // Oldest at the top
+      }
+      return a.id.localeCompare(b.id, undefined, { numeric: true });
+    }
+    return 0;
   });
 
   const getStatusBadgeStyles = (status: RequestStatus) => {
@@ -2405,7 +2417,7 @@ export default function App() {
                     </div>
 
                     {/* Request Cards Grid */}
-                    {filteredRequests.length === 0 ? (
+                    {sortedRequests.length === 0 ? (
                       <div className="bg-slate-50 border border-slate-150 rounded-2xl py-12 px-4 text-center text-slate-400 text-xs font-medium">
                         <ClipboardList className="w-10 h-10 text-slate-300 mx-auto mb-2.5" />
                         <p>Tidak ditemukan pengajuan dana.</p>
@@ -2413,7 +2425,7 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {filteredRequests.map((req) => {
+                        {sortedRequests.map((req) => {
                           const reqItems = usageItems.filter(i => i.requestId === req.id);
                           const rejectedItems = reqItems.filter(i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED);
                           const hasRejectedItems = rejectedItems.length > 0;
@@ -2825,23 +2837,12 @@ export default function App() {
                                       )}
 
                                       {(req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REPORTING) && (
-                                        <div className="flex gap-1.5">
-                                          <button
-                                            onClick={() => setReviewReportReq(req)}
-                                            className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all"
-                                          >
-                                            Tinjau Item Laporan
-                                          </button>
-
-                                          {isFullyApprovedByAdmin && (
-                                            <button
-                                              onClick={() => setClosingConfirmReq(req)}
-                                              className="px-3 py-1.5 bg-slate-900 hover:bg-slate-850 text-white font-bold rounded-xl transition-all shadow-sm"
-                                            >
-                                              Closing
-                                            </button>
-                                          )}
-                                        </div>
+                                        <button
+                                          onClick={() => setReviewReportReq(req)}
+                                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all"
+                                        >
+                                          Tinjau Item Laporan
+                                        </button>
                                       )}
 
                                       {req.status !== RequestStatus.APPROVED && req.status !== RequestStatus.PARTIALLY_APPROVED && req.status !== RequestStatus.REVIEW_ADMIN && req.status !== RequestStatus.REPORTING && (
@@ -3002,6 +3003,7 @@ export default function App() {
         profiles={profiles}
         activities={activities}
         role={activeRole}
+        userEmail={userProfile?.email}
         onOpenBbmRefillModal={userProfile?.aksesBBM ? () => setIsBbmModalOpen(true) : undefined}
         onPreviewDocument={(rawUrl) => {
           const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);

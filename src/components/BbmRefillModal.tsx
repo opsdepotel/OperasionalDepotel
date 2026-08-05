@@ -230,16 +230,19 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
       };
 
       await onSubmit(req, reportItem);
+      alert('Penyimpanan transaksi BBM Duren Sawit berhasil!');
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Gagal menyimpan transaksi BBM Duren Sawit.');
+      const errorMsg = err.message || 'Gagal menyimpan transaksi BBM Duren Sawit.';
+      setError(errorMsg);
+      alert(`Penyimpanan transaksi BBM Duren Sawit gagal: ${errorMsg}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4 overflow-y-auto">
+    <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[60] flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 my-8 animate-in fade-in zoom-in-95 duration-150">
         
         {/* Header */}
@@ -313,23 +316,15 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
                       <span>Site Terverifikasi (Multiple)</span>
                     </div>
                     <div className="space-y-1 ml-2.5">
-                      {siteResults.map((res, idx) => (
+                      {siteResults.filter(r => r.found).map((res, idx) => (
                         <div key={idx} className="text-[10px] flex flex-wrap gap-x-1 items-baseline">
                           <span className="font-mono font-bold text-slate-600">{res.id}:</span>
-                          {res.found ? (
-                            <span className="text-emerald-700 font-medium">{res.siteName}</span>
-                          ) : (
-                            <span className="text-rose-500 italic text-[9px] font-semibold">Tidak ditemukan/tidak terdaftar</span>
-                          )}
+                          <span className="text-emerald-700 font-medium">{res.siteName}</span>
                         </div>
                       ))}
                     </div>
                   </div>
-                ) : (
-                  <p className="text-[10px] text-rose-500 font-semibold mt-1.5 ml-1 animate-pulse">
-                    * Site ID tidak ditemukan/tidak terdaftar
-                  </p>
-                )
+                ) : null
               ) : (
                 siteResults[0]?.found ? (
                   <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-100 rounded-xl space-y-0.5 animate-slide-up">
@@ -356,11 +351,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
                       </p>
                     )}
                   </div>
-                ) : (
-                  <p className="text-[10px] text-rose-500 font-semibold mt-1.5 ml-1 animate-pulse">
-                    * Site ID tidak ditemukan/tidak terdaftar
-                  </p>
-                )
+                ) : null
               )
             )}
           </div>

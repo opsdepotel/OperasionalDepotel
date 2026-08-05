@@ -243,23 +243,15 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                     <span>Site Terverifikasi (Multiple)</span>
                   </div>
                   <div className="space-y-1 ml-2.5">
-                    {siteResults.map((res, idx) => (
+                    {siteResults.filter(r => r.found).map((res, idx) => (
                       <div key={idx} className="text-[10px] flex flex-wrap gap-x-1 items-baseline">
                         <span className="font-mono font-bold text-slate-600">{res.id}:</span>
-                        {res.found ? (
-                          <span className="text-emerald-700 font-medium">{res.siteName}</span>
-                        ) : (
-                          <span className="text-rose-500 italic text-[9px] font-semibold">Tidak ditemukan/tidak terdaftar</span>
-                        )}
+                        <span className="text-emerald-700 font-medium">{res.siteName}</span>
                       </div>
                     ))}
                   </div>
                 </div>
-              ) : (
-                <p className="text-[10px] text-rose-500 font-semibold mt-1.5 ml-1 animate-pulse">
-                  * Site ID tidak ditemukan/tidak terdaftar
-                </p>
-              )
+              ) : null
             ) : (
               siteResults[0]?.found ? (
                 <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-100 rounded-xl space-y-0.5 animate-slide-up">
@@ -286,13 +278,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                     </p>
                   )}
                 </div>
-              ) : (
-                siteId.trim() && (
-                  <p className="text-[10px] text-rose-500 font-semibold mt-1.5 ml-1 animate-pulse">
-                    * Site ID tidak ditemukan/tidak terdaftar
-                  </p>
-                )
-              )
+              ) : null
             )
           )}
         </div>
