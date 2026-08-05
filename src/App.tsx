@@ -762,7 +762,7 @@ export default function App() {
     if (success !== null) {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setEditingRequest(null);
-      const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
+      const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.id.startsWith('OP-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
       if (isReqTalangan) {
         setSelectedRequest(newRequest);
         setActiveView('report-usage');
@@ -963,7 +963,7 @@ export default function App() {
   const handleAdminTransfer = async (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string) => {
     if (!token || !spreadsheetId || !transferReq) return;
 
-    const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.id.startsWith('BBMDS') || transferReq.id.startsWith('BBM_DurenSawit') || transferReq.tipePengajuan === 'DANA_TALANGAN' || transferReq.keterangan.startsWith('[DANA TALANGAN]');
+    const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.id.startsWith('OP-') || transferReq.id.startsWith('BBMDS') || transferReq.id.startsWith('BBM_DurenSawit') || transferReq.tipePengajuan === 'DANA_TALANGAN' || transferReq.keterangan.startsWith('[DANA TALANGAN]');
     const isPendingTalanganTransfer = transferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
 
     const updated: BudgetRequest = {
@@ -1329,7 +1329,7 @@ export default function App() {
 
       // Check if Finance approved all items for standard request => open dedicated Form Closing modal
       const allApprovedByFinance = itemDecisions.length > 0 && itemDecisions.every(d => d.status === ItemStatus.APPROVED);
-      const isTalangan = reqToUse.id.startsWith('OPT-') || reqToUse.id.startsWith('BBMDS') || reqToUse.id.startsWith('BBM_DurenSawit') || reqToUse.tipePengajuan === 'DANA_TALANGAN' || reqToUse.keterangan.startsWith('[DANA TALANGAN]');
+      const isTalangan = reqToUse.id.startsWith('OPT-') || reqToUse.id.startsWith('OP-') || reqToUse.id.startsWith('BBMDS') || reqToUse.id.startsWith('BBM_DurenSawit') || reqToUse.tipePengajuan === 'DANA_TALANGAN' || reqToUse.keterangan.startsWith('[DANA TALANGAN]');
 
       if (activeRole === Role.FINANCE && allApprovedByFinance && !isTalangan && nextRequestStatus !== RequestStatus.CLOSED) {
         setClosingConfirmReq(reqToUse);
@@ -1544,7 +1544,7 @@ export default function App() {
           if (reqItems.length === 0) return false;
           if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING)) return false;
         } else if (activeRole === Role.FINANCE) {
-          if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
+          if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
           const adminApprovedAll = reqItems.length > 0 && reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
           if (adminApprovedAll) return false;
@@ -2408,7 +2408,7 @@ export default function App() {
                           const rejectedItems = reqItems.filter(i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED);
                           const hasRejectedItems = rejectedItems.length > 0;
                           const isFullyApprovedByAdmin = reqItems.length > 0 && reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
-                          const isReqTalangan = req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]');
+                          const isReqTalangan = req.id.startsWith('OPT-') || req.id.startsWith('OP-') || req.keterangan.startsWith('[DANA TALANGAN]');
 
                           const ditransferAmount = [
                             RequestStatus.PENDING_APPROVAL,
@@ -2679,7 +2679,7 @@ export default function App() {
                                   {/* USER ACTIONS */}
                                   {activeRole === Role.USER && (
                                     <>
-                                      {([RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status) || (req.status === RequestStatus.PENDING_APPROVAL && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
+                                      {([RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status) || (req.status === RequestStatus.PENDING_APPROVAL && (req.id.startsWith('OPT-') || req.id.startsWith('OP-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
                                         <button
                                           onClick={() => {
                                             setSelectedRequest(req);
@@ -2759,7 +2759,7 @@ export default function App() {
                                     <>
                                       {req.status === RequestStatus.PENDING_APPROVAL && (
                                         <div className="flex gap-1.5 flex-wrap">
-                                          {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? (
+                                          {(req.id.startsWith('OPT-') || req.id.startsWith('OP-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? (
                                             <button
                                               onClick={() => setReviewReportReq(req)}
                                               className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
@@ -2777,7 +2777,7 @@ export default function App() {
                                         </div>
                                       )}
 
-                                      {(req.status === RequestStatus.REVIEW_MANAGER || (req.status === RequestStatus.REPORTING && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
+                                      {(req.status === RequestStatus.REVIEW_MANAGER || (req.status === RequestStatus.REPORTING && (req.id.startsWith('OPT-') || req.id.startsWith('OP-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
                                         <button
                                           onClick={() => setReviewReportReq(req)}
                                           className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
@@ -2786,7 +2786,7 @@ export default function App() {
                                         </button>
                                       )}
 
-                                      {req.status !== RequestStatus.PENDING_APPROVAL && req.status !== RequestStatus.REVIEW_MANAGER && !(req.status === RequestStatus.REPORTING && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]'))) && (
+                                      {req.status !== RequestStatus.PENDING_APPROVAL && req.status !== RequestStatus.REVIEW_MANAGER && !(req.status === RequestStatus.REPORTING && (req.id.startsWith('OPT-') || req.id.startsWith('OP-') || req.keterangan.startsWith('[DANA TALANGAN]'))) && (
                                         <button
                                           onClick={() => {
                                             setSelectedRequest(req);
@@ -2814,7 +2814,7 @@ export default function App() {
                                         </button>
                                       )}
 
-                                      {(req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REPORTING) && (
+                                      {(req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REPORTING || req.status === RequestStatus.REVIEW_MANAGER) && (
                                         <div className="flex gap-1.5">
                                           <button
                                             onClick={() => setReviewReportReq(req)}

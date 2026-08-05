@@ -200,7 +200,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       return dec?.status === ItemStatus.REJECTED;
     });
 
-    const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
+    const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('OP-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
     let nextRequestStatus: RequestStatus;
 
     if (role === Role.MANAGER) {
@@ -489,7 +489,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED
   );
 
-  const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
+  const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('OP-') || request.keterangan.startsWith('[DANA TALANGAN]');
 
   return (
     <div className="space-y-4 max-w-md mx-auto animate-slide-up pb-8">
