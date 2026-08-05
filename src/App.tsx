@@ -762,7 +762,13 @@ export default function App() {
     if (success !== null) {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setEditingRequest(null);
-      setActiveView('dashboard');
+      const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
+      if (isReqTalangan) {
+        setSelectedRequest(newRequest);
+        setActiveView('report-usage');
+      } else {
+        setActiveView('dashboard');
+      }
       await handleManualRefresh();
     }
   };
@@ -1500,14 +1506,6 @@ export default function App() {
       if (r.managerEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
     }
     // Finance sees everything!
-    if (activeRole === Role.FINANCE) {
-      if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && statusFilter === 'REPORTING') {
-        const reqItems = usageItems.filter(i => i.requestId === r.id);
-        if (reqItems.length === 0 || !reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
-          return false;
-        }
-      }
-    }
 
     // Text search query
     if (searchQuery) {
@@ -1548,10 +1546,8 @@ export default function App() {
         } else if (activeRole === Role.FINANCE) {
           if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
-          if (reqItems.length === 0) return false;
-          const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
-          const adminApprovedAll = reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
-          if (!managerApproved || adminApprovedAll) return false;
+          const adminApprovedAll = reqItems.length > 0 && reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
+          if (adminApprovedAll) return false;
         } else if (activeRole === Role.DIREKTUR) {
           if (![RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
         } else {
@@ -2683,7 +2679,7 @@ export default function App() {
                                   {/* USER ACTIONS */}
                                   {activeRole === Role.USER && (
                                     <>
-                                      {[RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status) && (
+                                      {([RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status) || (req.status === RequestStatus.PENDING_APPROVAL && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
                                         <button
                                           onClick={() => {
                                             setSelectedRequest(req);
@@ -2762,24 +2758,35 @@ export default function App() {
                                   {activeRole === Role.MANAGER && (
                                     <>
                                       {req.status === RequestStatus.PENDING_APPROVAL && (
-                                        <button
-                                          onClick={() => setReviewBudgetReq(req)}
-                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
-                                        >
-                                          Tinjau Anggaran
-                                        </button>
+                                        <div className="flex gap-1.5 flex-wrap">
+                                          {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? (
+                                            <button
+                                              onClick={() => setReviewReportReq(req)}
+                                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
+                                            >
+                                              Tinjau Item Talangan
+                                            </button>
+                                          ) : (
+                                            <button
+                                              onClick={() => setReviewBudgetReq(req)}
+                                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
+                                            >
+                                              Tinjau Anggaran
+                                            </button>
+                                          )}
+                                        </div>
                                       )}
 
-                                      {req.status === RequestStatus.REVIEW_MANAGER && (
+                                      {(req.status === RequestStatus.REVIEW_MANAGER || (req.status === RequestStatus.REPORTING && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
                                         <button
                                           onClick={() => setReviewReportReq(req)}
-                                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all"
+                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
                                         >
-                                          Review Item Laporan
+                                          Tinjau Item Talangan
                                         </button>
                                       )}
 
-                                      {req.status !== RequestStatus.PENDING_APPROVAL && req.status !== RequestStatus.REVIEW_MANAGER && (
+                                      {req.status !== RequestStatus.PENDING_APPROVAL && req.status !== RequestStatus.REVIEW_MANAGER && !(req.status === RequestStatus.REPORTING && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]'))) && (
                                         <button
                                           onClick={() => {
                                             setSelectedRequest(req);

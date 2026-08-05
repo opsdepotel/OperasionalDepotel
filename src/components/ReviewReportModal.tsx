@@ -369,7 +369,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                 ) : (
                   <>
                     <span className="block text-[10px] font-bold text-slate-400 uppercase">Keputusan Anda</span>
-                    {role === Role.FINANCE && item.statusAdmin === ItemStatus.APPROVED ? (
+                    {(role === Role.FINANCE && item.statusAdmin === ItemStatus.APPROVED) || (role === Role.MANAGER && item.statusManager === ItemStatus.APPROVED) ? (
                       <div className="text-xs font-bold text-emerald-600 bg-emerald-50/50 border border-emerald-100 rounded-lg py-1.5 px-3 flex items-center gap-1.5 w-fit">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                         <span>Disetujui</span>

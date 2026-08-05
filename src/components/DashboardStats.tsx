@@ -486,10 +486,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const pendingAdminReportReview = requests.filter(r => {
       if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
       const reqItems = usageItems.filter(i => i.requestId === r.id);
-      if (reqItems.length === 0) return false;
-      const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
-      const adminApprovedAll = reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
-      return managerApproved && !adminApprovedAll;
+      const adminApprovedAll = reqItems.length > 0 && reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
+      return !adminApprovedAll;
     }).length;
 
     // Tasks needing Admin action:
