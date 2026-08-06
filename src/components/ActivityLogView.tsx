@@ -70,7 +70,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   onSaveActivity,
   onBack
 }) => {
-  const currentRole = userProfile?.role || Role.USER;
+  const currentRole = role || userProfile?.role || Role.USER;
   const isMobileUser = userProfile?.mobile === true ||
     String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
     String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
@@ -549,11 +549,17 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     new Set(profiles.map(p => p.divisi?.trim()).filter((d): d is string => !!d))
   ).sort();
 
-  // Direktur User Options based on selected divisiFilter
-  const direkturUserOptions = profiles.filter(p => {
-    if (divisiFilter === 'ALL') return true;
-    return (p.divisi?.trim() || '').toLowerCase() === divisiFilter.trim().toLowerCase();
-  });
+  // User Options based on selected divisiFilter
+  const allUserOptions = profiles
+    .filter(p => {
+      if (divisiFilter === 'ALL') return true;
+      return (p.divisi?.trim() || '').toLowerCase() === divisiFilter.trim().toLowerCase();
+    })
+    .sort((a, b) => {
+      const nameA = (a.nama || a.userId || a.email).toLowerCase();
+      const nameB = (b.nama || b.userId || b.email).toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
 
   const parseActivityTime = (act: UserActivity): number => {
     if (act.createdAt) {
@@ -603,15 +609,15 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         // User only views self
         if (actEmail !== userEmail.toLowerCase()) return false;
       }
-      // DIREKTUR sees all users' activities
+      // DIREKTUR, FINANCE, ADMINISTRATOR see all users' activities
 
-      // 2. Filter Divisi (For DIREKTUR)
-      if (currentRole === Role.DIREKTUR && divisiFilter !== 'ALL') {
+      // 2. Filter Divisi (For DIREKTUR, FINANCE, ADMINISTRATOR)
+      if ((currentRole === Role.DIREKTUR || currentRole === Role.FINANCE || currentRole === Role.ADMINISTRATOR) && divisiFilter !== 'ALL') {
         const userDivisi = (actProf?.divisi?.trim() || '').toLowerCase();
         if (userDivisi !== divisiFilter.trim().toLowerCase()) return false;
       }
 
-      // 3. Filter Nama User (For MANAGER & DIREKTUR)
+      // 3. Filter Nama User
       if (selectedUserFilter !== 'ALL') {
         if (actEmail !== selectedUserFilter.toLowerCase()) return false;
       }
@@ -894,8 +900,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 gap-3">
-            {/* Divisi Filter - Only for DIREKTUR */}
-            {currentRole === Role.DIREKTUR && (
+            {/* Divisi Filter - For DIREKTUR, FINANCE, ADMINISTRATOR */}
+            {(currentRole === Role.DIREKTUR || currentRole === Role.FINANCE || currentRole === Role.ADMINISTRATOR) && (
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Filter Divisi</label>
                 <select
@@ -915,8 +921,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               </div>
             )}
 
-            {/* User Filter - For MANAGER & DIREKTUR */}
-            {(currentRole === Role.MANAGER || currentRole === Role.DIREKTUR) && (
+            {/* User Filter - For MANAGER, DIREKTUR, FINANCE, ADMINISTRATOR */}
+            {(currentRole === Role.MANAGER || currentRole === Role.DIREKTUR || currentRole === Role.FINANCE || currentRole === Role.ADMINISTRATOR) && (
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Filter Nama User</label>
                 <select
@@ -936,8 +942,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                     </>
                   ) : (
                     <>
-                      <option value="ALL">Semua User ({direkturUserOptions.length})</option>
-                      {direkturUserOptions.map((p, idx) => (
+                      <option value="ALL">Semua User ({allUserOptions.length})</option>
+                      {allUserOptions.map((p, idx) => (
                         <option key={`${p.email}_${p.userId || idx}`} value={p.email}>
                           {p.nama || p.userId || p.email} {p.divisi ? `- [${p.divisi}]` : ''} ({p.email})
                         </option>
