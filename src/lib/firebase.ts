@@ -122,7 +122,9 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
 
     cachedAccessToken = credential.accessToken;
+    const nowTs = Date.now().toString();
     localStorage.setItem('g_access_token', cachedAccessToken);
+    localStorage.setItem('g_token_timestamp', nowTs);
     
     // Serialize some of the user profile so we can restore it offline / on bypass
     const minimalUser = {
@@ -146,13 +148,46 @@ export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken || localStorage.getItem('g_access_token');
 };
 
+/**
+ * Checks whether the stored Google OAuth token is expired (older than 55 minutes, as Google tokens expire in 60 minutes)
+ */
+export const isGoogleTokenExpired = (): boolean => {
+  const token = localStorage.getItem('g_access_token');
+  if (!token) return true;
+  const tsStr = localStorage.getItem('g_token_timestamp');
+  if (!tsStr) return false; // If no timestamp was recorded, assume valid until an API call fails
+  const ts = parseInt(tsStr, 10);
+  if (isNaN(ts)) return false;
+  // Google OAuth tokens expire in 3600s (60 mins). Flag as expired if older than 55 mins (3300000ms)
+  return Date.now() - ts > 3300000;
+};
+
+/**
+ * Gets the remaining valid time of the current Google OAuth token in minutes (0 to 60)
+ */
+export const getTokenRemainingMinutes = (): number => {
+  const token = localStorage.getItem('g_access_token');
+  if (!token) return 0;
+  const tsStr = localStorage.getItem('g_token_timestamp');
+  if (!tsStr) return 60;
+  const ts = parseInt(tsStr, 10);
+  if (isNaN(ts)) return 60;
+  const elapsedMs = Date.now() - ts;
+  const totalMs = 3600000; // 60 minutes
+  const remainingMs = Math.max(0, totalMs - elapsedMs);
+  return Math.floor(remainingMs / 60000);
+};
+
 export const logout = async () => {
   try {
-    await auth.signOut();
+    if (auth) {
+      await auth.signOut();
+    }
   } catch (e) {
     // Ignore signOut errors if we were not fully logged in to Firebase
   }
   cachedAccessToken = null;
   localStorage.removeItem('g_access_token');
+  localStorage.removeItem('g_token_timestamp');
   localStorage.removeItem('g_google_user');
 };

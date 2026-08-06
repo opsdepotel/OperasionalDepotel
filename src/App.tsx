@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react';
 import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
-import { initAuth, googleSignIn, logout } from './lib/firebase';
+import { initAuth, googleSignIn, logout, isGoogleTokenExpired } from './lib/firebase';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
   findOrCreateDatabase,
@@ -210,6 +210,23 @@ export default function App() {
       }
     );
   }, []);
+
+  // Periodically monitor Google OAuth token expiration status
+  useEffect(() => {
+    const checkTokenStatus = () => {
+      if (token) {
+        const expired = isGoogleTokenExpired();
+        setIsTokenExpired(expired);
+        if (expired && (!error || !error.includes('Sesi Google'))) {
+          setError('Sesi Google (ops.depotel@gmail.com) telah kadaluarsa (Masa aktif token 1 Jam). Data lokal & login aplikasi Anda tetap aman. Klik "Perbarui Sesi Google" untuk melanjutkan.');
+        }
+      }
+    };
+
+    checkTokenStatus();
+    const interval = setInterval(checkTokenStatus, 30000);
+    return () => clearInterval(interval);
+  }, [token, error]);
 
   // When auth completes, load spreadsheet & data
   useEffect(() => {
@@ -1840,20 +1857,21 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
-      {userProfile && (
-        <Header
-          userProfile={userProfile}
-          role={activeRole}
-          onRoleChange={setActiveRole}
-          onLogout={handleLogout}
-          spreadsheetId={spreadsheetId}
-          onRefresh={handleManualRefresh}
-          isRefreshing={isLoading}
-          onOpenSettings={() => setActiveView('profile-settings')}
-          activeView={activeView}
-          onOpenDiomsLogo={() => setIsDiomsLogoModalOpen(true)}
-        />
-      )}
+      <Header
+        userProfile={userProfile}
+        role={activeRole}
+        onRoleChange={setActiveRole}
+        onLogout={handleLogout}
+        spreadsheetId={spreadsheetId}
+        onRefresh={handleManualRefresh}
+        isRefreshing={isLoading}
+        onOpenSettings={() => setActiveView('profile-settings')}
+        activeView={activeView}
+        onOpenDiomsLogo={() => setIsDiomsLogoModalOpen(true)}
+        isTokenExpired={isTokenExpired}
+        token={token}
+        onRenewToken={handleRenewGoogleToken}
+      />
 
       {/* Main Container */}
       <main className="flex-1 p-4 max-w-md mx-auto w-full space-y-4">
@@ -1985,17 +2003,43 @@ export default function App() {
                 {/* Quick Profile/Role indicator banner */}
                 <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex items-center justify-between gap-3 overflow-hidden">
                   <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold font-display text-sm border border-slate-200 overflow-hidden shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!token || isTokenExpired) {
+                          handleRenewGoogleToken();
+                        } else {
+                          setActiveView('profile-settings');
+                        }
+                      }}
+                      title={
+                        !token || isTokenExpired
+                          ? 'Sesi Google Expired! Klik di sini untuk memperbarui koneksi (1-Klik)'
+                          : `Google Connected (${userProfile?.email || 'ops.depotel@gmail.com'}). Klik untuk Pengaturan Profil.`
+                      }
+                      className={`relative w-10 h-10 rounded-xl flex items-center justify-center font-bold font-display text-sm border overflow-visible shrink-0 transition-all cursor-pointer focus:outline-none ${
+                        !token || isTokenExpired
+                          ? 'bg-amber-400 text-amber-950 border-amber-500 animate-pulse ring-2 ring-amber-300 ring-offset-1 hover:bg-amber-500'
+                          : 'bg-emerald-500 text-white border-emerald-600 shadow-xs hover:bg-emerald-600'
+                      }`}
+                    >
                       {userProfile?.nama ? (
-                        <span className="text-indigo-600">{userProfile.nama.charAt(0).toUpperCase()}</span>
+                        <span>{userProfile.nama.charAt(0).toUpperCase()}</span>
                       ) : userProfile?.userId ? (
-                        <span className="text-indigo-600">{userProfile.userId.charAt(0).toUpperCase()}</span>
+                        <span>{userProfile.userId.charAt(0).toUpperCase()}</span>
                       ) : user?.photoURL ? (
-                        <img src={user.photoURL} alt="Profile" className="w-10 h-10 rounded-xl" referrerPolicy="no-referrer" />
+                        <img src={user.photoURL} alt="Profile" className="w-10 h-10 rounded-xl object-cover" referrerPolicy="no-referrer" />
                       ) : (
                         userProfile?.email?.charAt(0).toUpperCase() || 'U'
                       )}
-                    </div>
+
+                      {/* Status Indicator Dot */}
+                      <span 
+                        className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
+                          !token || isTokenExpired ? 'bg-amber-600 animate-ping' : 'bg-emerald-300'
+                        }`}
+                      />
+                    </button>
                     <div className="min-w-0">
                       <h2 className="font-display font-bold text-slate-800 text-xs truncate max-w-[130px] sm:max-w-[180px]">
                         {userProfile?.nama || userProfile?.userId || userProfile?.email}

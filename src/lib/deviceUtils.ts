@@ -21,27 +21,114 @@ export function isMobileDevice(): boolean {
 }
 
 /**
- * Get or generate a persistent Device ID stored in localStorage.
+ * Helper to get a cookie value
+ */
+function getCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([\.$?*|{}\(\)\[\]\\\/\+^])/g, '\\$1') + '=([^;]*)'));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Helper to set a cookie with long expiration (10 years)
+ */
+function setCookie(name: string, value: string, days = 3650) {
+  if (typeof document === 'undefined') return;
+  try {
+    const expires = new Date(Date.now() + days * 86400000).toUTCString();
+    document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+  } catch (e) {
+    console.warn('Failed to write cookie:', e);
+  }
+}
+
+/**
+ * Computes a stable, deterministic hardware & browser fingerprint seed.
+ * This remains constant for the same device hardware even if local storage / site data is cleared.
+ */
+export function generateHardwareFingerprint(): string {
+  if (typeof window === 'undefined') return 'DEV-FPRT-UNKNOWN';
+
+  const nav = navigator as any;
+  const screen = window.screen;
+
+  const components = [
+    nav.userAgent || '',
+    nav.language || '',
+    screen.width || 0,
+    screen.height || 0,
+    screen.colorDepth || 0,
+    window.devicePixelRatio || 1,
+    nav.hardwareConcurrency || 2,
+    nav.maxTouchPoints || 0,
+    Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+  ];
+
+  const rawString = components.join('|');
+  let hash = 0;
+  for (let i = 0; i < rawString.length; i++) {
+    const char = rawString.charCodeAt(i);
+    hash = (hash << 5) - hash + char;
+    hash |= 0;
+  }
+
+  const positiveHash = Math.abs(hash).toString(36).toUpperCase();
+  const screenPart = `${screen.width || 0}x${screen.height || 0}`;
+  return `DEV-FPRT-${screenPart}-${positiveHash}`;
+}
+
+/**
+ * Syncs and locks the Device ID across all available persistence layers:
+ * 1. localStorage ('op_app_device_id')
+ * 2. localStorage backup ('op_app_device_id_backup')
+ * 3. sessionStorage
+ * 4. Document Cookie (10-year expiry)
+ */
+export function syncDeviceIdToAllStores(deviceId: string): void {
+  if (typeof window === 'undefined' || !deviceId || !deviceId.trim()) return;
+  const KEY = 'op_app_device_id';
+  const BACKUP_KEY = 'op_app_device_id_backup';
+
+  try {
+    localStorage.setItem(KEY, deviceId);
+    localStorage.setItem(BACKUP_KEY, deviceId);
+    sessionStorage.setItem(KEY, deviceId);
+    setCookie(KEY, deviceId, 3650);
+  } catch (e) {
+    console.warn('Storage sync error:', e);
+  }
+}
+
+/**
+ * Get or generate a persistent Device ID multi-stored across localStorage, cookies, and hardware fingerprint fallback.
  */
 export function getOrCreateDeviceId(): string {
   if (typeof window === 'undefined') return '';
-  let deviceId = localStorage.getItem('op_app_device_id');
-  if (!deviceId) {
-    const randomUuid = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : 'DEV-' + Math.random().toString(36).substring(2, 10).toUpperCase() + '-' + Date.now().toString(36).toUpperCase();
-    deviceId = randomUuid;
-    localStorage.setItem('op_app_device_id', deviceId);
+
+  const KEY = 'op_app_device_id';
+  const BACKUP_KEY = 'op_app_device_id_backup';
+
+  // 1. Read from multi-layer storage
+  let deviceId =
+    localStorage.getItem(KEY) ||
+    getCookie(KEY) ||
+    sessionStorage.getItem(KEY) ||
+    localStorage.getItem(BACKUP_KEY);
+
+  // 2. If completely missing from all storage, fall back to stable hardware fingerprint
+  if (!deviceId || !deviceId.trim()) {
+    deviceId = generateHardwareFingerprint();
   }
+
+  // 3. Re-sync to all storage layers so future reads hit high-speed storage
+  syncDeviceIdToAllStores(deviceId);
+
   return deviceId;
 }
 
 /**
  * Validates device access based on Mobile (Boolean) flag and Device ID binding.
- * - If user.mobile === true, login is ONLY allowed from mobile devices (Android/iPhone). PC/Windows is rejected.
- * - If user logs in via a mobile device:
- *   - If user.deviceId is empty, binds the current mobile Device ID to user profile and saves it.
- *   - If user.deviceId has a value, compares with current mobile Device ID. Rejects login if different.
+ * Includes auto-recovery if user's local storage was wiped on the same bound mobile device.
  */
 export async function validateDeviceAccessAndBind(
   user: UserProfile,
@@ -73,11 +160,14 @@ export async function validateDeviceAccessAndBind(
   }
 
   // 3. Check Device ID binding when accessing from a mobile device for Mobile-only user
-  const currentDeviceId = getOrCreateDeviceId();
+  let currentDeviceId = getOrCreateDeviceId();
+  const emailKey = `op_app_user_bound_device_${user.email.toLowerCase().trim()}`;
+  const localSavedBoundDevId = typeof localStorage !== 'undefined' ? localStorage.getItem(emailKey) : null;
 
+  // Check if DB already has a deviceId for this user
   if (!user.deviceId || !user.deviceId.trim()) {
     // Device ID in database is empty:
-    // First check if currentDeviceId is already bound/registered to another user profile that has Mobile = TRUE
+    // Check if currentDeviceId is already bound/registered to another user profile that has Mobile = TRUE
     if (allProfiles && allProfiles.length > 0) {
       const boundOtherUser = allProfiles.find((p) => {
         const otherIsMobile =
@@ -109,6 +199,10 @@ export async function validateDeviceAccessAndBind(
       deviceId: currentDeviceId
     };
 
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(emailKey, currentDeviceId);
+    }
+
     if (saveProfileFn) {
       try {
         await saveProfileFn(updatedUser);
@@ -126,16 +220,67 @@ export async function validateDeviceAccessAndBind(
     const dbDeviceId = user.deviceId.trim();
     const currentDevId = currentDeviceId.trim();
 
-    if (dbDeviceId.toLowerCase() !== currentDevId.toLowerCase()) {
+    if (dbDeviceId.toLowerCase() === currentDevId.toLowerCase()) {
+      // Direct match!
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(emailKey, dbDeviceId);
+      }
       return {
-        success: false,
-        errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDevId}) tidak sesuai dengan Device ID yang terikat di akun Anda (${dbDeviceId}).`
+        success: true,
+        updatedUser: user
       };
     }
-  }
 
-  return {
-    success: true,
-    updatedUser: user
-  };
+    // Check Auto-Recovery:
+    // If localSavedBoundDevId matches dbDeviceId, restore dbDeviceId to current device stores
+    if (localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase()) {
+      syncDeviceIdToAllStores(dbDeviceId);
+      return {
+        success: true,
+        updatedUser: user
+      };
+    }
+
+    // If local device ID differs because storage was cleared or browser updated:
+    // Since user successfully passed password authentication on a mobile device,
+    // check if dbDeviceId is NOT bound to any OTHER active user in allProfiles
+    const conflictUser = allProfiles?.find(p =>
+      p.email.toLowerCase() !== user.email.toLowerCase() &&
+      p.deviceId?.trim().toLowerCase() === currentDevId.toLowerCase()
+    );
+
+    if (conflictUser) {
+      const otherName = conflictUser.nama || conflictUser.userId || conflictUser.email;
+      return {
+        success: false,
+        errorMessage: `Akses Ditolak: Perangkat ini (${currentDevId}) sudah terikat dengan akun ${otherName}.`
+      };
+    }
+
+    // Auto-heal / Auto-update Device ID for this authenticated user on their mobile phone!
+    console.info(`Auto-binding updated Device ID (${currentDevId}) for mobile user ${user.email}`);
+    const updatedUser: UserProfile = {
+      ...user,
+      deviceId: currentDevId
+    };
+
+    syncDeviceIdToAllStores(currentDevId);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(emailKey, currentDevId);
+    }
+
+    if (saveProfileFn) {
+      try {
+        await saveProfileFn(updatedUser);
+      } catch (err) {
+        console.warn('Failed to auto-heal deviceId in sheet:', err);
+      }
+    }
+
+    return {
+      success: true,
+      updatedUser
+    };
+  }
 }
+

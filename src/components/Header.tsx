@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { UserProfile, Role } from '../types';
+import { User } from 'lucide-react';
 
 interface HeaderProps {
   userProfile?: UserProfile | null;
@@ -17,16 +18,19 @@ interface HeaderProps {
   onOpenSettings?: () => void;
   activeView?: string;
   onOpenDiomsLogo?: () => void;
+  isTokenExpired?: boolean;
+  token?: string | null;
+  onRenewToken?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  onOpenDiomsLogo
+  onOpenDiomsLogo,
 }) => {
   return (
-    <header className="sticky top-0 z-40 bg-white border-b border-slate-100 shadow-sm px-4 py-3">
-      <div className="max-w-md mx-auto flex items-center justify-between">
+    <header className="sticky top-0 z-40 bg-white border-b border-slate-100 shadow-sm px-4 py-2.5">
+      <div className="max-w-md mx-auto flex items-center justify-between gap-2">
         {/* Left Side / Brand */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <img 
             src="/DEPOTEL_rounded22.jpg" 
             alt="DEPOTEL Logo" 
@@ -35,21 +39,25 @@ export const Header: React.FC<HeaderProps> = ({
           />
         </div>
 
-        {/* Right Side / DIOMS Logo */}
-        <button
-          type="button"
-          onClick={onOpenDiomsLogo}
-          className="shrink-0 flex items-center hover:opacity-85 transition-opacity cursor-pointer group focus:outline-none"
-          title="Klik untuk memperbesar logo DIOMS"
-        >
-          <img 
-            src="/DIOMS-1.png" 
-            alt="DIOMS Logo" 
-            className="h-8 w-auto object-contain group-hover:scale-105 transition-transform duration-200" 
-            referrerPolicy="no-referrer" 
-          />
-        </button>
+        {/* Right Side Controls: DIOMS Logo */}
+        <div className="flex items-center gap-2.5">
+          {/* DIOMS Logo */}
+          <button
+            type="button"
+            onClick={onOpenDiomsLogo}
+            className="shrink-0 flex items-center hover:opacity-85 transition-opacity cursor-pointer group focus:outline-none"
+            title="Klik untuk memperbesar logo DIOMS"
+          >
+            <img 
+              src="/DIOMS-1.png" 
+              alt="DIOMS Logo" 
+              className="h-8 w-auto object-contain group-hover:scale-105 transition-transform duration-200" 
+              referrerPolicy="no-referrer" 
+            />
+          </button>
+        </div>
       </div>
     </header>
   );
 };
+
