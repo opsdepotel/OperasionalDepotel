@@ -307,7 +307,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Perlu Revisi</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Diminta revisi Manager, klik untuk lihat, revisi & batalkan</p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Diminta revisi. Klik untuk lihat, revisi & pembatalan</p>
           </div>
         </div>
 

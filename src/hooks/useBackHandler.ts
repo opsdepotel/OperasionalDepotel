@@ -12,6 +12,13 @@ let isPoppingState = false;
 let ignoreNextPopState = false;
 
 if (typeof window !== 'undefined') {
+  // Push initial dummy state so pressing back on base Dashboard doesn't navigate away
+  try {
+    window.history.pushState({ isBaseDashboard: true }, '');
+  } catch {
+    // Ignore if history API is restricted
+  }
+
   window.addEventListener('popstate', () => {
     if (ignoreNextPopState) {
       ignoreNextPopState = false;
@@ -22,6 +29,14 @@ if (typeof window !== 'undefined') {
       const top = stack.pop();
       if (top) {
         top.onClose();
+      }
+    } else {
+      // When Form Dashboard is active (no sub-views or modals open),
+      // pressing device softkey back button will have NO effect on the app (stay on Dashboard)
+      try {
+        window.history.pushState({ isBaseDashboard: true }, '');
+      } catch {
+        // Ignore
       }
     }
     isPoppingState = false;
@@ -43,7 +58,11 @@ export function useBackHandler(isOpen: boolean, onClose: CloseHandler, id: strin
 
     // Push browser history state if opening view/modal normally (not via popstate)
     if (!isPoppingState) {
-      window.history.pushState({ backHandlerId: currentId }, '');
+      try {
+        window.history.pushState({ backHandlerId: currentId }, '');
+      } catch {
+        // Ignore
+      }
     }
 
     const item: StackItem = {
@@ -59,9 +78,14 @@ export function useBackHandler(isOpen: boolean, onClose: CloseHandler, id: strin
         // If closed via UI button (not popstate), pop history state to keep browser history in sync
         if (!isPoppingState && window.history.state?.backHandlerId === currentId) {
           ignoreNextPopState = true;
-          window.history.back();
+          try {
+            window.history.back();
+          } catch {
+            // Ignore
+          }
         }
       }
     };
   }, [isOpen, id]);
 }
+
