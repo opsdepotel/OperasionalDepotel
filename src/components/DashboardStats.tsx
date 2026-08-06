@@ -579,6 +579,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const todayBbmCount = todayBbmReqs.length;
     const todayBbmTotal = todayBbmReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
 
+    const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayStr).length;
+
     const renderAdminBbmCard = () => {
       return (
         <div
@@ -693,6 +695,31 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
           {renderAdminBbmCard()}
 
+          {onOpenActivities && (
+            <div 
+              onClick={onOpenActivities}
+              id="finance-activity-card"
+              className="p-5 rounded-2xl border border-indigo-200/90 bg-gradient-to-br from-indigo-50/70 via-white to-sky-50/40 shadow-sm transition-all cursor-pointer hover:border-indigo-400 hover:shadow-md active:scale-[0.99] group flex flex-col justify-between"
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-indigo-800 uppercase tracking-widest flex items-center gap-1">
+                  <CalendarCheck className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                  <span>LOG KEGIATAN OPERASIONAL</span>
+                </p>
+                <span className="text-[9px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                  Hari Ini
+                </span>
+              </div>
+
+              <div className="flex items-end justify-between mt-2">
+                <div>
+                  <span className="text-3xl font-display font-bold text-slate-900">{todayAllActivitiesCount} <span className="text-xs text-slate-400 font-normal">Log</span></span>
+                  <p className="text-[10px] font-bold text-indigo-600 mt-0.5">Lihat Aktivitas &amp; Foto Lapangan &rarr;</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {onOpenReportsModal && (
             <div 
               onClick={onOpenReportsModal}
@@ -785,6 +812,22 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const direkturCount = profiles.filter(p => p.role === Role.DIREKTUR).length;
     const adminCount = profiles.filter(p => p.role === Role.ADMINISTRATOR).length;
     const mobileBindingCount = profiles.filter(p => p.mobile || p.deviceId).length;
+
+    const getTodayStr = () => {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const todayStr = getTodayStr();
+
+    const todayBbmReqs = requests.filter(r => 
+      (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) &&
+      r.tanggalPemakaian === todayStr
+    );
+    const todayBbmCount = todayBbmReqs.length;
+    const todayBbmTotal = todayBbmReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
 
     return (
       <div className="space-y-4">
@@ -883,6 +926,35 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <span className="text-[9px] text-slate-400 font-bold block">ADMIN</span>
               <span className="text-sm font-bold text-blue-600">{adminCount}</span>
             </div>
+          </div>
+        </div>
+
+        {/* Kartu BBM Duren Sawit (Administrator) */}
+        <div 
+          onClick={onOpenBbmListModal || onOpenBbmModal}
+          className="bg-gradient-to-r from-amber-500/10 via-amber-50/80 to-orange-50/80 border border-amber-200/90 rounded-2xl p-4 shadow-sm hover:border-amber-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between gap-3 group"
+          id="administrator-bbm-card"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-200/60 group-hover:scale-105 transition-transform">
+              <Fuel className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="font-display font-bold text-xs text-slate-800 group-hover:text-amber-900 transition-colors">
+                  Pengisian BBM Duren Sawit
+                </h4>
+                <span className="text-[9px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                  Seluruh UID
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                Pengisian hari ini ({todayStr}): <span className="font-bold text-slate-800">{todayBbmCount} transaksi ({formatIDR(todayBbmTotal)})</span>. Klik untuk lihat daftar &amp; filter tanggal.
+              </p>
+            </div>
+          </div>
+          <div className="w-8 h-8 rounded-xl bg-amber-100/80 text-amber-800 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+            &rarr;
           </div>
         </div>
 
