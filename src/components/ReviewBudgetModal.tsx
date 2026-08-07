@@ -244,7 +244,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
         </div>
         <div className="pt-2 border-t border-slate-200">
           <span className="text-[10px] text-slate-400 block font-semibold">Tujuan / Keterangan</span>
-          <p className="text-slate-700 font-medium">{request.keterangan}</p>
+          <p className="text-slate-700 font-medium whitespace-pre-wrap">{request.keterangan}</p>
         </div>
         <div className="pt-2 border-t border-slate-200 flex justify-between items-center bg-white px-3 py-2 rounded-lg border border-slate-150">
           <span className="text-[10px] text-slate-500 font-bold">JUMLAH DIAJUKAN:</span>

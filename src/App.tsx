@@ -2504,7 +2504,7 @@ export default function App() {
                               <div className="flex items-start justify-between">
                                 <div>
                                   <span className="text-[9px] font-mono text-slate-400 block">{req.id}</span>
-                                  <h4 className="text-xs font-bold text-slate-800 mt-0.5">{req.keterangan}</h4>
+                                  <h4 className="text-xs font-bold text-slate-800 mt-0.5 whitespace-pre-wrap">{req.keterangan}</h4>
                                   <p className="text-[10px] text-slate-500 font-medium flex items-center gap-1.5 mt-0.5 flex-wrap">
                                     <span>Site: <strong>{req.siteId}</strong></span>
                                     <span>•</span>

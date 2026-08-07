@@ -1398,7 +1398,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
                 <h3 className="text-xs font-bold text-indigo-500 uppercase tracking-widest">BUKTI TRANSFER / PENYESUAIAN</h3>
-                <h4 className="text-sm font-bold text-slate-800 mt-0.5">{request.keterangan}</h4>
+                <h4 className="text-sm font-bold text-slate-800 mt-0.5 whitespace-pre-wrap">{request.keterangan}</h4>
               </div>
               <button
                 type="button"
