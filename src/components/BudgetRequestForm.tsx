@@ -47,7 +47,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
     initialRequest?.jumlahPengajuan ? String(initialRequest.jumlahPengajuan) : ''
   );
   const [keterangan, setKeterangan] = useState(() => 
-    initialRequest?.keterangan ? initialRequest.keterangan.replace(/^\[DANA TALANGAN\]\s*/, '') : ''
+    initialRequest?.keterangan ? initialRequest.keterangan : ''
   );
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -114,7 +114,9 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         tanggalPemakaian,
         siteId: siteId.toUpperCase().trim(),
         jumlahPengajuan: amount,
-        keterangan: isTalangan ? `[DANA TALANGAN] ${keterangan.trim()}` : keterangan.trim(),
+        keterangan: isTalangan 
+          ? (keterangan.trim().startsWith('[DANA TALANGAN]') ? keterangan.trim() : `[DANA TALANGAN] ${keterangan.trim()}`)
+          : keterangan.trim(),
         status: isTalangan ? RequestStatus.REPORTING : RequestStatus.PENDING_APPROVAL,
         managerActionAmount: 0,
         managerComment: '',
