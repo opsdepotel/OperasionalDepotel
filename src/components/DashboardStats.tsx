@@ -6,7 +6,7 @@
 import React from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye } from 'lucide-react';
 
 interface DashboardStatsProps {
   role: Role;
@@ -16,6 +16,7 @@ interface DashboardStatsProps {
   activeFilter?: string;
   onSelectFilter?: (filterKey: string) => void;
   onManageUsers?: () => void;
+  onOpenUserDashboardPreview?: () => void;
   onOpenAdjustment?: () => void;
   onOpenReportsModal?: () => void;
   profiles?: UserProfile[];
@@ -35,6 +36,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   activeFilter = 'ALL',
   onSelectFilter,
   onManageUsers,
+  onOpenUserDashboardPreview,
   onOpenAdjustment,
   onOpenReportsModal,
   profiles = [],
@@ -274,7 +276,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span>{rejectedItemsInReportingCount} item review perlu perbaikan</span>
               </p>
             ) : (
-              <p className="text-[9px] text-slate-400 mt-2 font-medium">Sedang direview</p>
+              <p className="text-[9px] text-slate-400 mt-2 font-medium">Proses Laporan Operasional</p>
             )}
           </div>
 
@@ -873,6 +875,35 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               </div>
             </div>
             <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+              &rarr;
+            </div>
+          </div>
+        )}
+
+        {/* Shortcut Card: Intip Dashboard & Status UID User */}
+        {onOpenUserDashboardPreview && (
+          <div
+            onClick={onOpenUserDashboardPreview}
+            className="p-5 rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50/90 via-white to-indigo-50/60 shadow-md hover:shadow-lg hover:border-purple-400 transition-all cursor-pointer group flex items-center justify-between gap-4"
+            id="admin-preview-user-dashboard-card"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-purple-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-purple-200 group-hover:scale-105 transition-transform">
+                <Eye className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-purple-600 transition-colors flex items-center gap-2">
+                  Pintasan Dashboard &amp; Status UID User
+                  <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full uppercase">
+                    Pintasan Admin
+                  </span>
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Pilih akun pengguna untuk melihat statistik, saldo operasional, task &amp; status UID sama seperti user terpilih.
+                </p>
+              </div>
+            </div>
+            <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
               &rarr;
             </div>
           </div>

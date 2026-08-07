@@ -53,6 +53,7 @@ import { BbmRefillModal } from './components/BbmRefillModal';
 import { BbmListModal } from './components/BbmListModal';
 import { FinancialReportsModal } from './components/FinancialReportsModal';
 import { ItemHistoryModal } from './components/ItemHistoryModal';
+import { UserDashboardPreviewModal } from './components/UserDashboardPreviewModal';
 
 // Icons
 import {
@@ -168,6 +169,7 @@ export default function App() {
   const [isBbmModalOpen, setIsBbmModalOpen] = useState(false);
   const [isBbmListModalOpen, setIsBbmListModalOpen] = useState(false);
   const [isFinancialReportsModalOpen, setIsFinancialReportsModalOpen] = useState(false);
+  const [isUserDashboardPreviewModalOpen, setIsUserDashboardPreviewModalOpen] = useState(false);
   const [isDiomsLogoModalOpen, setIsDiomsLogoModalOpen] = useState(false);
   const [previewDocument, setPreviewDocument] = useState<{ url: string; fileId?: string; title: string } | null>(null);
 
@@ -182,6 +184,7 @@ export default function App() {
   useBackHandler(isBbmModalOpen, () => setIsBbmModalOpen(false), 'isBbmModalOpen');
   useBackHandler(isBbmListModalOpen, () => setIsBbmListModalOpen(false), 'isBbmListModalOpen');
   useBackHandler(isFinancialReportsModalOpen, () => setIsFinancialReportsModalOpen(false), 'isFinancialReportsModalOpen');
+  useBackHandler(isUserDashboardPreviewModalOpen, () => setIsUserDashboardPreviewModalOpen(false), 'isUserDashboardPreviewModalOpen');
   useBackHandler(isDiomsLogoModalOpen, () => setIsDiomsLogoModalOpen(false), 'isDiomsLogoModalOpen');
   useBackHandler(!!previewDocument, () => setPreviewDocument(null), 'previewDocument');
 
@@ -1540,7 +1543,13 @@ export default function App() {
       const matchDesc = r.keterangan.toLowerCase().includes(query);
       const matchSite = r.siteId.toLowerCase().includes(query);
       const matchUser = r.userEmail.toLowerCase().includes(query);
-      if (!matchId && !matchDesc && !matchSite && !matchUser) return false;
+
+      const requesterProfile = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+      const matchName = requesterProfile?.nama ? requesterProfile.nama.toLowerCase().includes(query) : false;
+      const matchUserId = requesterProfile?.userId ? requesterProfile.userId.toLowerCase().includes(query) : false;
+      const matchDivisi = requesterProfile?.divisi ? requesterProfile.divisi.toLowerCase().includes(query) : false;
+
+      if (!matchId && !matchDesc && !matchSite && !matchUser && !matchName && !matchUserId && !matchDivisi) return false;
     }
 
     // Status Filter
@@ -2098,6 +2107,7 @@ export default function App() {
                   activeFilter={statusFilter}
                   onSelectFilter={setStatusFilter}
                   onManageUsers={() => setActiveView('setup-profile')}
+                  onOpenUserDashboardPreview={() => setIsUserDashboardPreviewModalOpen(true)}
                   onOpenAdjustment={() => setActiveView('adjustment')}
                   onOpenReportsModal={() => setIsFinancialReportsModalOpen(true)}
                   profiles={profiles}
@@ -2311,7 +2321,7 @@ export default function App() {
                       <div className="relative">
                         <input
                           type="text"
-                          placeholder="Cari UID, lokasi, keterangan..."
+                          placeholder="Cari UID, nama pemohon, lokasi, keterangan..."
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
                           className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:border-indigo-500 focus:bg-white focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
@@ -3067,6 +3077,17 @@ export default function App() {
         usageItems={usageItems}
         profiles={profiles}
         role={activeRole}
+      />
+
+      {/* Modal Pratinjau Dashboard User Administrator */}
+      <UserDashboardPreviewModal
+        isOpen={isUserDashboardPreviewModalOpen}
+        onClose={() => setIsUserDashboardPreviewModalOpen(false)}
+        profiles={profiles}
+        requests={requests}
+        usageItems={usageItems}
+        activities={activities}
+        histories={itemReviewHistories}
       />
 
       {/* Modal Popup Preview Logo DIOMS */}
