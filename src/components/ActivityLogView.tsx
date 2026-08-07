@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, User, Filter, Building2 } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, User, Filter, Building2, Search } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
 function parseCoords(coordStr: string): { lat: number; lng: number } | null {
@@ -110,7 +110,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
   const [dateFilter, setDateFilter] = useState<string>(getTodayStr());
   const [divisiFilter, setDivisiFilter] = useState<string>('ALL');
-  const [selectedUserFilter, setSelectedUserFilter] = useState<string>('ALL');
+  const [selectedUserFilter, setSelectedUserFilter] = useState<string>('');
   const [showAddForm, setShowAddForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -618,8 +618,14 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       }
 
       // 3. Filter Nama User
-      if (selectedUserFilter !== 'ALL') {
-        if (actEmail !== selectedUserFilter.toLowerCase()) return false;
+      if (selectedUserFilter.trim()) {
+        const q = selectedUserFilter.trim().toLowerCase();
+        const userName = (actProf?.nama || act.userName || '').toLowerCase();
+        const userId = (actProf?.userId || '').toLowerCase();
+        const userEmail = actEmail.toLowerCase();
+        if (!userName.includes(q) && !userId.includes(q) && !userEmail.includes(q)) {
+          return false;
+        }
       }
 
       // 4. Filter Tanggal Activity
@@ -908,7 +914,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                   value={divisiFilter}
                   onChange={(e) => {
                     setDivisiFilter(e.target.value);
-                    setSelectedUserFilter('ALL');
+                    setSelectedUserFilter('');
                   }}
                   className="w-full px-3 py-2 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   id="activity-divisi-filter"
@@ -925,32 +931,27 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             {(currentRole === Role.MANAGER || currentRole === Role.DIREKTUR || currentRole === Role.FINANCE || currentRole === Role.ADMINISTRATOR) && (
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Filter Nama User</label>
-                <select
-                  value={selectedUserFilter}
-                  onChange={(e) => setSelectedUserFilter(e.target.value)}
-                  className="w-full px-3 py-2 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                  id="activity-user-filter"
-                >
-                  {currentRole === Role.MANAGER ? (
-                    <>
-                      <option value="ALL">Semua Tim Bawahan ({subProfiles.length})</option>
-                      {subProfiles.map((p, idx) => (
-                        <option key={`${p.email}_${p.userId || idx}`} value={p.email}>
-                          {p.nama || p.userId || p.email} ({p.email})
-                        </option>
-                      ))}
-                    </>
-                  ) : (
-                    <>
-                      <option value="ALL">Semua User ({allUserOptions.length})</option>
-                      {allUserOptions.map((p, idx) => (
-                        <option key={`${p.email}_${p.userId || idx}`} value={p.email}>
-                          {p.nama || p.userId || p.email} {p.divisi ? `- [${p.divisi}]` : ''} ({p.email})
-                        </option>
-                      ))}
-                    </>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Ketik nama / email user..."
+                    value={selectedUserFilter}
+                    onChange={(e) => setSelectedUserFilter(e.target.value)}
+                    className="w-full pl-8 pr-8 py-1.5 text-xs font-semibold border border-slate-200 rounded-xl bg-slate-50 text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white transition-all"
+                    id="activity-user-filter"
+                  />
+                  {selectedUserFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedUserFilter('')}
+                      className="absolute right-2.5 top-1.5 text-slate-400 hover:text-slate-600 text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full hover:bg-slate-200 transition-colors cursor-pointer"
+                      title="Hapus filter nama"
+                    >
+                      ×
+                    </button>
                   )}
-                </select>
+                </div>
               </div>
             )}
 
@@ -1081,11 +1082,17 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
                         const handleOpenRoute = (e: React.MouseEvent) => {
                           e.stopPropagation();
-                          const dbParsed = parseCoords(dbCoords);
-                          const actParsed = parseCoords(actualCoords);
+                          const dbParsed = dbCoords ? parseCoords(dbCoords) : null;
+                          const actParsed = actualCoords ? parseCoords(actualCoords) : null;
                           if (dbParsed && actParsed) {
                             const mapsUrl = `https://www.google.com/maps/dir/?api=1&origin=${dbParsed.lat},${dbParsed.lng}&destination=${actParsed.lat},${actParsed.lng}`;
                             window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+                          } else {
+                            const targetCoord = (actualCoords || dbCoords).trim();
+                            if (targetCoord) {
+                              const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(targetCoord)}`;
+                              window.open(mapsUrl, '_blank', 'noopener,noreferrer');
+                            }
                           }
                         };
 
@@ -1095,9 +1102,15 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono pt-2 border-t border-slate-100 bg-slate-50/50 -mx-4 -mb-4 px-4 py-2">
                             <div className="flex items-center gap-1.5 text-slate-500 flex-wrap">
                               <Compass className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                              <span className="text-indigo-900 font-bold">
-                                {actualCoords || dbCoords}
-                              </span>
+                              <button
+                                type="button"
+                                onClick={handleOpenRoute}
+                                className="inline-flex items-center gap-1 text-indigo-700 hover:text-indigo-900 font-bold hover:underline cursor-pointer transition-colors group/coord"
+                                title="Klik untuk membuka lokasi / rute di Google Maps"
+                              >
+                                <span>{actualCoords || dbCoords}</span>
+                                <ExternalLink className="w-2.5 h-2.5 text-indigo-500 group-hover/coord:translate-x-0.5 transition-transform" />
+                              </button>
                               {distanceMeters !== null && isSiteVerified && isAllowedAbnormalAndDistance && (
                                 <span className="text-[9px] text-slate-400 font-normal">
                                   ({Math.round(distanceMeters)}m)
@@ -1109,7 +1122,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                               <button
                                 type="button"
                                 onClick={handleOpenRoute}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 rounded-md font-sans text-[10px] font-bold transition-all shadow-sm shrink-0"
+                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 hover:bg-red-200 text-red-700 border border-red-300 rounded-md font-sans text-[10px] font-bold transition-all shadow-sm shrink-0 cursor-pointer"
                                 title="Jarak aktual > 500m dari koordinat site. Klik untuk lihat rute di Google Maps"
                               >
                                 <AlertTriangle className="w-3 h-3 text-red-600 shrink-0" />

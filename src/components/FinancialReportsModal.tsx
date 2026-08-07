@@ -57,6 +57,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   const [transferStartDate, setTransferStartDate] = useState<string>('');
   const [transferEndDate, setTransferEndDate] = useState<string>('');
   const [transferDivisi, setTransferDivisi] = useState<string>('ALL');
+  const [transferUserName, setTransferUserName] = useState<string>('');
 
   // Filters for Saldo Report
   const [saldoUser, setSaldoUser] = useState<string>('ALL');
@@ -184,6 +185,17 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
       const userProf = uniqueProfiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
       const userDiv = userProf?.divisi?.trim() || '';
 
+      // Nama (User) Text Filter
+      if (transferUserName.trim()) {
+        const q = transferUserName.toLowerCase().trim();
+        const userName = (userProf?.nama || '').toLowerCase();
+        const userId = (userProf?.userId || '').toLowerCase();
+        const userEmail = (r.userEmail || '').toLowerCase();
+        if (!userName.includes(q) && !userId.includes(q) && !userEmail.includes(q)) {
+          return false;
+        }
+      }
+
       // Divisi Filter
       if (transferDivisi !== 'ALL' && userDiv.toLowerCase() !== transferDivisi.toLowerCase()) {
         return false;
@@ -196,7 +208,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
       return true;
     }).sort((a, b) => b.id.localeCompare(a.id));
-  }, [requests, uniqueProfiles, transferDivisi, transferStartDate, transferEndDate]);
+  }, [requests, uniqueProfiles, transferUserName, transferDivisi, transferStartDate, transferEndDate]);
 
   const totalTransferAmount = useMemo(() => {
     return filteredTransfers.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
@@ -304,7 +316,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8.5);
       doc.setTextColor(100, 116, 139);
-      const periodeText = `Periode: ${transferStartDate || 'Semua'} s/d ${transferEndDate || 'Semua'} | Divisi: ${transferDivisi === 'ALL' ? 'Semua Divisi' : transferDivisi}`;
+      const periodeText = `Periode: ${transferStartDate || 'Semua'} s/d ${transferEndDate || 'Semua'} | User: ${transferUserName.trim() || 'Semua User'} | Divisi: ${transferDivisi === 'ALL' ? 'Semua Divisi' : transferDivisi}`;
       doc.text(periodeText, 42, 23);
       doc.text(`Dicetak Pada: ${nowStr}`, 255, 23, { align: 'right' });
 
@@ -546,21 +558,35 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
                     <Filter className="w-4 h-4 text-indigo-600" />
                     <h3 className="text-xs font-bold uppercase tracking-wider">Filter Laporan Transfer</h3>
                   </div>
-                  {(transferStartDate || transferEndDate || transferDivisi !== 'ALL') && (
+                  {(transferStartDate || transferEndDate || transferDivisi !== 'ALL' || transferUserName) && (
                     <button
                       onClick={() => {
                         setTransferStartDate('');
                         setTransferEndDate('');
                         setTransferDivisi('ALL');
+                        setTransferUserName('');
                       }}
-                      className="text-[10px] font-bold text-rose-600 hover:underline"
+                      className="text-[10px] font-bold text-rose-600 hover:underline cursor-pointer"
                     >
                       Reset Filter
                     </button>
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Nama (User)</label>
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        placeholder="Ketik nama / email user..."
+                        value={transferUserName}
+                        onChange={(e) => setTransferUserName(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-indigo-500 font-medium"
+                      />
+                    </div>
+                  </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tanggal Mulai</label>
                     <input
