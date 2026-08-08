@@ -74,6 +74,7 @@ export interface UserProfile {
   role: Role;
   managerEmail: string;
   divisi: string;
+  subDivisi?: string;
   aksesBBM?: boolean;
   mobile?: boolean;
   deviceId?: string;

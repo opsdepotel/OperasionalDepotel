@@ -31,6 +31,7 @@ import {
   createItemReviewHistory,
   createBatchItemReviewHistories,
   parseNumericValue,
+  formatDivisiSubDivisi,
   defaultUsers
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory } from './types';
@@ -2054,9 +2055,19 @@ export default function App() {
                         {userProfile?.nama || userProfile?.userId || userProfile?.email}
                       </h2>
                       <p className="text-[10px] text-slate-400 font-semibold flex items-center gap-1 mt-0.5 truncate">
-                        Role: <span className="text-indigo-600 font-bold">{activeRole}</span>
-                        {userProfile && userProfile.divisi && (
-                          <span>| Divisi: {userProfile.divisi}</span>
+                        {activeRole === Role.USER ? (
+                          <span>
+                            Divisi : {formatDivisiSubDivisi(userProfile?.divisi, userProfile?.subDivisi)}
+                          </span>
+                        ) : (
+                          <>
+                            Role: <span className="text-indigo-600 font-bold">{activeRole}</span>
+                            {userProfile && userProfile.divisi && (
+                              <span>
+                                | Divisi : {formatDivisiSubDivisi(userProfile.divisi, userProfile.subDivisi)}
+                              </span>
+                            )}
+                          </>
                         )}
                       </p>
                     </div>

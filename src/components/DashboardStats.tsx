@@ -3,10 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory } from '../types';
-import { parseNumericValue } from '../lib/googleApi';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye } from 'lucide-react';
+import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
+import { useBackHandler } from '../hooks/useBackHandler';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface DashboardStatsProps {
   role: Role;
@@ -44,8 +47,244 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onOpenActivities,
   userProfile,
   onOpenBbmModal,
-  onOpenBbmListModal
+  onOpenBbmListModal,
+  histories = []
 }) => {
+  const [isTransactionReportOpen, setIsTransactionReportOpen] = useState(false);
+  const [transactionSearchQuery, setTransactionSearchQuery] = useState('');
+
+  useBackHandler(isTransactionReportOpen, () => setIsTransactionReportOpen(false), 'dashboardStats_transactionReport');
+
+  const formatDateDisplay = (dateStr?: string): string => {
+    if (!dateStr) return '-';
+    const clean = dateStr.trim();
+    if (/^\d{4}-\d{2}-\d{2}/.test(clean)) {
+      const [y, m, d] = clean.substring(0, 10).split('-');
+      return `${d}/${m}/${y}`;
+    }
+    return clean;
+  };
+
+  const getRequestDate = (r: BudgetRequest): string => {
+    const rawDate = r.tanggalPemakaian || r.createdAt || r.timestamp || '';
+    return formatDateDisplay(rawDate);
+  };
+
+  const getTimestampMs = (r: BudgetRequest): number => {
+    const timeStr = r.timestamp || r.createdAt || r.tanggalPemakaian || '';
+    if (!timeStr) return 0;
+    const parsed = new Date(timeStr).getTime();
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+    if (/^\d{4}-\d{2}-\d{2}/.test(timeStr)) {
+      return new Date(timeStr.substring(0, 10)).getTime();
+    }
+    return 0;
+  };
+
+  const getTransferTimestampMs = (r: BudgetRequest): number => {
+    if (histories && histories.length > 0) {
+      const transferLog = histories.find(h => 
+        (h.requestUid === r.id || h.itemUid === r.id) &&
+        (h.status === 'TRANSFERRED' || h.status === RequestStatus.TRANSFERRED || h.actionType === 'APPROVAL_FINANCE')
+      );
+      if (transferLog && transferLog.timestamp) {
+        const parsed = new Date(transferLog.timestamp).getTime();
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+        if (/^\d{4}-\d{2}-\d{2}/.test(transferLog.timestamp)) {
+          return new Date(transferLog.timestamp.substring(0, 10)).getTime();
+        }
+      }
+    }
+    return getTimestampMs(r);
+  };
+
+  const getTransferDateDisplay = (r: BudgetRequest): string => {
+    if (histories && histories.length > 0) {
+      const transferLog = histories.find(h => 
+        (h.requestUid === r.id || h.itemUid === r.id) &&
+        (h.status === 'TRANSFERRED' || h.status === RequestStatus.TRANSFERRED || h.actionType === 'APPROVAL_FINANCE')
+      );
+      if (transferLog && transferLog.timestamp) {
+        return formatDateDisplay(transferLog.timestamp);
+      }
+    }
+    return getRequestDate(r);
+  };
+
+  const getStatusLabel = (status: RequestStatus) => {
+    switch (status) {
+      case RequestStatus.PENDING_APPROVAL:
+        return 'PENDING MANAGER';
+      case RequestStatus.APPROVED:
+      case RequestStatus.PARTIALLY_APPROVED:
+        return 'DISETUJUI';
+      case RequestStatus.TRANSFERRED:
+        return 'DITRANSFER';
+      case RequestStatus.REPORTING:
+        return 'PROSES LAPORAN';
+      case RequestStatus.REVIEW_MANAGER:
+        return 'REVIEW MANAGER';
+      case RequestStatus.REVIEW_ADMIN:
+        return 'REVIEW FINANCE';
+      case RequestStatus.CLOSED:
+        return 'SELESAI (CLOSED)';
+      case RequestStatus.REJECTED:
+        return 'DITOLAK';
+      case RequestStatus.PENDING_TALANGAN_TRANSFER:
+        return 'WAITING REIMBURSE';
+      default:
+        return status;
+    }
+  };
+
+  const handleExportPDF = () => {
+    const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+    const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+
+    const myUserReqs = requests.filter(r => 
+      r.userEmail.toLowerCase() === email.toLowerCase() && 
+      r.status !== RequestStatus.CANCELLED && 
+      !isBbmReq(r)
+    ).sort((a, b) => {
+      const timeA = getTransferTimestampMs(a);
+      const timeB = getTransferTimestampMs(b);
+      if (timeA !== timeB) return timeB - timeA;
+      return b.id.localeCompare(a.id);
+    });
+
+    const filteredReqs = myUserReqs;
+
+    const doc = new jsPDF('landscape', 'mm', 'a4');
+    const nowStr = new Date().toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
+
+    doc.setFontSize(13);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(15, 23, 42);
+    doc.text('LAPORAN TRANSAKSI SALDO OPERASIONAL USER', 14, 15);
+
+    doc.setFontSize(8.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 116, 139);
+    doc.text(`User: ${userProfile?.nama || email} (${email}) | Divisi: ${formatDivisiSubDivisi(userProfile?.divisi, userProfile?.subDivisi)}`, 14, 21);
+    doc.text(`Dicetak Pada: ${nowStr}`, 283, 21, { align: 'right' });
+
+    // Summary Box
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(14, 25, 269, 12, 2, 2, 'FD');
+
+    const totPengajuan = filteredReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
+    const totTransfer = filteredReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totDilaporkan = filteredReqs.reduce((sum, r) => {
+      const reqUsage = usageItems.filter(item => 
+        item.requestId === r.id && 
+        item.statusManager === ItemStatus.APPROVED && 
+        item.statusAdmin === ItemStatus.APPROVED && 
+        !isBbmItem(item)
+      );
+      return sum + reqUsage.reduce((sub, u) => sub + u.nominal, 0);
+    }, 0);
+    const totSisa = totTransfer - totDilaporkan;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+    doc.text(`Total Pengajuan: ${formatIDR(totPengajuan)}`, 18, 32.5);
+    doc.text(`Total Ditransfer: ${formatIDR(totTransfer)}`, 85, 32.5);
+    doc.text(`Total Dilaporkan: ${formatIDR(totDilaporkan)}`, 155, 32.5);
+    doc.text(`Sisa Saldo Operasional: ${formatIDR(totSisa)}`, 225, 32.5);
+
+    const tableRows = filteredReqs.map((r, idx) => {
+      const reqUsageApproved = usageItems.filter(item => 
+        item.requestId === r.id && 
+        item.statusManager === ItemStatus.APPROVED && 
+        item.statusAdmin === ItemStatus.APPROVED && 
+        !isBbmItem(item)
+      );
+      const reportedApproved = reqUsageApproved.reduce((sum, u) => sum + u.nominal, 0);
+      const sisa = r.adminActionAmount - reportedApproved;
+
+      const uidDisplay = r.siteId ? `${r.id}\n(Site: ${r.siteId})` : r.id;
+      const sisaDisplay = sisa > 0 ? `+${formatIDR(sisa)}` : formatIDR(sisa);
+
+      return [
+        idx + 1,
+        getRequestDate(r),
+        uidDisplay,
+        formatIDR(r.jumlahPengajuan),
+        formatIDR(r.adminActionAmount),
+        formatIDR(reportedApproved),
+        sisaDisplay,
+        getStatusLabel(r.status)
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 40,
+      head: [['No', 'Tanggal', 'UID / Site', 'Pengajuan', 'Ditransfer', 'Dilaporkan', 'Lebih / Sisa', 'Status']],
+      body: tableRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [15, 23, 42],
+        textColor: [255, 255, 255],
+        fontSize: 8,
+        fontStyle: 'bold',
+        halign: 'center'
+      },
+      bodyStyles: {
+        fontSize: 8,
+        textColor: [30, 41, 59]
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 10 },
+        1: { halign: 'center', cellWidth: 25 },
+        2: { cellWidth: 44 },
+        3: { halign: 'right', cellWidth: 35 },
+        4: { halign: 'right', cellWidth: 35 },
+        5: { halign: 'right', cellWidth: 35 },
+        6: { halign: 'right', cellWidth: 38 },
+        7: { halign: 'center', cellWidth: 47 }
+      },
+      foot: [[
+        { content: 'TOTAL REKAPITULASI LAPORAN', colSpan: 3, styles: { halign: 'center', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+        { content: formatIDR(totPengajuan), styles: { halign: 'right', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+        { content: formatIDR(totTransfer), styles: { halign: 'right', fontStyle: 'bold', textColor: [67, 56, 202], fillColor: [241, 245, 249] } },
+        { content: formatIDR(totDilaporkan), styles: { halign: 'right', fontStyle: 'bold', textColor: [4, 120, 87], fillColor: [241, 245, 249] } },
+        { content: formatIDR(totSisa), styles: { halign: 'right', fontStyle: 'bold', textColor: totSisa >= 0 ? [4, 120, 87] : [190, 18, 60], fillColor: [241, 245, 249] } },
+        { content: '', styles: { fillColor: [241, 245, 249] } }
+      ]],
+      margin: { left: 14, right: 14 }
+    });
+
+    const cleanName = (userProfile?.nama || email).replace(/[^a-zA-Z0-9]/g, '_');
+    doc.save(`Laporan_Saldo_Operasional_${cleanName}_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const renderStatusBadge = (status: RequestStatus) => {
+    switch (status) {
+      case RequestStatus.PENDING_APPROVAL:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">PENDING MANAGER</span>;
+      case RequestStatus.APPROVED:
+      case RequestStatus.PARTIALLY_APPROVED:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">DISETUJUI</span>;
+      case RequestStatus.TRANSFERRED:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">DITRANSFER</span>;
+      case RequestStatus.REPORTING:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">PROSES LAPORAN</span>;
+      case RequestStatus.REVIEW_MANAGER:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 border border-cyan-200">REVIEW MANAGER</span>;
+      case RequestStatus.REVIEW_ADMIN:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">REVIEW FINANCE</span>;
+      case RequestStatus.CLOSED:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">SELESAI (CLOSED)</span>;
+      case RequestStatus.REJECTED:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">DITOLAK</span>;
+      case RequestStatus.PENDING_TALANGAN_TRANSFER:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-800 border border-orange-200">WAITING REIMBURSE</span>;
+      default:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">{status}</span>;
+    }
+  };
   // Format Currency
   const formatIDR = (num: any) => {
     const val = parseNumericValue(num);
@@ -314,11 +553,15 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         </div>
 
         {/* Financial info Card - Saldo Operasional */}
-        <div className="bg-slate-900 text-white rounded-2xl p-5 shadow-lg border border-slate-800">
+        <div 
+          onClick={() => setIsTransactionReportOpen(true)}
+          className="bg-slate-900 hover:bg-slate-850 text-white rounded-2xl p-5 shadow-lg border border-slate-800 hover:border-emerald-500/50 hover:shadow-emerald-950/20 transition-all cursor-pointer group relative overflow-hidden"
+          id="saldo-operasional-card"
+        >
           <div className="flex items-center justify-between">
-            <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">SALDO OPERASIONAL</p>
-            <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase tracking-wider">
-              Sisa Kas
+            <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase group-hover:text-emerald-300 transition-colors">SALDO OPERASIONAL</p>
+            <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded-md uppercase tracking-wider flex items-center gap-1 shadow-2xs">
+              <Eye className="w-3 h-3 text-emerald-400" /> Sisa Kas
             </span>
           </div>
 
@@ -330,7 +573,225 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               * Saldo negatif menunjukkan total dana talangan pribadi Anda yang disetujui melebihi dana transfer yang diterima (menunggu reimburse / penyesuaian kas).
             </p>
           )}
+
+          <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-400 font-medium">
+            <span className="group-hover:text-slate-200 transition-colors flex items-center gap-1.5">
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              Klik untuk Laporan Transaksi User
+            </span>
+            <span className="text-[10px] font-bold text-emerald-400 group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5">
+              Lihat Detail &rarr;
+            </span>
+          </div>
         </div>
+
+        {/* Modal Laporan Transaksi Saldo Operasional User */}
+        {isTransactionReportOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
+            <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in fade-in zoom-in-95 duration-150">
+              {/* Header Modal */}
+              <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-emerald-900/50">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-600 border border-emerald-400/30 flex items-center justify-center text-white shrink-0 shadow-md">
+                    <FileSpreadsheet className="w-5 h-5 text-emerald-100" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-display font-bold text-sm sm:text-base text-white tracking-wide truncate">
+                      Laporan Transaksi Saldo Operasional User
+                    </h3>
+                    <p className="text-[11px] text-emerald-200/80 font-medium mt-0.5 truncate">
+                      {userProfile?.nama || email} • {formatDivisiSubDivisi(userProfile?.divisi, userProfile?.subDivisi)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsTransactionReportOpen(false)}
+                  className="w-9 h-9 rounded-2xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
+                  title="Tutup Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body Content / Table */}
+              <div className="p-4 sm:p-5 overflow-y-auto flex-1">
+                {(() => {
+                  const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+                  const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+
+                  const myUserReqs = requests.filter(r => 
+                    r.userEmail.toLowerCase() === email.toLowerCase() && 
+                    r.status !== RequestStatus.CANCELLED && 
+                    !isBbmReq(r)
+                  ).sort((a, b) => {
+                    const timeA = getTransferTimestampMs(a);
+                    const timeB = getTransferTimestampMs(b);
+                    if (timeA !== timeB) return timeB - timeA;
+                    return b.id.localeCompare(a.id);
+                  });
+
+                  const filteredReqs = myUserReqs;
+
+                  if (filteredReqs.length === 0) {
+                    return (
+                      <div className="py-12 text-center text-slate-400 space-y-2">
+                        <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300 stroke-1" />
+                        <p className="text-xs font-semibold text-slate-500">
+                          {transactionSearchQuery ? 'Tidak ada transaksi yang cocok dengan kata kunci pencarian.' : 'Belum ada transaksi pengajuan / laporan untuk pengguna ini.'}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  // Calculate totals for table footer
+                  const totPengajuan = filteredReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
+                  const totTransfer = filteredReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
+                  const totDilaporkan = filteredReqs.reduce((sum, r) => {
+                    const reqUsage = usageItems.filter(item => 
+                      item.requestId === r.id && 
+                      item.statusManager === ItemStatus.APPROVED && 
+                      item.statusAdmin === ItemStatus.APPROVED && 
+                      !isBbmItem(item)
+                    );
+                    return sum + reqUsage.reduce((sub, u) => sub + u.nominal, 0);
+                  }, 0);
+                  const totSisa = totTransfer - totDilaporkan;
+
+                  return (
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-xs">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-900 text-white font-bold uppercase tracking-wider text-[10px]">
+                            <th className="py-3.5 px-3 text-center w-12 border-b border-slate-800">No</th>
+                            <th className="py-3.5 px-3 border-b border-slate-800">Tanggal</th>
+                            <th className="py-3.5 px-3 border-b border-slate-800">UID</th>
+                            <th className="py-3.5 px-3 text-right border-b border-slate-800">Pengajuan</th>
+                            <th className="py-3.5 px-3 text-right border-b border-slate-800">Ditransfer</th>
+                            <th className="py-3.5 px-3 text-right border-b border-slate-800">Dilaporkan</th>
+                            <th className="py-3.5 px-3 text-right border-b border-slate-800">Lebih / Sisa</th>
+                            <th className="py-3.5 px-3 text-center border-b border-slate-800">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-150 bg-white">
+                          {filteredReqs.map((r, idx) => {
+                            const reqUsageApproved = usageItems.filter(item => 
+                              item.requestId === r.id && 
+                              item.statusManager === ItemStatus.APPROVED && 
+                              item.statusAdmin === ItemStatus.APPROVED && 
+                              !isBbmItem(item)
+                            );
+                            const reportedApproved = reqUsageApproved.reduce((sum, u) => sum + u.nominal, 0);
+                            const sisa = r.adminActionAmount - reportedApproved;
+
+                            return (
+                              <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-3 px-3 text-center font-bold text-slate-400 font-mono">
+                                  {idx + 1}
+                                </td>
+                                <td className="py-3 px-3 font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">
+                                  {getTransferDateDisplay(r)}
+                                </td>
+                                <td className="py-3 px-3">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
+                                      {r.id}
+                                    </span>
+                                    {r.siteId && (
+                                      <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200">
+                                        Site: {r.siteId}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-slate-500 font-medium line-clamp-1 mt-0.5 max-w-[240px]" title={r.keterangan}>
+                                    {r.keterangan}
+                                  </p>
+                                </td>
+                                <td className="py-3 px-3 text-right font-mono font-bold text-slate-700">
+                                  {formatIDR(r.jumlahPengajuan)}
+                                </td>
+                                <td className="py-3 px-3 text-right font-mono font-bold text-indigo-700">
+                                  {formatIDR(r.adminActionAmount)}
+                                </td>
+                                <td className="py-3 px-3 text-right font-mono font-bold text-emerald-700">
+                                  {formatIDR(reportedApproved)}
+                                </td>
+                                <td className="py-3 px-3 text-right font-mono font-bold">
+                                  {sisa > 0 ? (
+                                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block">
+                                      +{formatIDR(sisa)}
+                                    </span>
+                                  ) : sisa < 0 ? (
+                                    <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 inline-block">
+                                      {formatIDR(sisa)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-slate-400">Rp 0</span>
+                                  )}
+                                </td>
+                                <td className="py-3 px-3 text-center">
+                                  {renderStatusBadge(r.status)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold text-slate-900 text-xs">
+                            <td colSpan={3} className="py-3.5 px-3 uppercase text-[10px] tracking-wider text-slate-700">
+                              TOTAL REKAPITULASI LAPORAN
+                            </td>
+                            <td className="py-3.5 px-3 text-right font-mono text-slate-800">
+                              {formatIDR(totPengajuan)}
+                            </td>
+                            <td className="py-3.5 px-3 text-right font-mono text-indigo-800">
+                              {formatIDR(totTransfer)}
+                            </td>
+                            <td className="py-3.5 px-3 text-right font-mono text-emerald-800">
+                              {formatIDR(totDilaporkan)}
+                            </td>
+                            <td className="py-3.5 px-3 text-right font-mono text-sm">
+                              <span className={totSisa >= 0 ? 'text-emerald-700 font-black' : 'text-rose-700 font-black'}>
+                                {formatIDR(totSisa)}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-3 text-center text-[10px] text-slate-500 uppercase">
+                              REKAPITULASI
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Footer Modal */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+                <p className="text-[10px] text-slate-400 font-medium hidden sm:block">
+                  Perhitungan Saldo: Total Transfer dikurangi Total Nota Laporan yang telah disetujui (Approved).
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleExportPDF}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export PDF</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsTransactionReportOpen(false)}
+                    className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
+                  >
+                    Tutup Laporan
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Kartu Activity */}
         {(() => {

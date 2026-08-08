@@ -5,7 +5,8 @@
 
 import React, { useState } from 'react';
 import { UserProfile, Role, BudgetRequest, ResetDeviceLog } from '../types';
-import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel, Smartphone, RotateCcw, CheckCircle2, History, FileSpreadsheet, Clock } from 'lucide-react';
+import { formatDivisiSubDivisi } from '../lib/googleApi';
+import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel, Smartphone, RotateCcw, CheckCircle2, History, FileSpreadsheet, Clock, Tag } from 'lucide-react';
 
 interface ProfileSetupProps {
   profiles: UserProfile[];
@@ -39,6 +40,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   const [role, setRole] = useState<Role>(Role.USER);
   const [managerEmail, setManagerEmail] = useState('');
   const [divisi, setDivisi] = useState('');
+  const [subDivisi, setSubDivisi] = useState('');
   const [aksesBBM, setAksesBBM] = useState<boolean>(false);
   const [mobile, setMobile] = useState<boolean>(false);
   const [deviceId, setDeviceId] = useState<string>('');
@@ -60,6 +62,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
       (p.nama || '').toLowerCase().includes(q) ||
       (p.email || '').toLowerCase().includes(q) ||
       (p.divisi || '').toLowerCase().includes(q) ||
+      (p.subDivisi || '').toLowerCase().includes(q) ||
       p.role.toLowerCase().includes(q)
     );
   });
@@ -98,6 +101,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setRole(p.role);
     setManagerEmail(p.managerEmail || '');
     setDivisi(p.divisi || '');
+    setSubDivisi(p.subDivisi || '');
 
     const isBbm = p.aksesBBM === true || String(p.aksesBBM).trim().toUpperCase() === 'TRUE' || String(p.aksesBBM).trim().toUpperCase() === 'YA' || String(p.aksesBBM).trim() === '1';
     const isMob = p.mobile === true || String(p.mobile).trim().toUpperCase() === 'TRUE' || String(p.mobile).trim().toUpperCase() === 'YA' || String(p.mobile).trim() === '1';
@@ -119,6 +123,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setRole(Role.USER);
     setManagerEmail('');
     setDivisi('');
+    setSubDivisi('');
     setAksesBBM(false);
     setMobile(false);
     setDeviceId('');
@@ -214,6 +219,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
         role,
         managerEmail: role === Role.USER ? managerEmail.trim() : '',
         divisi: divisi.trim().toUpperCase(),
+        subDivisi: subDivisi.trim().toUpperCase(),
         aksesBBM,
         mobile,
         deviceId: mobile ? deviceId.trim() : ''
@@ -413,6 +419,21 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none uppercase"
                 />
                 <Briefcase className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+            </div>
+
+            {/* SubDivisi */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">SubDivisi (Opsional)</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={subDivisi}
+                  onChange={(e) => setSubDivisi(e.target.value)}
+                  placeholder="contoh: TIM A / CABANG 1"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none uppercase"
+                />
+                <Tag className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               </div>
             </div>
 
@@ -667,7 +688,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                       </span>
                       {p.divisi && (
                         <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 uppercase font-mono">
-                          {p.divisi}
+                          {formatDivisiSubDivisi(p.divisi, p.subDivisi)}
                         </span>
                       )}
                       {(p.aksesBBM === true || String(p.aksesBBM).trim().toUpperCase() === 'TRUE' || String(p.aksesBBM).trim().toUpperCase() === 'YA' || String(p.aksesBBM).trim() === '1') && (

@@ -45,7 +45,7 @@ const LAPORAN_HEADERS = [
 ];
 
 const USERS_HEADERS = [
-  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'AksesBBM', 'Mobile', 'DeviceID'
+  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'SubDivisi', 'AksesBBM', 'Mobile', 'DeviceID'
 ];
 
 const ACTIVITY_HEADERS = [
@@ -76,7 +76,10 @@ function parseSheetRows<T>(headers: string[], rows: any[][], mapper: (rowMap: Re
         idx = sheetHeaders.findIndex(sh => sh.toLowerCase().replace(/[^a-z0-9]/g, '') === hNorm);
       }
       if (idx === -1 && colIndex < row.length) {
-        idx = colIndex;
+        const existingColHeader = sheetHeaders[colIndex] ? sheetHeaders[colIndex].toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+        if (!existingColHeader) {
+          idx = colIndex;
+        }
       }
       rowMap[h] = idx !== -1 && row[idx] !== undefined ? row[idx] : '';
     });
@@ -176,6 +179,16 @@ function mapToUsageItem(row: Record<string, any>): UsageReportItem {
   };
 }
 
+// Helper to format Divisi and SubDivisi safely
+export function formatDivisiSubDivisi(divisi?: string, subDivisi?: string): string {
+  const div = (divisi || '').trim();
+  const sub = (subDivisi || '').trim();
+  if (!div) return '-';
+  const subUpper = sub.toUpperCase();
+  const isInvalidSub = !sub || sub === '-' || subUpper === 'TRUE' || subUpper === 'FALSE' || subUpper === 'YA' || subUpper === 'TIDAK' || subUpper === 'NULL' || subUpper === 'UNDEFINED' || sub === '0' || sub === '1';
+  return isInvalidSub ? div : `${div}-${sub}`;
+}
+
 // Map row map to UserProfile
 function mapToUserProfile(row: Record<string, any>): UserProfile {
   const rawBbm = row.AksesBBM ?? row['Akses BBM'] ?? row.aksesBBM ?? '';
@@ -200,6 +213,12 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
   } else if (rawRole === 'DIREKTUR' || rawRole === 'DIRECTOR') {
     roleVal = Role.DIREKTUR;
   }
+  let rawSubDiv = String(row.SubDivisi || row.subDivisi || row.Subdivisi || row.subdivisi || '').trim();
+  const subUpper = rawSubDiv.toUpperCase();
+  if (subUpper === 'TRUE' || subUpper === 'FALSE' || subUpper === 'YA' || subUpper === 'TIDAK' || subUpper === '1' || subUpper === '0' || subUpper === 'NULL' || subUpper === 'UNDEFINED' || subUpper === '-') {
+    rawSubDiv = '';
+  }
+
   return {
     userId: String(row.UserID || row.userId || row.Email || ''),
     password: String(row.Password || row.password || ''),
@@ -208,6 +227,7 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
     role: roleVal,
     managerEmail: String(row.ManagerEmail || row.managerEmail || ''),
     divisi: String(row.Divisi || row.divisi || ''),
+    subDivisi: rawSubDiv,
     aksesBBM: isAksesBBM,
     mobile: isMobile,
     deviceId: deviceIdVal
@@ -330,7 +350,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
       data: [
         { range: 'Pengajuan!A1:P1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
-        { range: 'Users!A1:J1', values: [USERS_HEADERS] },
+        { range: 'Users!A1:K1', values: [USERS_HEADERS] },
         { range: 'Activity!A1:L1', values: [ACTIVITY_HEADERS] },
         { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
         { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
@@ -1278,6 +1298,7 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
     Role: profile.role,
     ManagerEmail: profile.managerEmail,
     Divisi: profile.divisi,
+    SubDivisi: profile.subDivisi || '',
     AksesBBM: profile.aksesBBM ? 'TRUE' : 'FALSE',
     Mobile: profile.mobile ? 'TRUE' : 'FALSE',
     DeviceID: profile.deviceId || ''
@@ -1286,7 +1307,7 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
   if (existingIdx !== -1) {
     // Row is at existingIdx + 2 (since header is row 1, and index is 0-based index of slice(1))
     const sheetRowIdx = existingIdx + 2;
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:J${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:K${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,

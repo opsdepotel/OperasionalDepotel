@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { UserProfile, Role } from '../types';
+import { formatDivisiSubDivisi } from '../lib/googleApi';
 import {
   User, Mail, Shield, Tag, Lock, ArrowLeft, Key, Eye, EyeOff, AlertCircle, CheckCircle2, Fuel, Smartphone
 } from 'lucide-react';
@@ -131,7 +132,9 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
                 <span className="block text-[8px] font-black text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
                   <Tag className="w-3 h-3 text-indigo-500" /> Divisi
                 </span>
-                <span className="font-bold text-slate-700">{userProfile.divisi || '-'}</span>
+                <span className="font-bold text-slate-700">
+                  {formatDivisiSubDivisi(userProfile.divisi, userProfile.subDivisi)}
+                </span>
               </div>
 
               <div className="bg-slate-50/50 p-2.5 rounded-2xl border border-slate-100">
