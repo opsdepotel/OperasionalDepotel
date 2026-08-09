@@ -1213,6 +1213,8 @@ export default function App() {
       coordinatesDb: string;
       coordinatesActual: string;
       keterangan: string;
+      indikasiFake?: boolean;
+      fakeReason?: string;
     },
     photoFile?: File
   ) => {
@@ -1260,7 +1262,9 @@ export default function App() {
       coordinatesActual: activityData.coordinatesActual,
       keterangan: activityData.keterangan,
       buktiUrl: finalBuktiUrl,
-      buktiFileId: finalBuktiFileId || undefined
+      buktiFileId: finalBuktiFileId || undefined,
+      indikasiFake: activityData.indikasiFake ?? false,
+      fakeReason: activityData.fakeReason || ''
     };
 
     await createUserActivity(token, spreadsheetId, newActivity);

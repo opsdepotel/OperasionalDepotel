@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, User, Filter, Building2, Search } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search } from 'lucide-react';
+import { detectFakeGps } from '../lib/fakeGpsDetector';
 
 // Helper to parse coordinate string and calculate Haversine distance
 function parseCoords(coordStr: string): { lat: number; lng: number } | null {
@@ -56,6 +57,8 @@ interface ActivityLogViewProps {
     coordinatesDb: string;
     coordinatesActual: string;
     keterangan: string;
+    indikasiFake?: boolean;
+    fakeReason?: string;
   }, photoFile?: File) => Promise<void>;
   onBack: () => void;
 }
@@ -124,6 +127,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   }, 'activity_photoModal');
 
   // Form State
+  const lastGpsPositionRef = useRef<GeolocationPosition | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState('');
   const [siteName, setSiteName] = useState('');
   const [coordinatesDb, setCoordinatesDb] = useState('');
@@ -377,6 +381,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     setGpsError(null);
 
     const updatePosition = (position: GeolocationPosition) => {
+      lastGpsPositionRef.current = position;
       const lat = position.coords.latitude.toFixed(6);
       const lon = position.coords.longitude.toFixed(6);
       const acc = position.coords.accuracy;
@@ -454,6 +459,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     setIsFetchingGps(true);
     navigator.geolocation.getCurrentPosition(
       (position) => {
+        lastGpsPositionRef.current = position;
         const lat = position.coords.latitude.toFixed(6);
         const lon = position.coords.longitude.toFixed(6);
         const acc = position.coords.accuracy;
@@ -509,13 +515,18 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       const finalSiteId = isVerified ? trimmedSiteId.toUpperCase() : trimmedSiteId;
       const finalSiteName = matchedSite ? matchedSite.siteName : (gpsAddress || siteName.trim() || finalSiteId);
 
+      // Perform silent Fake GPS check right before submission
+      const fakeCheck = detectFakeGps(lastGpsPositionRef.current, coordinatesActual);
+
       await onSaveActivity({
         tanggal: getTodayStr(), // System date for real-time tracking
         siteId: finalSiteId,
         siteName: finalSiteName,
         coordinatesDb,
         coordinatesActual,
-        keterangan: keterangan.trim()
+        keterangan: keterangan.trim(),
+        indikasiFake: fakeCheck.isFake,
+        fakeReason: fakeCheck.reason
       }, photoFile);
 
       // Reset form
@@ -1064,6 +1075,21 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         
                         <h4 className="font-display font-bold text-slate-900 text-xs mt-2">{act.siteName}</h4>
                         <p className="text-xs text-slate-600 mt-1 font-normal whitespace-pre-wrap leading-relaxed">{act.keterangan}</p>
+
+                        {/* Admin-Only Fake GPS Detection Badge */}
+                        {currentRole === Role.ADMINISTRATOR && act.indikasiFake && (
+                          <div className="mt-2.5 p-2.5 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2 text-xs">
+                            <AlertOctagon className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                            <div className="min-w-0 flex-1">
+                              <span className="font-bold text-rose-900 block text-[11px]">
+                                Indikasi Fake GPS Terdeteksi
+                              </span>
+                              <span className="text-[10px] text-rose-700 block mt-0.5 leading-relaxed">
+                                Alasan: {act.fakeReason || 'Akurasi, altitude, atau timestamp anomali'}
+                              </span>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {(() => {

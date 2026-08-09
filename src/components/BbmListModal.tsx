@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, RequestStatus } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink } from 'lucide-react';
+import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon } from 'lucide-react';
 
 interface BbmListModalProps {
   isOpen: boolean;
@@ -645,6 +645,21 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                       <p className="text-xs text-slate-600 font-normal leading-relaxed whitespace-pre-wrap">
                         {act.keterangan}
                       </p>
+
+                      {/* Admin-Only Fake GPS Badge */}
+                      {role === Role.ADMINISTRATOR && act.indikasiFake && (
+                        <div className="p-2 bg-rose-50 border border-rose-200 rounded-xl flex items-start gap-2 text-xs">
+                          <AlertOctagon className="w-3.5 h-3.5 text-rose-600 shrink-0 mt-0.5" />
+                          <div className="min-w-0 flex-1">
+                            <span className="font-bold text-rose-900 block text-[11px]">
+                              Indikasi Fake GPS Terdeteksi
+                            </span>
+                            <span className="text-[10px] text-rose-700 block mt-0.5 leading-relaxed">
+                              Alasan: {act.fakeReason || 'Akurasi, altitude, atau timestamp anomali'}
+                            </span>
+                          </div>
+                        </div>
+                      )}
 
 
 

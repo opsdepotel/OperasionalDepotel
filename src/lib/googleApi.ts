@@ -50,6 +50,7 @@ const USERS_HEADERS = [
 
 const ACTIVITY_HEADERS = [
   'ActivityID', 'UserEmail', 'Tanggal', 'CreatedAt', 'SiteID', 'SiteName', 'CoordinatesDb', 'CoordinatesActual', 'Keterangan', 'BuktiUrl', 'BuktiFileId',
+  'IndikasiFake', 'FakeReason',
   'Timestamp'
 ];
 
@@ -237,6 +238,8 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
 // Map row map to UserActivity
 function mapToUserActivity(row: Record<string, any>): UserActivity {
   const ts = String(row.Timestamp || row.timestamp || row.CreatedAt || '');
+  const rawFake = row.IndikasiFake ?? row.indikasiFake;
+  const isFake = rawFake === true || String(rawFake).toUpperCase() === 'TRUE' || String(rawFake) === '1';
   return {
     id: String(row.ActivityID),
     userEmail: String(row.UserEmail),
@@ -249,7 +252,9 @@ function mapToUserActivity(row: Record<string, any>): UserActivity {
     coordinatesActual: String(row.CoordinatesActual || ''),
     keterangan: String(row.Keterangan),
     buktiUrl: String(row.BuktiUrl),
-    buktiFileId: String(row.BuktiFileId || '')
+    buktiFileId: String(row.BuktiFileId || ''),
+    indikasiFake: isFake,
+    fakeReason: String(row.FakeReason || row.fakeReason || '')
   };
 }
 
@@ -351,7 +356,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
         { range: 'Pengajuan!A1:P1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
         { range: 'Users!A1:K1', values: [USERS_HEADERS] },
-        { range: 'Activity!A1:L1', values: [ACTIVITY_HEADERS] },
+        { range: 'Activity!A1:N1', values: [ACTIVITY_HEADERS] },
         { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
         { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
       ]
@@ -1147,6 +1152,8 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
     Keterangan: activity.keterangan,
     BuktiUrl: activity.buktiUrl,
     BuktiFileId: activity.buktiFileId || '',
+    IndikasiFake: activity.indikasiFake ? 'TRUE' : 'FALSE',
+    FakeReason: activity.fakeReason || '',
     Timestamp: nowTimestamp
   });
 

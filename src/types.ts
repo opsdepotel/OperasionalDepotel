@@ -99,6 +99,8 @@ export interface UserActivity {
   keterangan: string;
   buktiUrl: string;
   buktiFileId?: string;
+  indikasiFake?: boolean;
+  fakeReason?: string;
 }
 
 export interface ResetDeviceLog {
