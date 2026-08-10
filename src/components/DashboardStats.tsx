@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory } from '../types';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2 } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -63,18 +63,34 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [gpsFetchDurationMs, setGpsFetchDurationMs] = useState<number | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<string>('Memeriksa...');
+  const [gpsUpdateCount, setGpsUpdateCount] = useState<number>(0);
+  const [lastGpsCheckTime, setLastGpsCheckTime] = useState<Date | null>(null);
+  const [isAutoGpsActive, setIsAutoGpsActive] = useState<boolean>(true);
 
   useBackHandler(isGpsModalOpen, () => setIsGpsModalOpen(false), 'dashboardStats_gpsModal');
 
-  const fetchGpsData = () => {
+  useEffect(() => {
+    if (!isGpsModalOpen) {
+      setGpsUpdateCount(0);
+      setGpsModalPosition(null);
+      setGpsModalError(null);
+      setLastGpsCheckTime(null);
+      return;
+    }
+
     if (!navigator.geolocation) {
       setGpsModalError('Perangkat atau browser Anda tidak mendukung pencarian lokasi GPS.');
       return;
     }
 
-    setIsFetchingGpsModal(true);
+    if (!isAutoGpsActive) return;
+
+    setIsFetchingGpsModal(prev => gpsModalPosition ? false : true);
     setGpsModalError(null);
-    const startTime = Date.now();
+
+    let watchId: number | null = null;
+    let intervalId: any = null;
+    let startTime = Date.now();
 
     if (navigator.permissions && navigator.permissions.query) {
       navigator.permissions.query({ name: 'geolocation' }).then((p) => {
@@ -86,37 +102,91 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       setPermissionState('Aktif / Standard');
     }
 
-    navigator.geolocation.getCurrentPosition(
+    const handlePos = (pos: GeolocationPosition) => {
+      const duration = Date.now() - startTime;
+      setGpsModalPosition(pos);
+      setGpsFetchDurationMs(duration);
+      setIsFetchingGpsModal(false);
+      setGpsModalError(null);
+      setGpsUpdateCount(c => c + 1);
+      setLastGpsCheckTime(new Date());
+    };
+
+    const handleErr = (err: GeolocationPositionError) => {
+      let msg = 'Gagal mengambil koordinat lokasi GPS dari perangkat.';
+      if (err.code === err.PERMISSION_DENIED) {
+        msg = 'Akses lokasi (GPS) ditolak. Harap beri izin akses lokasi pada browser/perangkat Anda.';
+      } else if (err.code === err.POSITION_UNAVAILABLE) {
+        msg = 'Sinyal GPS atau posisi tidak tersedia pada perangkat.';
+      } else if (err.code === err.TIMEOUT) {
+        msg = 'Waktu pengambilan sinyal GPS habis (timeout). Silakan klik Ulangi Cek GPS.';
+      }
+      setGpsModalError(msg);
+      setIsFetchingGpsModal(false);
+    };
+
+    // First immediate check
+    startTime = Date.now();
+    navigator.geolocation.getCurrentPosition(handlePos, handleErr, {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 0,
+    });
+
+    // Real-time stream with watchPosition
+    watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        const duration = Date.now() - startTime;
-        setGpsModalPosition(pos);
-        setGpsFetchDurationMs(duration);
-        setIsFetchingGpsModal(false);
-        setGpsModalError(null);
+        startTime = Date.now();
+        handlePos(pos);
       },
-      (err) => {
-        let msg = 'Gagal mengambil koordinat lokasi GPS dari perangkat.';
-        if (err.code === err.PERMISSION_DENIED) {
-          msg = 'Akses lokasi (GPS) ditolak. Harap beri izin akses lokasi pada browser/perangkat Anda.';
-        } else if (err.code === err.POSITION_UNAVAILABLE) {
-          msg = 'Sinyal GPS atau posisi tidak tersedia pada perangkat.';
-        } else if (err.code === err.TIMEOUT) {
-          msg = 'Waktu pengambilan sinyal GPS habis (timeout). Silakan klik Ulangi Cek GPS.';
-        }
-        setGpsModalError(msg);
-        setIsFetchingGpsModal(false);
-      },
+      (err) => {},
       {
         enableHighAccuracy: true,
-        timeout: 15000,
+        timeout: 10000,
         maximumAge: 0,
       }
+    );
+
+    // Continuous repetition interval every 2.5s
+    intervalId = setInterval(() => {
+      startTime = Date.now();
+      navigator.geolocation.getCurrentPosition(handlePos, () => {}, {
+        enableHighAccuracy: true,
+        timeout: 5000,
+        maximumAge: 0,
+      });
+    }, 2500);
+
+    return () => {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+      if (intervalId !== null) clearInterval(intervalId);
+    };
+  }, [isGpsModalOpen, isAutoGpsActive]);
+
+  const fetchGpsDataManual = () => {
+    if (!navigator.geolocation) return;
+    setIsFetchingGpsModal(true);
+    setGpsModalError(null);
+    const startTime = Date.now();
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsModalPosition(pos);
+        setGpsFetchDurationMs(Date.now() - startTime);
+        setIsFetchingGpsModal(false);
+        setGpsUpdateCount(c => c + 1);
+        setLastGpsCheckTime(new Date());
+      },
+      (err) => {
+        setGpsModalError('Gagal memperbarui posisi GPS.');
+        setIsFetchingGpsModal(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   };
 
   const handleOpenGpsCheck = () => {
     setIsGpsModalOpen(true);
-    fetchGpsData();
+    setIsAutoGpsActive(true);
   };
 
   const copyToClipboard = (text: string, fieldName: string) => {
@@ -1578,25 +1648,61 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                     <h3 className="text-base font-display font-bold text-white flex items-center gap-2">
                       Diagnostik &amp; Form Parameter GPS
                       <span className="text-[9px] font-bold bg-emerald-500/30 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-400/30 uppercase tracking-wider">
-                        Real-Time Hardware
+                        Monitoring Berulang Aktif
                       </span>
                     </h3>
                     <p className="text-[11px] text-emerald-200 mt-0.5">
-                      Parameter Geolocation API perangkat untuk pengujian sinyal &amp; validasi lokasi
+                      Pengecekan GPS otomatis berjalan berulang sampai Anda menekan tombol Keluar / Kembali
                     </p>
                   </div>
                 </div>
-                <button
-                  onClick={() => setIsGpsModalOpen(false)}
-                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
-                >
-                  <X className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsGpsModalOpen(false)}
+                    className="px-3.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-400/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="Keluar / Kembali"
+                  >
+                    <ArrowLeft className="w-4 h-4 text-rose-300" />
+                    <span className="hidden sm:inline">Keluar / Kembali</span>
+                  </button>
+                  <button
+                    onClick={() => setIsGpsModalOpen(false)}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Status Banner Pengecekan Berulang */}
+              <div className="bg-emerald-900/10 border-b border-emerald-200/60 px-5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 text-emerald-900 font-medium">
+                  {isAutoGpsActive ? (
+                    <>
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-600"></span>
+                      </span>
+                      <span className="font-bold">Pengecekan GPS Berulang Sedang Aktif</span>
+                      <span className="text-[11px] text-emerald-700 font-mono hidden sm:inline">(Refresh otomatis tiap ~2.5 detik)</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-2.5 w-2.5 rounded-full bg-amber-500 inline-block"></span>
+                      <span className="font-bold text-amber-900">Pengecekan Dijeda</span>
+                    </>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className="bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full font-mono">
+                    Total Cek: {gpsUpdateCount}x
+                  </span>
+                </div>
               </div>
 
               {/* Body Content */}
               <div className="p-5 overflow-y-auto space-y-4">
-                {isFetchingGpsModal ? (
+                {isFetchingGpsModal && !gpsModalPosition ? (
                   <div className="py-12 text-center space-y-3">
                     <Loader2 className="w-10 h-10 text-emerald-600 animate-spin mx-auto" />
                     <div>
@@ -1604,7 +1710,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                       <p className="text-xs text-slate-400 mt-1">Mengakses sensor Geolocation API dari perangkat ini</p>
                     </div>
                   </div>
-                ) : gpsModalError ? (
+                ) : gpsModalError && !gpsModalPosition ? (
                   <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-800 space-y-3">
                     <div className="flex items-start gap-3">
                       <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
@@ -1613,13 +1719,21 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                         <p className="text-xs text-rose-700 mt-1 font-medium">{gpsModalError}</p>
                       </div>
                     </div>
-                    <button
-                      onClick={fetchGpsData}
-                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5" />
-                      Coba Ulangi Cek GPS
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={fetchGpsDataManual}
+                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        Coba Ulangi Cek GPS
+                      </button>
+                      <button
+                        onClick={() => setIsGpsModalOpen(false)}
+                        className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                      >
+                        Keluar / Kembali
+                      </button>
+                    </div>
                   </div>
                 ) : gpsModalPosition ? (() => {
                   const coords = gpsModalPosition.coords;
@@ -1670,9 +1784,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                         </div>
 
                         <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">RESPON SENSOR</span>
-                          <span className="text-xs font-bold font-mono text-indigo-700 mt-1 block">
-                            {gpsFetchDurationMs ? `${gpsFetchDurationMs} ms` : '-'}
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">UPDATE TERAKHIR</span>
+                          <span className="text-xs font-bold font-mono text-emerald-700 mt-1 block">
+                            {lastGpsCheckTime ? lastGpsCheckTime.toLocaleTimeString('id-ID') : '-'}
                           </span>
                         </div>
                       </div>
@@ -1693,7 +1807,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                         <div className="flex items-center justify-between">
                           <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 font-display">
                             <Navigation className="w-4 h-4 text-emerald-600" />
-                            Parameter Sensor GPS Perangkat
+                            Parameter Sensor GPS Perangkat (Live)
                           </h4>
                           <span className="text-[10px] text-slate-400 font-mono">
                             Fixed: {new Date(timestamp).toLocaleTimeString('id-ID')}
@@ -1861,30 +1975,50 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                       </div>
 
                       {/* Bottom Action Controls */}
-                      <div className="pt-2 flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-100">
-                        <div className="flex items-center gap-2">
+                      <div className="pt-3 flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-200">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isAutoGpsActive ? (
+                            <button
+                              onClick={() => setIsAutoGpsActive(false)}
+                              className="px-3.5 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer"
+                            >
+                              <Pause className="w-3.5 h-3.5" />
+                              Jeda Pengecekan
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setIsAutoGpsActive(true)}
+                              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+                            >
+                              <Play className="w-3.5 h-3.5" />
+                              Lanjutkan Pengecekan Berulang
+                            </button>
+                          )}
+
                           <button
-                            onClick={fetchGpsData}
-                            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+                            onClick={fetchGpsDataManual}
+                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-2 cursor-pointer"
+                            title="Paksa refresh lokasi sekarang"
                           >
                             <RefreshCw className="w-3.5 h-3.5" />
-                            Ulangi Cek GPS (Refresh)
+                            Refresh Sekarang
                           </button>
 
                           <a
                             href={`https://www.google.com/maps?q=${lat},${lng}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer border border-slate-200"
+                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer border border-slate-200"
                           >
                             <ExternalLink className="w-3.5 h-3.5 text-slate-600" />
-                            Buka Google Maps
+                            Maps
                           </a>
                         </div>
 
-                        <button
-                          onClick={() => {
-                            const summaryText = `--- DATA DIAGNOSTIK GPS PERANGKAT ---
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => {
+                              const summaryText = `--- DATA DIAGNOSTIK GPS PERANGKAT ---
 Tanggal Fix: ${new Date(timestamp).toLocaleString('id-ID')}
 Latitude: ${lat}
 Longitude: ${lng}
@@ -1896,13 +2030,23 @@ Arah (Heading): ${heading !== null ? `${heading}°` : 'Null'}
 Kecepatan: ${speed !== null ? `${speed}m/s` : '0'}
 Evaluasi Fake GPS: ${fakeCheck.reason}
 User Agent: ${navigator.userAgent}`;
-                            copyToClipboard(summaryText, 'all');
-                          }}
-                          className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer"
-                        >
-                          {copiedField === 'all' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                          {copiedField === 'all' ? 'Tersalin!' : 'Salin Semua Parameter'}
-                        </button>
+                              copyToClipboard(summaryText, 'all');
+                            }}
+                            className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer"
+                          >
+                            {copiedField === 'all' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                            {copiedField === 'all' ? 'Tersalin!' : 'Salin Parameter'}
+                          </button>
+
+                          {/* Explicit Keluar / Kembali Button */}
+                          <button
+                            onClick={() => setIsGpsModalOpen(false)}
+                            className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer border border-slate-700"
+                          >
+                            <ArrowLeft className="w-4 h-4 text-slate-300" />
+                            Keluar / Kembali
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
