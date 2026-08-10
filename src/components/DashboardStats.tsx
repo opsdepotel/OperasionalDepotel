@@ -1775,11 +1775,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                         </div>
 
                         <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">EVALUASI FAKE GPS</span>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">SKOR VALIDITAS HARDWARE</span>
                           <span className={`inline-block text-[10px] font-extrabold mt-1 px-2 py-0.5 rounded-full uppercase ${
-                            fakeCheck.isFake ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            fakeCheck.overallScore >= 80 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : fakeCheck.overallScore >= 60 ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-rose-100 text-rose-800 border border-rose-200'
                           }`}>
-                            {fakeCheck.isFake ? 'Indikasi Anomali' : 'VALID / ASLI'}
+                            {fakeCheck.overallScore} / 100 ({fakeCheck.isFake ? 'Indikasi Fake' : 'Valid Hardware'})
                           </span>
                         </div>
 
@@ -1791,12 +1791,102 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                         </div>
                       </div>
 
+                      {/* Card Evaluasi Kombinasi 3 Parameter Fake GPS */}
+                      {fakeCheck.evaluations && (
+                        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white p-4 rounded-2xl shadow-md border border-slate-700 space-y-3">
+                          <div className="flex items-center justify-between border-b border-slate-700 pb-2.5">
+                            <div className="flex items-center gap-2">
+                              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                              <h4 className="text-xs font-bold text-white font-display uppercase tracking-wider">
+                                Metode Evaluasi Fake GPS System (3 Parameter Hardware)
+                              </h4>
+                            </div>
+                            <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase ${
+                              fakeCheck.isFake ? 'bg-rose-500/20 text-rose-300 border border-rose-400/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
+                            }`}>
+                              {fakeCheck.isFake ? 'Terdeteksi Anomali' : 'Terverifikasi Asli'}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                            {/* Parameter 1: Timestamp Hardware */}
+                            {(() => {
+                              const ts = fakeCheck.evaluations.timestamp;
+                              return (
+                                <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 flex flex-col justify-between">
+                                  <div>
+                                    <div className="flex items-center justify-between gap-1 mb-1">
+                                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-tight">
+                                        1. Timestamp Hardware
+                                      </span>
+                                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                        ts.status === 'VALID' ? 'bg-emerald-500/20 text-emerald-300' : ts.status === 'WARNING' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
+                                      }`}>
+                                        {ts.status} ({ts.score}%)
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] font-mono font-bold text-emerald-300">{ts.detailValue}</p>
+                                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">{ts.analysisNote}</p>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Parameter 2: Akurasi Radius */}
+                            {(() => {
+                              const acc = fakeCheck.evaluations.accuracy;
+                              return (
+                                <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 flex flex-col justify-between">
+                                  <div>
+                                    <div className="flex items-center justify-between gap-1 mb-1">
+                                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-tight">
+                                        2. Akurasi Radius
+                                      </span>
+                                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                        acc.status === 'VALID' ? 'bg-emerald-500/20 text-emerald-300' : acc.status === 'WARNING' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
+                                      }`}>
+                                        {acc.status} ({acc.score}%)
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] font-mono font-bold text-emerald-300">{acc.detailValue}</p>
+                                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">{acc.analysisNote}</p>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* Parameter 3: Data Elevasi */}
+                            {(() => {
+                              const alt = fakeCheck.evaluations.elevation;
+                              return (
+                                <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 flex flex-col justify-between">
+                                  <div>
+                                    <div className="flex items-center justify-between gap-1 mb-1">
+                                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-tight">
+                                        3. Data Elevasi 3D
+                                      </span>
+                                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
+                                        alt.status === 'VALID' ? 'bg-emerald-500/20 text-emerald-300' : alt.status === 'WARNING' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
+                                      }`}>
+                                        {alt.status} ({alt.score}%)
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] font-mono font-bold text-emerald-300">{alt.detailValue}</p>
+                                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">{alt.analysisNote}</p>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Fake GPS Warning if detected */}
                       {fakeCheck.isFake && (
                         <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
                           <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                           <div className="text-xs text-amber-900">
-                            <span className="font-bold block">Catatan Diagnostik Fake GPS:</span>
+                            <span className="font-bold block">Catatan Anomali Fake GPS:</span>
                             <span>{fakeCheck.reason}</span>
                           </div>
                         </div>
