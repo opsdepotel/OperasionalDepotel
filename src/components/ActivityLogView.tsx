@@ -8,6 +8,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
 import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search } from 'lucide-react';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
+import { formatDivisiSubDivisi } from '../lib/googleApi';
 
 // Helper to parse coordinate string and calculate Haversine distance
 function parseCoords(coordStr: string): { lat: number; lng: number } | null {
@@ -1022,7 +1023,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               {filteredActivities.map((act) => {
                 const actProf = profiles.find(p => p.email.toLowerCase() === act.userEmail.toLowerCase());
                 const userName = actProf?.nama || actProf?.userId || act.userEmail;
-                const userDivisi = actProf?.divisi;
+                const formattedDivisi = formatDivisiSubDivisi(actProf?.divisi, actProf?.subDivisi);
 
                 return (
                   <div key={act.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col" id={`activity-card-${act.id}`}>
@@ -1032,9 +1033,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         <div className="flex items-center gap-2">
                           <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
                           <span className="text-xs font-bold text-slate-800">{userName}</span>
-                          {userDivisi && (
+                          {formattedDivisi && formattedDivisi !== '-' && (
                             <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                              {userDivisi}
+                              {formattedDivisi}
                             </span>
                           )}
                         </div>

@@ -187,7 +187,7 @@ export function formatDivisiSubDivisi(divisi?: string, subDivisi?: string): stri
   if (!div) return '-';
   const subUpper = sub.toUpperCase();
   const isInvalidSub = !sub || sub === '-' || subUpper === 'TRUE' || subUpper === 'FALSE' || subUpper === 'YA' || subUpper === 'TIDAK' || subUpper === 'NULL' || subUpper === 'UNDEFINED' || sub === '0' || sub === '1';
-  return isInvalidSub ? div : `${div}-${sub}`;
+  return isInvalidSub ? div : `${div} - ${sub}`;
 }
 
 // Map row map to UserProfile

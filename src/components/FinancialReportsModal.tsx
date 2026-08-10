@@ -860,7 +860,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
                               <td className="py-2.5 px-3 text-right font-mono text-emerald-700 font-bold">
                                 {formatIDR(item.totalReportedApproved)}
                               </td>
-                              <td className={`py-2.5 px-3 text-right font-mono font-extrabold ${hasPositiveBalance ? 'text-amber-600' : 'text-slate-800'}`}>
+                              <td className={`py-2.5 px-3 text-right font-mono font-extrabold ${hasPositiveBalance ? 'text-blue-600' : item.balance < 0 ? 'text-rose-600' : 'text-slate-800'}`}>
                                 {formatIDR(item.balance)}
                               </td>
                               <td className="py-2.5 px-3 text-center">
@@ -869,12 +869,12 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
                                     BALANCE (Rp 0)
                                   </span>
                                 ) : hasPositiveBalance ? (
-                                  <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-amber-50 text-amber-800 border border-amber-200">
-                                    MEMEGANG SALDO
+                                  <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-blue-50 text-blue-700 border border-blue-200">
+                                    LEBIH SALDO
                                   </span>
                                 ) : (
                                   <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-rose-50 text-rose-700 border border-rose-200">
-                                    SURPLUS/DEFISIT
+                                    SALDO KURANG
                                   </span>
                                 )}
                               </td>

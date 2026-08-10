@@ -434,6 +434,8 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                     {displayedRequests.map((req) => {
                       const reqUsage = usageItems.filter(u => u.requestId === req.id);
                       const isTalangan = req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]');
+                      const totalNota = reqUsage.reduce((sum, item) => sum + (item.totalHarga || 0), 0);
+                      const itemsWithPhoto = reqUsage.filter(u => u.buktiFoto);
 
                       return (
                         <div
@@ -487,10 +489,37 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                               <span className="font-bold text-indigo-700">{formatIDR(req.adminActionAmount || 0)}</span>
                             </div>
                             <div className="col-span-2 sm:col-span-1">
-                              <span className="text-slate-400 font-medium block">LAPORAN MASUK:</span>
-                              <span className="font-bold text-slate-700">{reqUsage.length} Item Nota</span>
+                              <span className="text-slate-400 font-medium block">NOMINAL TOTAL NOTA:</span>
+                              <span className="font-bold text-emerald-700">{formatIDR(totalNota)} ({reqUsage.length} Item)</span>
                             </div>
                           </div>
+
+                          {/* Quick Nota Photo Thumbnails */}
+                          {itemsWithPhoto.length > 0 && (
+                            <div className="flex items-center gap-2 pt-1 border-t border-slate-150 text-[10px] flex-wrap">
+                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Foto Nota ({itemsWithPhoto.length}):</span>
+                              <div className="flex items-center gap-1.5">
+                                {itemsWithPhoto.slice(0, 5).map((item, pIdx) => (
+                                  <img
+                                    key={item.id || pIdx}
+                                    src={item.buktiFoto}
+                                    alt={`Nota ${item.keterangan}`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setPreviewPhoto({ url: item.buktiFoto!, title: `Bukti Nota: ${item.keterangan}` });
+                                    }}
+                                    className="w-7 h-7 object-cover rounded-lg border border-slate-300 hover:scale-110 hover:border-indigo-500 transition-all cursor-pointer shadow-2xs"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ))}
+                                {itemsWithPhoto.length > 5 && (
+                                  <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                                    +{itemsWithPhoto.length - 5} foto
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -578,18 +607,27 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                       </div>
 
                       {/* Financial Reconciliation Summary Cards */}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-xs">
                           <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">NOMINAL DIAJUKAN</span>
-                          <span className="text-sm font-bold text-slate-800 mt-0.5 block">{formatIDR(selectedDetailRequest.jumlahPengajuan)}</span>
+                          <span className="text-sm font-bold text-slate-800 mt-0.5 block font-mono">{formatIDR(selectedDetailRequest.jumlahPengajuan)}</span>
                         </div>
                         <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-xs">
                           <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-wider block">TRANSFER ADMIN</span>
-                          <span className="text-sm font-bold text-indigo-700 mt-0.5 block">{formatIDR(adminTransfer)}</span>
+                          <span className="text-sm font-bold text-indigo-700 mt-0.5 block font-mono">{formatIDR(adminTransfer)}</span>
                         </div>
-                        <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-xs col-span-2 sm:col-span-1">
+                        <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-xs">
                           <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-wider block">TOTAL LAPORAN NOTA</span>
-                          <span className="text-sm font-bold text-emerald-700 mt-0.5 block">{formatIDR(totalNota)} ({reqUsage.length} Item)</span>
+                          <span className="text-sm font-bold text-emerald-700 mt-0.5 block font-mono">{formatIDR(totalNota)}</span>
+                          <span className="text-[9px] text-slate-400 font-semibold">{reqUsage.length} Item Nota</span>
+                        </div>
+                        <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-xs">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">SELISIH / SISA SALDO</span>
+                          <span className={`text-sm font-bold mt-0.5 block font-mono ${
+                            adminTransfer - totalNota < 0 ? 'text-rose-600' : 'text-slate-800'
+                          }`}>
+                            {formatIDR(adminTransfer - totalNota)}
+                          </span>
                         </div>
                       </div>
 
@@ -619,8 +657,8 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                           <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                             <Coins className="w-3.5 h-3.5 text-indigo-600" /> Rincian Item Laporan / Nota ({reqUsage.length})
                           </h4>
-                          <span className="text-[10px] font-bold text-slate-500">
-                            Total: {formatIDR(totalNota)}
+                          <span className="text-[10px] font-bold text-emerald-700 font-mono bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                            Total Nominal Nota: {formatIDR(totalNota)}
                           </span>
                         </div>
 
@@ -633,48 +671,80 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                             {reqUsage.map((item, idx) => (
                               <div
                                 key={item.id || idx}
-                                className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2 text-xs"
+                                className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5 text-xs"
                               >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div>
-                                    <span className="font-bold text-slate-800">{item.keterangan}</span>
-                                    {item.kategori && (
-                                      <span className="ml-2 text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-mono uppercase">
-                                        {item.kategori}
-                                      </span>
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-start gap-3 min-w-0">
+                                    {/* Inline Photo Thumbnail if available */}
+                                    {item.buktiFoto ? (
+                                      <div
+                                        onClick={() => setPreviewPhoto({ url: item.buktiFoto!, title: `Bukti Nota: ${item.keterangan}` })}
+                                        className="w-14 h-14 rounded-xl border border-slate-300 bg-slate-200 overflow-hidden shrink-0 cursor-pointer relative group hover:ring-2 hover:ring-indigo-500/50 transition-all"
+                                        title="Klik untuk memperbesar foto nota"
+                                      >
+                                        <img
+                                          src={item.buktiFoto}
+                                          alt={`Nota ${item.keterangan}`}
+                                          className="w-full h-full object-cover group-hover:scale-110 transition-all"
+                                          referrerPolicy="no-referrer"
+                                        />
+                                        <div className="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                          <ImageIcon className="w-4 h-4 text-white" />
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="w-14 h-14 rounded-xl border border-dashed border-slate-300 bg-slate-100 flex flex-col items-center justify-center text-[9px] text-slate-400 shrink-0 text-center p-1">
+                                        <ImageIcon className="w-4 h-4 mb-0.5 opacity-40" />
+                                        Tanpa Nota
+                                      </div>
                                     )}
-                                  </div>
-                                  <span className="font-bold text-slate-900 font-mono">
-                                    {formatIDR(item.totalHarga)}
-                                  </span>
-                                </div>
 
-                                <div className="text-[10px] text-slate-500 flex items-center gap-3 flex-wrap">
-                                  <span>Jumlah: <strong>{item.kuantitas} x {formatIDR(item.hargaSatuan)}</strong></span>
-                                  {item.status && (
-                                    <span className={`px-1.5 py-0.2 rounded font-bold uppercase ${
-                                      item.status === ItemStatus.APPROVED ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
-                                      item.status === ItemStatus.REJECTED ? 'bg-rose-100 text-rose-800 border border-rose-200' :
-                                      'bg-amber-100 text-amber-800 border border-amber-200'
-                                    }`}>
-                                      {item.status}
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-bold text-slate-800 text-xs">{item.keterangan}</span>
+                                        {item.kategori && (
+                                          <span className="text-[9px] bg-indigo-100 text-indigo-800 px-1.5 py-0.5 rounded font-mono uppercase font-bold">
+                                            {item.kategori}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 mt-1 flex items-center gap-2 flex-wrap">
+                                        <span>Rincian: <strong>{item.kuantitas} x {formatIDR(item.hargaSatuan)}</strong></span>
+                                        {item.status && (
+                                          <span className={`px-1.5 py-0.2 rounded font-bold uppercase text-[9px] ${
+                                            item.status === ItemStatus.APPROVED ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' :
+                                            item.status === ItemStatus.REJECTED ? 'bg-rose-100 text-rose-800 border border-rose-200' :
+                                            'bg-amber-100 text-amber-800 border border-amber-200'
+                                          }`}>
+                                            {item.status}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Nominal Item Total */}
+                                  <div className="text-right shrink-0">
+                                    <span className="text-[9px] text-slate-400 font-medium uppercase block">Nominal Nota</span>
+                                    <span className="font-bold text-emerald-700 font-mono text-sm block">
+                                      {formatIDR(item.totalHarga)}
                                     </span>
-                                  )}
+                                  </div>
                                 </div>
 
                                 {(item.rejectReason || item.comment) && (
-                                  <p className="text-[10px] text-slate-600 bg-white p-2 rounded border border-slate-200 italic">
+                                  <p className="text-[10px] text-slate-600 bg-white p-2 rounded-lg border border-slate-200 italic">
                                     Catatan: {item.rejectReason || item.comment}
                                   </p>
                                 )}
 
-                                {/* Attachments & GPS */}
+                                {/* Attachments & GPS Action Buttons */}
                                 <div className="flex items-center gap-2 pt-1 border-t border-slate-200/60 text-[10px] flex-wrap">
                                   {item.buktiFoto && (
                                     <button
                                       type="button"
                                       onClick={() => setPreviewPhoto({ url: item.buktiFoto!, title: `Bukti Nota: ${item.keterangan}` })}
-                                      className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg border border-indigo-200 transition-all flex items-center gap-1 cursor-pointer"
+                                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg border border-indigo-200 transition-all flex items-center gap-1 cursor-pointer"
                                     >
                                       <ImageIcon className="w-3 h-3 text-indigo-600" />
                                       <span>Pratinjau Foto Nota</span>
@@ -686,7 +756,7 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                                       href={`https://www.google.com/maps?q=${encodeURIComponent(item.koordinatGPS)}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold rounded-lg border border-emerald-200 transition-all flex items-center gap-1 cursor-pointer"
+                                      className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold rounded-lg border border-emerald-200 transition-all flex items-center gap-1 cursor-pointer"
                                     >
                                       <MapPin className="w-3 h-3 text-emerald-600" />
                                       <span>GPS ({item.koordinatGPS})</span>

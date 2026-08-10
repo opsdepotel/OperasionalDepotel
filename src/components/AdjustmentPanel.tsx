@@ -6,7 +6,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
 import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar } from 'lucide-react';
-import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
+import { uploadReceiptFile, parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 
 interface AdjustmentPanelProps {
   profiles: UserProfile[];
@@ -289,6 +289,9 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
             <div>
               <h3 className="font-bold text-xs">{selectedUser.nama || selectedUser.userId}</h3>
               <p className="text-[10px] text-slate-400 font-mono">{selectedUser.email}</p>
+              <p className="text-[9px] text-slate-300 font-medium mt-0.5">
+                Divisi : {formatDivisiSubDivisi(selectedUser.divisi, selectedUser.subDivisi)}
+              </p>
             </div>
           </div>
           
@@ -651,7 +654,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                       </h4>
                       <p className="text-[9px] text-slate-400 font-mono mt-0.5">{user.email}</p>
                       <p className="text-[9px] text-slate-500 font-medium mt-1">
-                        Divisi: <strong className="text-slate-700">{user.divisi}</strong> • Role: <strong className="text-slate-700">{user.role}</strong>
+                        Divisi : <strong className="text-slate-700">{formatDivisiSubDivisi(user.divisi, user.subDivisi)}</strong>
                       </p>
                     </div>
                   </div>
@@ -661,8 +664,8 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                     <span className={`text-sm font-bold font-mono font-display mt-0.5 block ${isPositive ? 'text-blue-600' : 'text-rose-600'}`}>
                       {isPositive ? `+${formatIDR(balance)}` : formatIDR(balance)}
                     </span>
-                    <span className={`inline-block text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${isPositive ? 'bg-blue-50 text-blue-600 border border-blue-100' : 'bg-rose-50 text-rose-600 border border-rose-100'}`}>
-                      {isPositive ? 'Lebih Saldo' : 'Dana Talangan'}
+                    <span className={`inline-block text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${isPositive ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-rose-50 text-rose-600 border border-rose-200'}`}>
+                      {isPositive ? 'Lebih Saldo' : 'Saldo Kurang'}
                     </span>
                   </div>
                 </div>

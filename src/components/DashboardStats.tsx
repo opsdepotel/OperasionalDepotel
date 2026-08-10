@@ -6,8 +6,9 @@
 import React, { useState } from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory } from '../types';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
+import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -54,6 +55,75 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [transactionSearchQuery, setTransactionSearchQuery] = useState('');
 
   useBackHandler(isTransactionReportOpen, () => setIsTransactionReportOpen(false), 'dashboardStats_transactionReport');
+
+  const [isGpsModalOpen, setIsGpsModalOpen] = useState(false);
+  const [isFetchingGpsModal, setIsFetchingGpsModal] = useState(false);
+  const [gpsModalPosition, setGpsModalPosition] = useState<GeolocationPosition | null>(null);
+  const [gpsModalError, setGpsModalError] = useState<string | null>(null);
+  const [gpsFetchDurationMs, setGpsFetchDurationMs] = useState<number | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [permissionState, setPermissionState] = useState<string>('Memeriksa...');
+
+  useBackHandler(isGpsModalOpen, () => setIsGpsModalOpen(false), 'dashboardStats_gpsModal');
+
+  const fetchGpsData = () => {
+    if (!navigator.geolocation) {
+      setGpsModalError('Perangkat atau browser Anda tidak mendukung pencarian lokasi GPS.');
+      return;
+    }
+
+    setIsFetchingGpsModal(true);
+    setGpsModalError(null);
+    const startTime = Date.now();
+
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'geolocation' }).then((p) => {
+        setPermissionState(p.state);
+      }).catch(() => {
+        setPermissionState('Aktif / Standard');
+      });
+    } else {
+      setPermissionState('Aktif / Standard');
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const duration = Date.now() - startTime;
+        setGpsModalPosition(pos);
+        setGpsFetchDurationMs(duration);
+        setIsFetchingGpsModal(false);
+        setGpsModalError(null);
+      },
+      (err) => {
+        let msg = 'Gagal mengambil koordinat lokasi GPS dari perangkat.';
+        if (err.code === err.PERMISSION_DENIED) {
+          msg = 'Akses lokasi (GPS) ditolak. Harap beri izin akses lokasi pada browser/perangkat Anda.';
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          msg = 'Sinyal GPS atau posisi tidak tersedia pada perangkat.';
+        } else if (err.code === err.TIMEOUT) {
+          msg = 'Waktu pengambilan sinyal GPS habis (timeout). Silakan klik Ulangi Cek GPS.';
+        }
+        setGpsModalError(msg);
+        setIsFetchingGpsModal(false);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 15000,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const handleOpenGpsCheck = () => {
+    setIsGpsModalOpen(true);
+    fetchGpsData();
+  };
+
+  const copyToClipboard = (text: string, fieldName: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(fieldName);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
 
   const formatDateDisplay = (dateStr?: string): string => {
     if (!dateStr) return '-';
@@ -1370,6 +1440,33 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
+        {/* Card: Cek GPS Perangkat */}
+        <div
+          onClick={handleOpenGpsCheck}
+          className="p-5 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/60 shadow-md hover:shadow-lg hover:border-emerald-400 transition-all cursor-pointer group flex items-center justify-between gap-4"
+          id="admin-check-gps-card"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-200 group-hover:scale-105 transition-transform">
+              <MapPin className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-emerald-600 transition-colors flex items-center gap-2">
+                Cek GPS Perangkat System
+                <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase">
+                  Diagnostik GPS
+                </span>
+              </h3>
+              <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                Uji parameter akurasi GPS hardware, elevasi, kecepatan, timestamp &amp; deteksi indikasi Fake GPS perangkat ini.
+              </p>
+            </div>
+          </div>
+          <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+            &rarr;
+          </div>
+        </div>
+
         {/* Stats Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
@@ -1463,6 +1560,354 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
             <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
               <CalendarCheck className="w-5 h-5" />
+            </div>
+          </div>
+        )}
+
+        {/* Modal Cek GPS Perangkat */}
+        {isGpsModalOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200 overflow-y-auto">
+            <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto max-h-[92vh] flex flex-col">
+              {/* Header Modal */}
+              <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white p-5 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center shrink-0">
+                    <MapPin className="w-5 h-5 text-emerald-300" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-display font-bold text-white flex items-center gap-2">
+                      Diagnostik &amp; Form Parameter GPS
+                      <span className="text-[9px] font-bold bg-emerald-500/30 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-400/30 uppercase tracking-wider">
+                        Real-Time Hardware
+                      </span>
+                    </h3>
+                    <p className="text-[11px] text-emerald-200 mt-0.5">
+                      Parameter Geolocation API perangkat untuk pengujian sinyal &amp; validasi lokasi
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsGpsModalOpen(false)}
+                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Body Content */}
+              <div className="p-5 overflow-y-auto space-y-4">
+                {isFetchingGpsModal ? (
+                  <div className="py-12 text-center space-y-3">
+                    <Loader2 className="w-10 h-10 text-emerald-600 animate-spin mx-auto" />
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800 font-display">Meminta Sinyal &amp; Parameter GPS...</h4>
+                      <p className="text-xs text-slate-400 mt-1">Mengakses sensor Geolocation API dari perangkat ini</p>
+                    </div>
+                  </div>
+                ) : gpsModalError ? (
+                  <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-800 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-xs font-bold text-rose-900">Gagal Mengambil Lokasi GPS</h4>
+                        <p className="text-xs text-rose-700 mt-1 font-medium">{gpsModalError}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={fetchGpsData}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Coba Ulangi Cek GPS
+                    </button>
+                  </div>
+                ) : gpsModalPosition ? (() => {
+                  const coords = gpsModalPosition.coords;
+                  const lat = coords.latitude;
+                  const lng = coords.longitude;
+                  const acc = coords.accuracy;
+                  const altitude = coords.altitude;
+                  const altAcc = coords.altitudeAccuracy;
+                  const heading = coords.heading;
+                  const speed = coords.speed;
+                  const timestamp = gpsModalPosition.timestamp;
+                  const fakeCheck = detectFakeGps(gpsModalPosition);
+
+                  const latLngStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+
+                  const isHighAcc = acc <= 15;
+                  const isMedAcc = acc > 15 && acc <= 50;
+
+                  return (
+                    <div className="space-y-4">
+                      {/* Top Quick Status Badges */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">IZIN GPS BROWSER</span>
+                          <span className={`inline-block text-[10px] font-extrabold mt-1 px-2 py-0.5 rounded-full uppercase ${
+                            permissionState.toLowerCase() === 'granted' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-200'
+                          }`}>
+                            {permissionState}
+                          </span>
+                        </div>
+
+                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">TINGKAT AKURASI</span>
+                          <span className={`inline-block text-[10px] font-extrabold mt-1 px-2 py-0.5 rounded-full ${
+                            isHighAcc ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : isMedAcc ? 'bg-blue-100 text-blue-800 border border-blue-200' : 'bg-rose-100 text-rose-800 border border-rose-200'
+                          }`}>
+                            {isHighAcc ? 'Tinggi (< 15m)' : isMedAcc ? 'Sedang (15-50m)' : 'Rendah (> 50m)'}
+                          </span>
+                        </div>
+
+                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">EVALUASI FAKE GPS</span>
+                          <span className={`inline-block text-[10px] font-extrabold mt-1 px-2 py-0.5 rounded-full uppercase ${
+                            fakeCheck.isFake ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          }`}>
+                            {fakeCheck.isFake ? 'Indikasi Anomali' : 'VALID / ASLI'}
+                          </span>
+                        </div>
+
+                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">RESPON SENSOR</span>
+                          <span className="text-xs font-bold font-mono text-indigo-700 mt-1 block">
+                            {gpsFetchDurationMs ? `${gpsFetchDurationMs} ms` : '-'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Fake GPS Warning if detected */}
+                      {fakeCheck.isFake && (
+                        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
+                          <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                          <div className="text-xs text-amber-900">
+                            <span className="font-bold block">Catatan Diagnostik Fake GPS:</span>
+                            <span>{fakeCheck.reason}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Form Parameter Grid */}
+                      <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/80 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 font-display">
+                            <Navigation className="w-4 h-4 text-emerald-600" />
+                            Parameter Sensor GPS Perangkat
+                          </h4>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            Fixed: {new Date(timestamp).toLocaleTimeString('id-ID')}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {/* Latitude */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Garis Lintang (Latitude)
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="text"
+                                readOnly
+                                value={lat}
+                                className="w-full bg-white border border-slate-200 text-slate-900 text-xs font-mono font-bold rounded-xl py-2 px-3 pr-9 shadow-sm"
+                              />
+                              <button
+                                onClick={() => copyToClipboard(String(lat), 'lat')}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
+                                title="Salin Latitude"
+                              >
+                                {copiedField === 'lat' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Longitude */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Garis Bujur (Longitude)
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="text"
+                                readOnly
+                                value={lng}
+                                className="w-full bg-white border border-slate-200 text-slate-900 text-xs font-mono font-bold rounded-xl py-2 px-3 pr-9 shadow-sm"
+                              />
+                              <button
+                                onClick={() => copyToClipboard(String(lng), 'lng')}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
+                                title="Salin Longitude"
+                              >
+                                {copiedField === 'lng' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Akurasi */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Akurasi Radius (Accuracy)
+                            </label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={`${acc.toFixed(2)} Meter (${Math.round(acc)}m)`}
+                              className="w-full bg-white border border-slate-200 text-slate-900 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
+                            />
+                          </div>
+
+                          {/* Lat Lng Combined */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Koordinat Gabungan (Lat, Lng)
+                            </label>
+                            <div className="relative">
+                              <input
+                                type="text"
+                                readOnly
+                                value={latLngStr}
+                                className="w-full bg-white border border-indigo-200 text-indigo-700 text-xs font-mono font-bold rounded-xl py-2 px-3 pr-9 shadow-sm"
+                              />
+                              <button
+                                onClick={() => copyToClipboard(latLngStr, 'latlng')}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
+                                title="Salin Koordinat Gabungan"
+                              >
+                                {copiedField === 'latlng' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Altitude */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Ketinggian / Elevasi (Altitude)
+                            </label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={altitude !== null && altitude !== undefined ? `${altitude.toFixed(2)} Meter` : 'Tidak Didukung Hardware (Null)'}
+                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
+                            />
+                          </div>
+
+                          {/* Altitude Accuracy */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Akurasi Ketinggian (Altitude Accuracy)
+                            </label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={altAcc !== null && altAcc !== undefined ? `${altAcc.toFixed(2)} Meter` : 'Tidak Didukung Hardware (Null)'}
+                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
+                            />
+                          </div>
+
+                          {/* Heading */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Arah Vektor Pergerakan (Heading)
+                            </label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={heading !== null && !isNaN(heading) ? `${heading.toFixed(1)}° (Derajat)` : 'Diam / Tidak Ada Arah (Null)'}
+                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
+                            />
+                          </div>
+
+                          {/* Speed */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Kecepatan Perangkat (Speed)
+                            </label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={speed !== null && !isNaN(speed) ? `${(speed * 3.6).toFixed(2)} km/jam (${speed.toFixed(2)} m/s)` : '0 km/jam (Diam)'}
+                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
+                            />
+                          </div>
+
+                          {/* Timestamp Hardware */}
+                          <div className="sm:col-span-2">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Waktu Terekam Sensor GPS Hardware (Timestamp)
+                            </label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={`${new Date(timestamp).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'medium' })} (${timestamp})`}
+                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
+                            />
+                          </div>
+
+                          {/* User Agent */}
+                          <div className="sm:col-span-2">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              User Agent / Informasi Perangkat Browser
+                            </label>
+                            <textarea
+                              readOnly
+                              rows={2}
+                              value={navigator.userAgent}
+                              className="w-full bg-white border border-slate-200 text-slate-600 text-[10px] font-mono rounded-xl p-2.5 resize-none shadow-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bottom Action Controls */}
+                      <div className="pt-2 flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-100">
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={fetchGpsData}
+                            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            Ulangi Cek GPS (Refresh)
+                          </button>
+
+                          <a
+                            href={`https://www.google.com/maps?q=${lat},${lng}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer border border-slate-200"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5 text-slate-600" />
+                            Buka Google Maps
+                          </a>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            const summaryText = `--- DATA DIAGNOSTIK GPS PERANGKAT ---
+Tanggal Fix: ${new Date(timestamp).toLocaleString('id-ID')}
+Latitude: ${lat}
+Longitude: ${lng}
+Koordinat: ${latLngStr}
+Akurasi: ${acc.toFixed(2)}m
+Elevasi: ${altitude !== null ? `${altitude}m` : 'Null'}
+Akurasi Elevasi: ${altAcc !== null ? `${altAcc}m` : 'Null'}
+Arah (Heading): ${heading !== null ? `${heading}°` : 'Null'}
+Kecepatan: ${speed !== null ? `${speed}m/s` : '0'}
+Evaluasi Fake GPS: ${fakeCheck.reason}
+User Agent: ${navigator.userAgent}`;
+                            copyToClipboard(summaryText, 'all');
+                          }}
+                          className="px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer"
+                        >
+                          {copiedField === 'all' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          {copiedField === 'all' ? 'Tersalin!' : 'Salin Semua Parameter'}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })() : null}
+              </div>
             </div>
           </div>
         )}
