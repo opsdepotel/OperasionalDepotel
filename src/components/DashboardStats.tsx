@@ -66,6 +66,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [gpsUpdateCount, setGpsUpdateCount] = useState<number>(0);
   const [lastGpsCheckTime, setLastGpsCheckTime] = useState<Date | null>(null);
   const [isAutoGpsActive, setIsAutoGpsActive] = useState<boolean>(true);
+  const [prevGpsModalPosition, setPrevGpsModalPosition] = useState<GeolocationPosition | null>(null);
 
   useBackHandler(isGpsModalOpen, () => setIsGpsModalOpen(false), 'dashboardStats_gpsModal');
 
@@ -73,6 +74,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     if (!isGpsModalOpen) {
       setGpsUpdateCount(0);
       setGpsModalPosition(null);
+      setPrevGpsModalPosition(null);
       setGpsModalError(null);
       setLastGpsCheckTime(null);
       return;
@@ -104,7 +106,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
     const handlePos = (pos: GeolocationPosition) => {
       const duration = Date.now() - startTime;
-      setGpsModalPosition(pos);
+      setGpsModalPosition(prev => {
+        if (prev) setPrevGpsModalPosition(prev);
+        return pos;
+      });
       setGpsFetchDurationMs(duration);
       setIsFetchingGpsModal(false);
       setGpsModalError(null);
@@ -1745,7 +1750,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   const heading = coords.heading;
                   const speed = coords.speed;
                   const timestamp = gpsModalPosition.timestamp;
-                  const fakeCheck = detectFakeGps(gpsModalPosition);
+                  const fakeCheck = detectFakeGps(gpsModalPosition, '', prevGpsModalPosition, gpsUpdateCount);
 
                   const latLngStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
 
@@ -2039,13 +2044,49 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                           {/* Timestamp Hardware */}
                           <div className="sm:col-span-2">
                             <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Waktu Terekam Sensor GPS Hardware (Timestamp)
+                              Waktu Terekam Sensor GPS Hardware (Timestamp Epoch)
                             </label>
                             <input
                               type="text"
                               readOnly
                               value={`${new Date(timestamp).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'medium' })} (${timestamp})`}
                               className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
+                            />
+                          </div>
+
+                          {/* Timestamp Hardware Delta dalam milidetik (ms) */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Timestamp Hardware Delta (Milidetik / ms)
+                            </label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={fakeCheck.timeDeltaMs !== null && fakeCheck.timeDeltaMs !== undefined ? `${fakeCheck.timeDeltaMs.toLocaleString('id-ID')} ms (${(fakeCheck.timeDeltaMs / 1000).toFixed(2)} detik)` : 'Tidak Tersedia'}
+                              className={`w-full bg-white border text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm ${
+                                fakeCheck.isTimestampStagnant ? 'border-rose-300 text-rose-700 bg-rose-50/50' : 'border-emerald-300 text-emerald-800 bg-emerald-50/30'
+                              }`}
+                            />
+                          </div>
+
+                          {/* Evaluasi Dinamika Fix Timestamp */}
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                              Dinamika Perubahan Fix (Polling #{gpsUpdateCount})
+                            </label>
+                            <input
+                              type="text"
+                              readOnly
+                              value={
+                                gpsUpdateCount <= 1
+                                  ? 'Cek Awal (Memantau Polling Next Fix)'
+                                  : fakeCheck.isTimestampStagnant
+                                  ? 'ANOMALI: Stagnan / Beku (Indikasi Fake GPS)'
+                                  : 'VALID: Dinamis / Fresh Fix (Sinyal Asli)'
+                              }
+                              className={`w-full bg-white border text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm ${
+                                fakeCheck.isTimestampStagnant ? 'border-rose-300 text-rose-700 bg-rose-50/50' : 'border-emerald-300 text-emerald-800 bg-emerald-50/30'
+                              }`}
                             />
                           </div>
 

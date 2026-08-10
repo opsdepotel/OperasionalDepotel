@@ -2,7 +2,7 @@
  * Utility for Front-End Web Browser / Geolocation API Fake GPS & Mock Location Detection
  *
  * Menggabungkan 3 Kombinasi Parameter Evaluasi Hardware:
- * 1. Timestamp Sensor Hardware (Inkonsistensi & Latency Clock Drift)
+ * 1. Timestamp Hardware Delta dalam Milidetik (ms) & Dinamika Perubahan Fix
  * 2. Akurasi Radius Horizontal (Accuracy Pattern & Zero-Accuracy Injection)
  * 3. Data Elevasi Vertikal 3D (Altitude & Altitude Accuracy Fix)
  */
@@ -20,6 +20,8 @@ export interface FakeGpsCheckResult {
   reason: string;
   confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
   overallScore: number; // 0 - 100
+  timeDeltaMs?: number | null;
+  isTimestampStagnant?: boolean;
   evaluations?: {
     timestamp: ParameterEvaluation;
     accuracy: ParameterEvaluation;
@@ -29,22 +31,24 @@ export interface FakeGpsCheckResult {
 
 /**
  * Detects potential Fake GPS / Mock Location usage based on browser Geolocation API signals:
- * 1. Accuracy Parameter Analysis (accuracy)
- * 2. Altitude & Elevation Analysis (altitude, altitudeAccuracy)
- * 3. Timestamp Delta Analysis (Hardware timestamp vs System/Server submission time)
+ * 1. Timestamp Hardware Delta (ms) & Dynamic Progression Analysis
+ * 2. Accuracy Parameter Analysis (accuracy)
+ * 3. Altitude & Elevation Analysis (altitude, altitudeAccuracy)
  */
 export function detectFakeGps(
   position: GeolocationPosition | null,
-  coordsActualStr: string = ''
+  coordsActualStr: string = '',
+  previousPosition?: GeolocationPosition | null,
+  checkHistoryCount: number = 1
 ): FakeGpsCheckResult {
   const now = Date.now();
 
   const defaultEvaluations = {
     timestamp: {
-      parameterName: 'Timestamp Sensor Hardware',
+      parameterName: 'Timestamp Hardware Delta (ms)',
       status: 'WARNING' as const,
       score: 50,
-      detailValue: 'Tidak Ada Timestamp',
+      detailValue: 'Delta: - ms (Null)',
       analysisNote: 'Objek Geolocation Position tidak tersedia.'
     },
     accuracy: {
@@ -70,6 +74,8 @@ export function detectFakeGps(
         reason: 'GPS tidak aktif / tidak tersedia',
         confidence: 'NONE',
         overallScore: 50,
+        timeDeltaMs: null,
+        isTimestampStagnant: false,
         evaluations: defaultEvaluations
       };
     }
@@ -78,6 +84,8 @@ export function detectFakeGps(
       reason: 'Koordinat GPS didapatkan tanpa objek Geolocation API bawaan browser',
       confidence: 'HIGH',
       overallScore: 0,
+      timeDeltaMs: null,
+      isTimestampStagnant: false,
       evaluations: defaultEvaluations
     };
   }
@@ -85,39 +93,57 @@ export function detectFakeGps(
   const { coords, timestamp } = position;
   const reasons: string[] = [];
 
-  // 1. PARAMETER 1: TIMESTAMP SENSOR HARDWARE
+  // 1. PARAMETER 1: TIMESTAMP HARDWARE DELTA (ms) & DINAMIKA PERUBAHAN WAKTU FIX
   let tsStatus: 'VALID' | 'ANOMALI' | 'WARNING' = 'VALID';
   let tsScore = 100;
   let tsDetail = '';
   let tsNote = '';
+  let calculatedDeltaMs: number | null = null;
+  let isStagnant = false;
 
   if (timestamp && typeof timestamp === 'number' && timestamp > 0) {
-    const timeDeltaMs = now - timestamp;
-    const absDeltaMs = Math.abs(timeDeltaMs);
-    const deltaSec = (absDeltaMs / 1000).toFixed(1);
+    calculatedDeltaMs = now - timestamp;
+    const absDeltaMs = Math.abs(calculatedDeltaMs);
+    const formattedDeltaMs = `${calculatedDeltaMs.toLocaleString('id-ID')} ms`;
 
-    if (timeDeltaMs < -5000) {
+    // Evaluasi dinamika perubahan timestamp antar-polling
+    const prevTimestamp = previousPosition?.timestamp;
+    const isTimestampUnchanged = prevTimestamp !== undefined && prevTimestamp !== null && prevTimestamp === timestamp;
+
+    if (checkHistoryCount > 1 && isTimestampUnchanged) {
+      isStagnant = true;
+      tsStatus = 'ANOMALI';
+      tsScore = 10;
+      tsDetail = `${formattedDeltaMs} (STAGNAN/BEKU)`;
+      tsNote = `Timestamp hardware (${timestamp}) STAGNAN / KAKU padahal polling ke-${checkHistoryCount} telah berjalan. Delta bertambah ke ${formattedDeltaMs}. Delta kecil pada 1x cek awal tidak menjamin GPS valid jika nilai timestamp tidak berubah secara dinamis seiring waktu.`;
+      reasons.push(`Timestamp hardware stagnan/beku (${formattedDeltaMs} delta, tidak ada update fix baru pada polling ke-${checkHistoryCount})`);
+    } else if (calculatedDeltaMs < -5000) {
       tsStatus = 'ANOMALI';
       tsScore = 20;
-      tsDetail = `Future Timestamp (+${deltaSec}s)`;
-      tsNote = 'Timestamp sensor GPS berada di masa depan relatif terhadap jam sistem (Indikasi manipulasi timer provider).';
-      reasons.push(`Timestamp hardware di masa depan (+${deltaSec}s)`);
+      tsDetail = `${formattedDeltaMs} (Masa Depan)`;
+      tsNote = `Timestamp hardware berada di masa depan (${formattedDeltaMs}) relatif terhadap jam sistem (Indikasi manipulasi timer/provider).`;
+      reasons.push(`Timestamp hardware di masa depan (+${(absDeltaMs / 1000).toFixed(1)}s)`);
     } else if (absDeltaMs > 45000) {
       tsStatus = 'ANOMALI';
       tsScore = 30;
-      tsDetail = `Latensi/Drift Tinggi (${deltaSec}s)`;
-      tsNote = 'Terdapat lag tinggi antara fix GPS hardware dan sistem (Indikasi rekam ulang lokasi/mock provider).';
-      reasons.push(`Inkonsistensi waktu GPS hardware & sistem (${deltaSec} detik delta)`);
+      tsDetail = `${formattedDeltaMs} (Latensi Tinggi)`;
+      tsNote = `Delta waktu sangat besar (${formattedDeltaMs}). Terdapat lag tinggi antara fix hardware dan waktu sistem (Indikasi rekam ulang / mock provider).`;
+      reasons.push(`Latensi timestamp hardware tinggi (${formattedDeltaMs})`);
     } else if (absDeltaMs > 15000) {
       tsStatus = 'WARNING';
       tsScore = 75;
-      tsDetail = `Drift Sedang (${deltaSec}s)`;
-      tsNote = 'Waktu fix GPS agak lambat direkam sistem, namun masih dalam toleransi latensi jaringan/hardware.';
+      tsDetail = `${formattedDeltaMs} (Drift Sedang)`;
+      tsNote = `Delta waktu ${formattedDeltaMs}. Fix GPS agak lambat direkam sistem, namun masih dalam toleransi jaringan.`;
     } else {
       tsStatus = 'VALID';
       tsScore = 100;
-      tsDetail = `Tersinkronisasi (${deltaSec}s delta)`;
-      tsNote = 'Timestamp hardware GPS terasinkronisasi presisi dengan jam sistem (< 15 detik delta).';
+      if (checkHistoryCount > 1) {
+        tsDetail = `${formattedDeltaMs} (DINAMIS - FRESH FIX)`;
+        tsNote = `Delta ${formattedDeltaMs} & timestamp hardware terus diperbarui secara dinamis (fix baru diterima pada polling ke-${checkHistoryCount}). Menandakan penerima satelit fisik aktif memperbarui koordinat.`;
+      } else {
+        tsDetail = `${formattedDeltaMs} (Fix Awal)`;
+        tsNote = `Delta timestamp hardware ${formattedDeltaMs} terasinkronisasi (< 15.000 ms). Evaluasi dinamika perubahan akan terverifikasi seiring polling berulang.`;
+      }
     }
   } else {
     tsStatus = 'ANOMALI';
@@ -203,14 +229,14 @@ export function detectFakeGps(
     altNote = 'Sinyal satelit 3D Fix vertikal tidak tersedia (Perangkat Indoor / Browser Standar).';
   }
 
-  const overallScore = Math.round((tsScore * 0.35) + (accScore * 0.40) + (altScore * 0.25));
+  const overallScore = Math.round((tsScore * 0.40) + (accScore * 0.35) + (altScore * 0.25));
   const isFake = reasons.length > 0 && overallScore < 60;
   const confidence: 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE' =
     overallScore < 30 ? 'HIGH' : overallScore < 60 ? 'MEDIUM' : overallScore < 80 ? 'LOW' : 'NONE';
 
   const evaluations = {
     timestamp: {
-      parameterName: 'Timestamp Sensor Hardware',
+      parameterName: 'Timestamp Hardware Delta (ms)',
       status: tsStatus,
       score: tsScore,
       detailValue: tsDetail,
@@ -237,7 +263,10 @@ export function detectFakeGps(
     reason: isFake ? reasons.join('; ') : (reasons.length > 0 ? `Perhatian: ${reasons.join('; ')}` : 'GPS Valid'),
     confidence,
     overallScore,
+    timeDeltaMs: calculatedDeltaMs,
+    isTimestampStagnant: isStagnant,
     evaluations
   };
 }
+
 
