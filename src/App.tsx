@@ -49,6 +49,7 @@ import { TransferModal } from './components/TransferModal';
 import { ReviewReportModal } from './components/ReviewReportModal';
 import { AppLoginForm } from './components/AppLoginForm';
 import { AdjustmentPanel } from './components/AdjustmentPanel';
+import { TransferListPanel } from './components/TransferListPanel';
 import { ActivityLogView } from './components/ActivityLogView';
 import { BbmRefillModal } from './components/BbmRefillModal';
 import { BbmListModal } from './components/BbmListModal';
@@ -156,7 +157,7 @@ export default function App() {
   const [activeRole, setActiveRole] = useState<Role>(Role.USER);
 
   // Navigation / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'profile-settings' | 'activities'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'transfer-list' | 'profile-settings' | 'activities'>('dashboard');
   const [selectedRequest, setSelectedRequest] = useState<BudgetRequest | null>(null);
   const [editingRequest, setEditingRequest] = useState<BudgetRequest | null>(null);
 
@@ -1380,6 +1381,43 @@ export default function App() {
     }
   };
 
+  const handleUpdateTransferDetails = async (
+    requestId: string,
+    adminComment: string,
+    file: File | null
+  ) => {
+    if (!token || !spreadsheetId) return;
+    const targetReq = requests.find(r => r.id === requestId);
+    if (!targetReq) return;
+
+    let finalBuktiUrl = targetReq.buktiTransferUrl || '';
+    let finalBuktiFileId = targetReq.buktiTransferFileId || '';
+
+    if (file) {
+      if (!driveFolderId) {
+        throw new Error('ID Folder Google Drive belum terinisialisasi.');
+      }
+      const uploadResult = await uploadReceiptFile(token, driveFolderId, file);
+      finalBuktiUrl = uploadResult.viewUrl;
+      finalBuktiFileId = uploadResult.fileId;
+    }
+
+    const updatedReq: BudgetRequest = {
+      ...targetReq,
+      adminComment,
+      buktiTransferUrl: finalBuktiUrl,
+      buktiTransferFileId: finalBuktiFileId
+    };
+
+    const success = await runGoogleAction(
+      () => updateBudgetRequest(token, spreadsheetId, updatedReq),
+      'Gagal memperbarui data transfer.'
+    );
+    if (success !== null) {
+      await handleManualRefresh();
+    }
+  };
+
   // Filter manager email list from existing profiles to make it easy for users to choose
   const managerEmails = profiles
     .filter(p => p.role === Role.MANAGER)
@@ -1998,6 +2036,18 @@ export default function App() {
             onClose={() => setActiveView('dashboard')}
             onAuthError={handleGoogleAuthError}
           />
+        ) : activeView === 'transfer-list' && userProfile ? (
+          <TransferListPanel
+            profiles={profiles}
+            requests={requests}
+            usageItems={usageItems}
+            googleToken={token!}
+            driveFolderId={driveFolderId || ''}
+            onClose={() => setActiveView('dashboard')}
+            onPreviewDocument={setPreviewDocument}
+            onUpdateTransfer={handleUpdateTransferDetails}
+            onAuthError={handleGoogleAuthError}
+          />
         ) : activeView === 'activities' && userProfile ? (
           <ActivityLogView
             activities={activities}
@@ -2124,6 +2174,7 @@ export default function App() {
                   onManageUsers={() => setActiveView('setup-profile')}
                   onOpenUserDashboardPreview={() => setIsUserDashboardPreviewModalOpen(true)}
                   onOpenAdjustment={() => setActiveView('adjustment')}
+                  onOpenTransferList={() => setActiveView('transfer-list')}
                   onOpenReportsModal={() => setIsFinancialReportsModalOpen(true)}
                   profiles={profiles}
                   activities={activities}

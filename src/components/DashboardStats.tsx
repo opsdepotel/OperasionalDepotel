@@ -22,6 +22,7 @@ interface DashboardStatsProps {
   onManageUsers?: () => void;
   onOpenUserDashboardPreview?: () => void;
   onOpenAdjustment?: () => void;
+  onOpenTransferList?: () => void;
   onOpenReportsModal?: () => void;
   profiles?: UserProfile[];
   activities?: UserActivity[];
@@ -42,6 +43,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onManageUsers,
   onOpenUserDashboardPreview,
   onOpenAdjustment,
+  onOpenTransferList,
   onOpenReportsModal,
   profiles = [],
   activities = [],
@@ -1171,6 +1173,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       return Math.abs(balance) > 0.01;
     }).length;
 
+    const transferredReqsList = requests.filter(r => 
+      !isBbmRequestAdmin(r) && 
+      r.status !== RequestStatus.CANCELLED &&
+      (r.adminActionAmount || 0) > 0
+    );
+    const transferredCount = transferredReqsList.length;
+    const transferredTotalAmount = transferredReqsList.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+
     const getTodayStr = () => {
       const d = new Date();
       const year = d.getFullYear();
@@ -1383,6 +1393,37 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               </div>
               <p className="text-[10px] text-slate-400 mt-2 font-medium">
                 Sesuaikan sisa saldo operasional (lebih/kurang) masing-masing user menjadi Rp 0 secara instan dengan bukti potongan/transfer.
+              </p>
+            </div>
+          )}
+
+          {onOpenTransferList && (
+            <div 
+              onClick={onOpenTransferList}
+              id="finance-transfer-list-card"
+              className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-400 hover:shadow-md col-span-2 group ${
+                activeFilter === 'TRANSFER_LIST' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">DAFTAR TRANSFER</p>
+                  <h4 className="font-display font-black text-slate-800 text-xs mt-1 group-hover:text-indigo-600 transition-colors">List Transfer UID</h4>
+                </div>
+                <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                  Finance Direct
+                </span>
+              </div>
+              <div className="flex items-end justify-between mt-3">
+                <span className="text-3xl font-display font-bold text-slate-900">
+                  {transferredCount} <span className="text-xs text-slate-400 font-normal">UID</span>
+                </span>
+                <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                  {formatIDR(transferredTotalAmount)}
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-400 mt-2 font-medium">
+                Lihat dan kelola daftar seluruh pengajuan UID yang telah ditransfer dana oleh Finance beserta rincian bukti transfer dan rekapitulasi.
               </p>
             </div>
           )}
