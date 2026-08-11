@@ -1181,6 +1181,29 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const transferredCount = transferredReqsList.length;
     const transferredTotalAmount = transferredReqsList.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
 
+    const parseDateToYYYYMMDD = (dateInput: string | Date | undefined): string => {
+      if (!dateInput) return '';
+      const str = String(dateInput).trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+        return str.substring(0, 10);
+      }
+      if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
+        const parts = str.split('/');
+        const d = parts[0].padStart(2, '0');
+        const m = parts[1].padStart(2, '0');
+        const y = parts[2].substring(0, 4);
+        return `${y}-${m}-${d}`;
+      }
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+      return '';
+    };
+
     const getTodayStr = () => {
       const d = new Date();
       const year = d.getFullYear();
@@ -1189,6 +1212,15 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       return `${year}-${month}-${day}`;
     };
     const todayStr = getTodayStr();
+
+    const todayTransferredReqs = transferredReqsList.filter(r => {
+      const datePemakaian = parseDateToYYYYMMDD(r.tanggalPemakaian);
+      const dateCreatedAt = parseDateToYYYYMMDD(r.createdAt);
+      const dateTimestamp = parseDateToYYYYMMDD(r.timestamp);
+      return datePemakaian === todayStr || dateCreatedAt === todayStr || dateTimestamp === todayStr;
+    });
+    const todayTransferredCount = todayTransferredReqs.length;
+    const todayTransferredTotal = todayTransferredReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
 
     const todayBbmReqs = requests.filter(r => 
       (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) &&
@@ -1414,16 +1446,20 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   Finance Direct
                 </span>
               </div>
+
               <div className="flex items-end justify-between mt-3">
-                <span className="text-3xl font-display font-bold text-slate-900">
-                  {transferredCount} <span className="text-xs text-slate-400 font-normal">UID</span>
-                </span>
-                <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
-                  {formatIDR(transferredTotalAmount)}
-                </span>
+                <div>
+                  <span className="text-3xl font-display font-bold text-slate-900 block">
+                    {todayTransferredCount} <span className="text-xs text-slate-400 font-normal">UID Hari Ini</span>
+                  </span>
+                  <p className="text-[11px] font-bold text-indigo-600 mt-0.5">
+                    Total: {formatIDR(todayTransferredTotal)}
+                  </p>
+                </div>
               </div>
-              <p className="text-[10px] text-slate-400 mt-2 font-medium">
-                Lihat dan kelola daftar seluruh pengajuan UID yang telah ditransfer dana oleh Finance beserta rincian bukti transfer dan rekapitulasi.
+
+              <p className="text-[10px] text-slate-400 mt-2.5 font-medium border-t border-slate-100 pt-2">
+                Lihat daftar pengajuan UID yang telah ditransfer dana oleh Finance beserta rincian bukti transfer.
               </p>
             </div>
           )}
