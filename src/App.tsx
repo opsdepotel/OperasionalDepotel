@@ -73,7 +73,7 @@ export default function App() {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const isInvalidGoogleAccount = !!(user && user.email && user.email.toLowerCase() !== 'ops.depotel@gmail.com');
+  const isInvalidGoogleAccount = false;
 
   // Theme state defaulting to 'theme3' as requested
   const [theme, setTheme] = useState<string>(() => {
@@ -223,7 +223,7 @@ export default function App() {
         const expired = isGoogleTokenExpired();
         setIsTokenExpired(expired);
         if (expired && (!error || !error.includes('Sesi Google'))) {
-          setError('Sesi Google (ops.depotel@gmail.com) telah kadaluarsa (Masa aktif token 1 Jam). Data lokal & login aplikasi Anda tetap aman. Klik "Perbarui Sesi Google" untuk melanjutkan.');
+          setError('Sesi Google Anda telah kadaluarsa (Masa aktif token 1 Jam). Data lokal & login aplikasi Anda tetap aman. Klik "Perbarui Sesi Google" untuk melanjutkan.');
         }
       }
     };
@@ -249,14 +249,6 @@ export default function App() {
 
   const initializeDatabaseAndLoad = async () => {
     if (!token || !user) return;
-
-    // Strict validation: Ensure connected Google account is ops.depotel@gmail.com
-    const emailLower = user.email?.toLowerCase();
-    const isValidEmail = emailLower === 'ops.depotel@gmail.com';
-    if (!isValidEmail) {
-      console.warn('initializeDatabaseAndLoad: Invalid Google email detected, skipping database sync.');
-      return;
-    }
 
     setIsLoading(true);
     setError(null);
@@ -413,8 +405,19 @@ export default function App() {
         setNeedsAuth(false);
       }
     } catch (err: any) {
-      console.error('Login error details:', err);
-      setError('Error menghubungkan dengan Google');
+      const isCancelled =
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request' ||
+        err?.code === 'auth/popup-blocked' ||
+        err?.message?.includes('popup-closed-by-user');
+
+      if (isCancelled) {
+        console.log('Login dibatalkan oleh pengguna.');
+        setError('Proses login Google dibatalkan oleh pengguna.');
+      } else {
+        console.error('Login error details:', err);
+        setError('Error menghubungkan dengan Google');
+      }
     } finally {
       setIsLoggingIn(false);
     }
@@ -448,8 +451,19 @@ export default function App() {
         await syncAllData(result.accessToken, sId);
       }
     } catch (err: any) {
-      console.error('Gagal memperbarui token Google:', err);
-      setError('Gagal memperbarui sesi Google. Pastikan tidak memblokir popup Google.');
+      const isCancelled =
+        err?.code === 'auth/popup-closed-by-user' ||
+        err?.code === 'auth/cancelled-popup-request' ||
+        err?.code === 'auth/popup-blocked' ||
+        err?.message?.includes('popup-closed-by-user');
+
+      if (isCancelled) {
+        console.log('Perbaruan token Google dibatalkan oleh pengguna.');
+        setError('Proses perbaruan sesi Google dibatalkan oleh pengguna.');
+      } else {
+        console.error('Gagal memperbarui token Google:', err);
+        setError('Gagal memperbarui sesi Google. Pastikan tidak memblokir popup Google.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -1292,7 +1306,7 @@ export default function App() {
     const pad = (n: number) => String(n).padStart(2, '0');
     const timestampStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-    const isManager = activeRole === Role.MANAGER;
+    const isManager = activeRole === Role.MANAGER || activeRole === Role.DIREKTUR;
     const historyLogs: ItemReviewHistory[] = [];
 
     const success = await runGoogleAction(async () => {
@@ -1311,7 +1325,9 @@ export default function App() {
           await updateUsageItem(currentToken, currentSheetId, updatedItem);
 
           const actionType = isManager
-            ? (dec.status === ItemStatus.APPROVED ? 'APPROVAL_MANAGER' : 'REVISI_MANAGER')
+            ? (dec.status === ItemStatus.APPROVED 
+                ? (activeRole === Role.DIREKTUR ? 'APPROVAL_DIREKTUR' : 'APPROVAL_MANAGER') 
+                : (activeRole === Role.DIREKTUR ? 'REVISI_DIREKTUR' : 'REVISI_MANAGER'))
             : (dec.status === ItemStatus.APPROVED ? 'APPROVAL_FINANCE' : 'REVISI_FINANCE');
 
           historyLogs.push({
@@ -1319,9 +1335,9 @@ export default function App() {
             itemUid: original.id,
             requestUid: original.requestId,
             timestamp: timestampStr,
-            actorRole: isManager ? 'MANAGER' : 'FINANCE',
+            actorRole: activeRole || (isManager ? 'MANAGER' : 'FINANCE'),
             actorEmail: userProfile?.email || user?.email || '',
-            actorNama: userProfile?.nama || userProfile?.userId || user?.displayName || (isManager ? 'Manager' : 'Finance'),
+            actorNama: userProfile?.nama || userProfile?.userId || user?.displayName || (activeRole === Role.DIREKTUR ? 'Direktur' : isManager ? 'Manager' : 'Finance'),
             actionType: actionType as any,
             status: dec.status,
             catatan: dec.comment || (dec.status === ItemStatus.APPROVED ? 'Disetujui' : 'Minta Revisi'),
@@ -1565,9 +1581,9 @@ export default function App() {
     if (activeRole === Role.USER) {
       // User only sees their own requests
       if (r.userEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
-    } else if (activeRole === Role.MANAGER) {
-      // Manager only sees requests assigned to them
-      if (r.managerEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
+    } else if (activeRole === Role.MANAGER || activeRole === Role.DIREKTUR) {
+      // Manager & Direktur see requests assigned to them
+      if (userProfile?.email && r.managerEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
     }
     // Finance sees everything!
     if (activeRole === Role.FINANCE) {
@@ -1845,19 +1861,16 @@ export default function App() {
             </p>
           </div>
 
-          <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 text-xs text-left space-y-3">
+          <div className="bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-2xl p-4 text-xs text-left space-y-3">
             <div className="flex items-start gap-2.5">
-              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <AlertCircle className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
               <div>
-                <h3 className="font-bold text-amber-800 text-xs">Hubungkan Akun Google</h3>
-                <p className="text-[11px] text-amber-700 mt-1 leading-relaxed">
-                  Aplikasi ini disinkronkan secara online dengan Google Sheets &amp; Drive operasional pusat.
+                <h3 className="font-bold text-indigo-800 text-xs">Hubungkan Akun Google</h3>
+                <p className="text-[11px] text-indigo-700 mt-1 leading-relaxed">
+                  Aplikasi disinkronkan secara online dengan Google Sheets &amp; Drive database operasional.
                 </p>
-                <p className="text-[11px] text-amber-700 mt-1 leading-relaxed">
-                  Semua user wajib menghubungkan Google Account resmi:
-                </p>
-                <p className="font-bold font-mono text-[11px] bg-amber-100/50 p-1.5 rounded border border-amber-200 text-amber-900 mt-1.5 text-center">
-                  ops.depotel@gmail.com
+                <p className="text-[11px] text-indigo-700 mt-1 leading-relaxed font-semibold">
+                  Semua akun Google diizinkan untuk terhubung dan mengakses aplikasi.
                 </p>
               </div>
             </div>
@@ -2896,8 +2909,8 @@ export default function App() {
                                     </>
                                   )}
 
-                                  {/* MANAGER ACTIONS */}
-                                  {activeRole === Role.MANAGER && (
+                                  {/* MANAGER & DIREKTUR ACTIONS */}
+                                  {(activeRole === Role.MANAGER || activeRole === Role.DIREKTUR) && (
                                     <>
                                       {req.status === RequestStatus.PENDING_APPROVAL && (
                                         <div className="flex gap-1.5 flex-wrap">
@@ -2977,20 +2990,6 @@ export default function App() {
                                         </button>
                                       )}
                                     </>
-                                  )}
-
-                                  {/* DIREKTUR ACTIONS */}
-                                  {activeRole === Role.DIREKTUR && (
-                                    <button
-                                      onClick={() => {
-                                        setSelectedRequest(req);
-                                        setActiveView('report-usage');
-                                      }}
-                                      className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 font-bold rounded-xl transition-all border border-purple-200/60 flex items-center gap-1.5 cursor-pointer"
-                                    >
-                                      <Eye className="w-3.5 h-3.5 text-purple-600" />
-                                      <span>Lihat Rincian</span>
-                                    </button>
                                   )}
 
                                   {/* ADMINISTRATOR ACTIONS */}

@@ -203,11 +203,11 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
     let nextRequestStatus: RequestStatus;
 
-    if (role === Role.MANAGER) {
+    if (role === Role.MANAGER || role === Role.DIREKTUR) {
       if (hasRejections) {
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        nextRequestStatus = RequestStatus.REVIEW_ADMIN;
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REVIEW_ADMIN;
       }
     } else {
       // Role is ADMIN

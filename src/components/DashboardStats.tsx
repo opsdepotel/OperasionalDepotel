@@ -2272,6 +2272,18 @@ User Agent: ${navigator.userAgent}`;
     const activeReqs = requests.filter(r => r.status !== RequestStatus.CANCELLED);
     const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
 
+    // Direct reports approval tasks for Direktur
+    const direkturDirectReqs = requests.filter(r => r.managerEmail.toLowerCase() === email.toLowerCase());
+    const pendingBudgetReview = direkturDirectReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
+    const pendingReportReview = direkturDirectReqs.filter(r => {
+      if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
+      const reqItems = usageItems.filter(item => item.requestId === r.id);
+      if (reqItems.length === 0) return false;
+      return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
+    }).length;
+    const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
+
+    // Company-wide Executive stats
     // 1. PENGAJUAN (Pending Approval by Manager / Partially Approved)
     const pengajuanCount = activeReqs.filter(r => 
       r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
@@ -2297,6 +2309,78 @@ User Agent: ${navigator.userAgent}`;
 
     return (
       <div className="space-y-4">
+        {/* FITUR TAMBAHAN: Urgent Task Card untuk Direktur */}
+        {totalApprovalTasks > 0 ? (
+          <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
+            <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center text-purple-700 shrink-0">
+              <ClipboardCheck className="w-5.5 h-5.5" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-purple-900 text-xs tracking-wide uppercase">TUGAS PERSETUJUAN DIREKTUR ({totalApprovalTasks})</h3>
+              <p className="text-xs text-purple-700 font-medium mt-0.5">
+                Ada {pendingBudgetReview} pengajuan anggaran baru dan {pendingReportReview} laporan operasional tim bawahan langsung yang membutuhkan tinjauan Anda.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
+            <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+              <CheckCircle2 className="w-5.5 h-5.5" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-emerald-900 text-xs tracking-wide uppercase">SEMUA TINJAUAN DIREKTUR BERES</h3>
+              <p className="text-xs text-emerald-700 font-medium mt-0.5">
+                Tidak ada tugas persetujuan anggaran atau review laporan bawahan langsung yang tertunda.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* FITUR TAMBAHAN: 2 Kartu Akses Approval & Review Direktur */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div 
+            onClick={() => handleCardClick('PENDING')}
+            className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
+              activeFilter === 'PENDING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div>
+              <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest flex items-center gap-1">
+                <span>ALUR PERSETUJUAN DIREKTUR</span>
+              </p>
+              <h4 className="font-display font-black text-slate-800 text-xs mt-1">Approval Pengajuan Anggaran</h4>
+            </div>
+            <div>
+              <div className="flex items-end justify-between mt-2">
+                <span className="text-2xl font-display font-bold text-slate-900">{pendingBudgetReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Persetujuan</span>
+              </div>
+              <p className="text-[9px] text-slate-400 mt-1 font-medium">Pengajuan anggaran baru dari tim bawahan langsung</p>
+            </div>
+          </div>
+
+          <div 
+            onClick={() => handleCardClick('REPORTING')}
+            className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
+              activeFilter === 'REPORTING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div>
+              <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest flex items-center gap-1">
+                <span>ALUR REKONSILIASI DIREKTUR</span>
+              </p>
+              <h4 className="font-display font-black text-slate-800 text-xs mt-1">Review Penggunaan Anggaran</h4>
+            </div>
+            <div>
+              <div className="flex items-end justify-between mt-2">
+                <span className="text-2xl font-display font-bold text-slate-900">{pendingReportReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Review Laporan</span>
+              </div>
+              <p className="text-[9px] text-slate-400 mt-1 font-medium">Laporan nota & dana talangan dari tim bawahan langsung</p>
+            </div>
+          </div>
+        </div>
+
         {/* Banner Direktur */}
         <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg border border-purple-800/50">
           <div className="flex items-center justify-between">

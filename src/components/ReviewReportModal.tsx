@@ -107,7 +107,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   useEffect(() => {
     const initialDecisions: Record<string, { status: ItemStatus; comment: string }> = {};
     currentItems.forEach((item) => {
-      if (role === Role.MANAGER) {
+      if (role === Role.MANAGER || role === Role.DIREKTUR) {
         initialDecisions[item.id] = {
           status: item.statusManager,
           comment: item.managerComment
@@ -187,13 +187,13 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
     const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
     let nextRequestStatus: RequestStatus;
 
-    if (role === Role.MANAGER) {
+    if (role === Role.MANAGER || role === Role.DIREKTUR) {
       if (hasRejections) {
-        // If the manager rejects any item, it goes back to User for reporting/correction
+        // If the manager or direktur rejects any item, it goes back to User for reporting/correction
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        // If the manager approves all, it moves to Admin review
-        nextRequestStatus = RequestStatus.REVIEW_ADMIN;
+        // If approved, for Dana Talangan go directly to PENDING_TALANGAN_TRANSFER, otherwise move to REVIEW_ADMIN
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REVIEW_ADMIN;
       }
     } else {
       // Role is ADMIN
