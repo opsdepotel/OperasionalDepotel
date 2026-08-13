@@ -2272,14 +2272,13 @@ User Agent: ${navigator.userAgent}`;
     const activeReqs = requests.filter(r => r.status !== RequestStatus.CANCELLED);
     const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
 
-    // Direct reports approval tasks for Direktur
-    const direkturDirectReqs = requests.filter(r => r.managerEmail.toLowerCase() === email.toLowerCase());
-    const pendingBudgetReview = direkturDirectReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
-    const pendingReportReview = direkturDirectReqs.filter(r => {
+    // Executive Direktur approval & reconciliation tasks across company operations
+    const pendingBudgetReview = activeReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
+    const pendingReportReview = activeReqs.filter(r => {
       if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
       const reqItems = usageItems.filter(item => item.requestId === r.id);
       if (reqItems.length === 0) return false;
-      return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
+      return reqItems.some(i => i.statusManager === ItemStatus.PENDING || i.statusAdmin === ItemStatus.PENDING);
     }).length;
     const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
 
@@ -2318,7 +2317,7 @@ User Agent: ${navigator.userAgent}`;
             <div>
               <h3 className="font-display font-bold text-purple-900 text-xs tracking-wide uppercase">TUGAS PERSETUJUAN DIREKTUR ({totalApprovalTasks})</h3>
               <p className="text-xs text-purple-700 font-medium mt-0.5">
-                Ada {pendingBudgetReview} pengajuan anggaran baru dan {pendingReportReview} laporan operasional tim bawahan langsung yang membutuhkan tinjauan Anda.
+                Ada {pendingBudgetReview} pengajuan anggaran baru dan {pendingReportReview} laporan operasional yang membutuhkan tinjauan Anda.
               </p>
             </div>
           </div>
@@ -2339,9 +2338,9 @@ User Agent: ${navigator.userAgent}`;
         {/* FITUR TAMBAHAN: 2 Kartu Akses Approval & Review Direktur */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div 
-            onClick={() => handleCardClick('PENDING')}
+            onClick={() => handleCardClick('DIREKTUR_APPROVAL')}
             className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
-              activeFilter === 'PENDING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+              activeFilter === 'DIREKTUR_APPROVAL' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
             }`}
           >
             <div>
@@ -2353,16 +2352,16 @@ User Agent: ${navigator.userAgent}`;
             <div>
               <div className="flex items-end justify-between mt-2">
                 <span className="text-2xl font-display font-bold text-slate-900">{pendingBudgetReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Persetujuan</span>
+                <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Persetujuan (Aksi)</span>
               </div>
-              <p className="text-[9px] text-slate-400 mt-1 font-medium">Pengajuan anggaran baru dari tim bawahan langsung</p>
+              <p className="text-[9px] text-slate-400 mt-1 font-medium">Pengajuan anggaran operasional perusahaan</p>
             </div>
           </div>
 
           <div 
-            onClick={() => handleCardClick('REPORTING')}
+            onClick={() => handleCardClick('DIREKTUR_RECONCILIATION')}
             className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
-              activeFilter === 'REPORTING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+              activeFilter === 'DIREKTUR_RECONCILIATION' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
             }`}
           >
             <div>
@@ -2374,9 +2373,9 @@ User Agent: ${navigator.userAgent}`;
             <div>
               <div className="flex items-end justify-between mt-2">
                 <span className="text-2xl font-display font-bold text-slate-900">{pendingReportReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Review Laporan</span>
+                <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Review Laporan (Aksi)</span>
               </div>
-              <p className="text-[9px] text-slate-400 mt-1 font-medium">Laporan nota & dana talangan dari tim bawahan langsung</p>
+              <p className="text-[9px] text-slate-400 mt-1 font-medium">Laporan nota & dana talangan operasional perusahaan</p>
             </div>
           </div>
         </div>

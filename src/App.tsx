@@ -279,7 +279,7 @@ export default function App() {
         setToken(null);
         setUser(null);
         setNeedsAuth(true);
-        setError('Sesi Google Anda telah berakhir atau tidak valid. Silakan hubungkan kembali Google Account Anda.');
+        setError('Sesi Google Anda telah berakhir atau tidak valid.');
       } else {
         setError(err.message || 'Gagal menginisialisasi Google Workspace.');
       }
@@ -933,8 +933,8 @@ export default function App() {
       timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
       actorRole: userProfile?.role || activeRole || Role.MANAGER,
       actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
-      actorNama: userProfile?.nama || userProfile?.email || 'Manager',
-      actionType: 'APPROVAL_MANAGER',
+      actorNama: userProfile?.nama || userProfile?.email || (activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
+      actionType: activeRole === Role.DIREKTUR ? 'APPROVAL_DIREKTUR' : 'APPROVAL_MANAGER',
       status: 'DISETUJUI',
       catatan: comment,
       tanggalPenggunaan: reviewBudgetReq.tanggalPemakaian,
@@ -973,8 +973,8 @@ export default function App() {
       timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
       actorRole: userProfile?.role || activeRole || Role.MANAGER,
       actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
-      actorNama: userProfile?.nama || userProfile?.email || 'Manager',
-      actionType: 'REVISI_MANAGER',
+      actorNama: userProfile?.nama || userProfile?.email || (activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
+      actionType: activeRole === Role.DIREKTUR ? 'REVISI_DIREKTUR' : 'REVISI_MANAGER',
       status: 'REVISI',
       catatan: reason,
       tanggalPenggunaan: reviewBudgetReq.tanggalPemakaian,
@@ -1581,10 +1581,11 @@ export default function App() {
     if (activeRole === Role.USER) {
       // User only sees their own requests
       if (r.userEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
-    } else if (activeRole === Role.MANAGER || activeRole === Role.DIREKTUR) {
-      // Manager & Direktur see requests assigned to them
+    } else if (activeRole === Role.MANAGER) {
+      // Manager sees requests assigned to them
       if (userProfile?.email && r.managerEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
     }
+    // DIREKTUR, FINANCE & ADMINISTRATOR see all requests across the organization!
     // Finance sees everything!
     if (activeRole === Role.FINANCE) {
       if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && statusFilter === 'REPORTING') {
@@ -1613,8 +1614,15 @@ export default function App() {
 
     // Status Filter
     if (statusFilter !== 'ALL') {
-      if (statusFilter === 'PENDING') {
+      if (statusFilter === 'DIREKTUR_APPROVAL') {
         if (r.status !== RequestStatus.PENDING_APPROVAL) return false;
+      } else if (statusFilter === 'DIREKTUR_RECONCILIATION') {
+        if (![RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
+        const reqItems = usageItems.filter(i => i.requestId === r.id);
+        if (reqItems.length === 0) return false;
+        if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING || i.statusAdmin === ItemStatus.PENDING)) return false;
+      } else if (statusFilter === 'PENDING') {
+        if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
       } else if (statusFilter === 'APPROVED') {
         if (r.status !== RequestStatus.APPROVED && 
             r.status !== RequestStatus.PARTIALLY_APPROVED && 
@@ -2903,22 +2911,22 @@ export default function App() {
                                     </>
                                   )}
 
-                                  {/* MANAGER & DIREKTUR ACTIONS */}
-                                  {(activeRole === Role.MANAGER || activeRole === Role.DIREKTUR) && (
+                                  {/* MANAGER ACTIONS */}
+                                  {activeRole === Role.MANAGER && (
                                     <>
                                       {req.status === RequestStatus.PENDING_APPROVAL && (
                                         <div className="flex gap-1.5 flex-wrap">
                                           {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? (
                                             <button
                                               onClick={() => setReviewReportReq(req)}
-                                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
+                                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
                                             >
                                               Tinjau Item Talangan
                                             </button>
                                           ) : (
                                             <button
                                               onClick={() => setReviewBudgetReq(req)}
-                                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
+                                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
                                             >
                                               Tinjau Anggaran
                                             </button>
@@ -2926,24 +2934,78 @@ export default function App() {
                                         </div>
                                       )}
 
-                                      {(req.status === RequestStatus.REVIEW_MANAGER || (req.status === RequestStatus.REPORTING && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
+                                      {([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED].includes(req.status) && usageItems.some(i => i.requestId === req.id)) && (
                                         <button
+                                          type="button"
                                           onClick={() => setReviewReportReq(req)}
-                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm"
+                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
                                         >
-                                          Tinjau Item Talangan
+                                          {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? 'Tinjau Item Talangan' : 'Tinjau Laporan Nota'}
                                         </button>
                                       )}
 
-                                      {req.status !== RequestStatus.PENDING_APPROVAL && req.status !== RequestStatus.REVIEW_MANAGER && !(req.status === RequestStatus.REPORTING && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]'))) && (
+                                      {req.status !== RequestStatus.PENDING_APPROVAL && !([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED].includes(req.status) && usageItems.some(i => i.requestId === req.id)) && (
                                         <button
+                                          type="button"
                                           onClick={() => {
                                             setSelectedRequest(req);
                                             setActiveView('report-usage');
                                           }}
-                                          className="px-3 py-1.5 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold rounded-xl transition-all"
+                                          className="px-3 py-1.5 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold rounded-xl transition-all cursor-pointer"
                                         >
                                           Rincian Laporan
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+
+                                  {/* DIREKTUR ACTIONS */}
+                                  {activeRole === Role.DIREKTUR && (
+                                    <>
+                                      {/* Approval functionality only enabled under DIREKTUR_APPROVAL card */}
+                                      {statusFilter === 'DIREKTUR_APPROVAL' && (
+                                        <div className="flex gap-1.5 flex-wrap">
+                                          {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? (
+                                            <button
+                                              onClick={() => setReviewReportReq(req)}
+                                              className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                            >
+                                              Tinjau Item Talangan
+                                            </button>
+                                          ) : (
+                                            <button
+                                              onClick={() => setReviewBudgetReq(req)}
+                                              className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                            >
+                                              Tinjau Anggaran
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+
+                                      {/* Reconciliation functionality only enabled under DIREKTUR_RECONCILIATION card */}
+                                      {statusFilter === 'DIREKTUR_RECONCILIATION' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setReviewReportReq(req)}
+                                          className="px-3 py-1.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                        >
+                                          {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? 'Tinjau Item Talangan' : 'Tinjau Laporan Nota'}
+                                        </button>
+                                      )}
+
+                                      {/* View Only mode for Ringkasan Eksekutif Direktur cards and all other filters */}
+                                      {statusFilter !== 'DIREKTUR_APPROVAL' && statusFilter !== 'DIREKTUR_RECONCILIATION' && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setSelectedRequest(req);
+                                            setActiveView('report-usage');
+                                          }}
+                                          className="px-3 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs shadow-xs"
+                                        >
+                                          <Eye className="w-3.5 h-3.5 text-slate-500" />
+                                          <span>Rincian Laporan</span>
                                         </button>
                                       )}
                                     </>
