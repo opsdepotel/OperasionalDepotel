@@ -1856,9 +1856,6 @@ export default function App() {
             <h1 className="font-display font-black text-slate-800 text-sm sm:text-base tracking-tight leading-snug">
               Depotel Integrated Operation Monitoring System
             </h1>
-            <p className="text-xs text-slate-400 font-medium">
-              Hubungkan Google Account Anda untuk memuat database
-            </p>
           </div>
 
           <div className="bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-2xl p-4 text-xs text-left space-y-3">
@@ -1866,9 +1863,6 @@ export default function App() {
               <AlertCircle className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
               <div>
                 <h3 className="font-bold text-indigo-800 text-xs">Hubungkan Akun Google</h3>
-                <p className="text-[11px] text-indigo-700 mt-1 leading-relaxed">
-                  Aplikasi disinkronkan secara online dengan Google Sheets &amp; Drive database operasional.
-                </p>
                 <p className="text-[11px] text-indigo-700 mt-1 leading-relaxed font-semibold">
                   Semua akun Google diizinkan untuk terhubung dan mengakses aplikasi.
                 </p>
