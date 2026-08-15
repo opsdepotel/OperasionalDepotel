@@ -220,7 +220,7 @@ export const AiScreenRecaptureModal: React.FC<AiScreenRecaptureModalProps> = ({
               <XCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
               <div className="flex-1 min-w-0">
                 <span className="font-bold block text-rose-900">Gagal Melakukan Analisis AI</span>
-                <p className="mt-0.5 text-rose-700">{error}</p>
+                <p className="mt-0.5 text-rose-700 whitespace-pre-line leading-relaxed">{error}</p>
                 <button
                   type="button"
                   onClick={onReanalyze}

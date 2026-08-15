@@ -9,6 +9,7 @@ import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, Reques
 import { parseNumericValue } from '../lib/googleApi';
 import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles } from 'lucide-react';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
+import { requestAiScreenRecapture } from '../lib/aiRecapture';
 
 interface BbmListModalProps {
   isOpen: boolean;
@@ -293,34 +294,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
 
     setIsAiAnalyzing(true);
     try {
-      const payload = {
-        imageBase64: photoUrl?.startsWith('data:') ? photoUrl : undefined,
-        imageUrl: !photoUrl?.startsWith('data:') ? (photoUrl || act.buktiUrl) : undefined,
-        fileId: fileId || undefined,
-        activityInfo: {
-          siteId: act.siteId,
-          siteName: act.siteName,
-          tanggal: act.tanggal,
-          userEmail: act.userEmail,
-          keterangan: act.keterangan,
-        },
-      };
-
-      const res = await fetch('/api/ai/check-screen-recapture', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Gagal menjalankan analisis AI Screen Recapture.');
-      }
-
-      const newResult: AiRecaptureResult = {
-        ...data.data,
-        checkedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
-      };
+      const newResult = await requestAiScreenRecapture(act, photoUrl, fileId);
 
       setAiRecaptureResults(prev => ({
         ...prev,
