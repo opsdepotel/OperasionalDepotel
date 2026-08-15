@@ -27,8 +27,17 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   externalError,
   onClearExternalError
 }) => {
-  const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState<boolean>(() => {
+    return localStorage.getItem('op_app_remember_me') === 'true';
+  });
+  const [userId, setUserId] = useState(() => {
+    const isRemembered = localStorage.getItem('op_app_remember_me') === 'true';
+    return isRemembered ? localStorage.getItem('op_app_saved_user_id') || '' : '';
+  });
+  const [password, setPassword] = useState(() => {
+    const isRemembered = localStorage.getItem('op_app_remember_me') === 'true';
+    return isRemembered ? localStorage.getItem('op_app_saved_password') || '' : '';
+  });
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -37,6 +46,18 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   useEffect(() => {
     setDeviceId(getOrCreateDeviceId());
   }, []);
+
+  const saveRememberMeState = (uid: string, pwd: string, shouldRemember: boolean) => {
+    if (shouldRemember) {
+      localStorage.setItem('op_app_remember_me', 'true');
+      localStorage.setItem('op_app_saved_user_id', uid.trim());
+      localStorage.setItem('op_app_saved_password', pwd);
+    } else {
+      localStorage.removeItem('op_app_remember_me');
+      localStorage.removeItem('op_app_saved_user_id');
+      localStorage.removeItem('op_app_saved_password');
+    }
+  };
 
   const activeError = externalError || error;
   const isModalOpen = (showRejectModal || !!externalError) && !!activeError;
@@ -69,6 +90,7 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
     }
 
     if (onLoginWithCredentials) {
+      saveRememberMeState(userId, password, rememberMe);
       onLoginWithCredentials(userId, password, (msg) => {
         triggerError(msg);
       });
@@ -86,6 +108,7 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           triggerError(deviceCheck.errorMessage || 'Akses ditolak.');
           return;
         }
+        saveRememberMeState(userId, password, rememberMe);
         onLoginSuccess(deviceCheck.updatedUser || matched);
       } else {
         triggerError('User ID atau Password salah. Silakan coba lagi.');
@@ -94,14 +117,14 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-6 space-y-6 animate-slide-up">
+    <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xl shadow-slate-200/50 p-6 sm:p-8 space-y-6 animate-slide-up max-w-md mx-auto">
       {/* Title Header */}
-      <div className="text-center space-y-1">
-        <div className="w-12 h-12 bg-indigo-50 text-indigo-600 flex items-center justify-center rounded-2xl mx-auto shadow-sm">
-          <ShieldCheck className="w-6 h-6 text-indigo-600" />
+      <div className="text-center space-y-1.5">
+        <div className="w-12 h-12 bg-amber-50 border border-amber-200/60 text-amber-600 flex items-center justify-center rounded-2xl mx-auto shadow-sm">
+          <ShieldCheck className="w-6 h-6 text-amber-600" />
         </div>
-        <h2 className="font-display font-bold text-slate-800 text-base mt-2">Login Aplikasi</h2>
-        <p className="text-xs text-slate-400 font-medium">
+        <h2 className="font-display font-bold text-slate-800 text-lg mt-2">Login Aplikasi</h2>
+        <p className="text-xs text-slate-500 font-medium">
           Masuk menggunakan User ID &amp; Password Anda
         </p>
       </div>
@@ -116,47 +139,85 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
 
         {/* User ID field */}
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">User ID</label>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5">User ID</label>
           <div className="relative">
             <input
               type="text"
+              id="login-user-id-input"
               value={userId}
               onChange={(e) => setUserId(e.target.value)}
               placeholder="Masukkan User ID Anda"
-              className="w-full pl-9 pr-3 py-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+              className="w-full pl-10 pr-3 py-2.5 text-xs bg-slate-50/70 border border-slate-200 rounded-xl focus:border-amber-500 focus:bg-white focus:ring-1 focus:ring-amber-500/30 transition-all outline-none text-slate-900 font-medium"
               disabled={isLoading}
+              required
             />
-            <User className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+            <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
           </div>
         </div>
 
         {/* Password field */}
         <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">Password</label>
+          <label className="block text-xs font-bold text-slate-700 mb-1.5">Password</label>
           <div className="relative">
             <input
               type={showPassword ? 'text' : 'password'}
+              id="login-password-input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Masukkan Password Anda"
-              className="w-full pl-9 pr-10 py-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+              className="w-full pl-10 pr-10 py-2.5 text-xs bg-slate-50/70 border border-slate-200 rounded-xl focus:border-amber-500 focus:bg-white focus:ring-1 focus:ring-amber-500/30 transition-all outline-none text-slate-900 font-medium"
               disabled={isLoading}
+              required
             />
-            <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+            <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-3 text-slate-400 hover:text-slate-600 cursor-pointer"
+              className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+              tabIndex={-1}
             >
               {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
         </div>
 
+        {/* Checkmark Ingat Saya */}
+        <div className="flex items-center justify-between pt-0.5">
+          <label 
+            htmlFor="remember-me-checkbox" 
+            className="inline-flex items-center gap-2.5 cursor-pointer select-none group"
+          >
+            <input
+              type="checkbox"
+              id="remember-me-checkbox"
+              checked={rememberMe}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setRememberMe(checked);
+                if (!checked) {
+                  localStorage.removeItem('op_app_remember_me');
+                  localStorage.removeItem('op_app_saved_user_id');
+                  localStorage.removeItem('op_app_saved_password');
+                } else if (userId.trim()) {
+                  localStorage.setItem('op_app_remember_me', 'true');
+                  localStorage.setItem('op_app_saved_user_id', userId.trim());
+                  localStorage.setItem('op_app_saved_password', password);
+                }
+              }}
+              className="w-4 h-4 rounded text-amber-600 border-slate-300 focus:ring-amber-500 cursor-pointer accent-amber-600 transition-all"
+            />
+            <span className="text-xs font-semibold text-slate-600 group-hover:text-slate-800 transition-colors">
+              Ingat saya
+            </span>
+          </label>
+        </div>
+
+        {/* Submit Button */}
         <button
           type="submit"
+          id="login-submit-button"
           disabled={isLoading}
-          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
+          className="w-full py-2.5 sm:py-3 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-amber-600/25 disabled:bg-slate-300 disabled:shadow-none transition-all cursor-pointer"
         >
           {isLoading ? (
             <>
@@ -184,9 +245,9 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           <button
             type="button"
             onClick={onResetGoogle}
-            className="w-full py-2 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-700 font-semibold text-[10px] rounded-xl transition-all cursor-pointer text-center uppercase tracking-wider"
+            className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 font-bold text-[11px] rounded-xl border border-slate-200/80 transition-all cursor-pointer text-center uppercase tracking-wider shadow-sm"
           >
-            Switch Google Account
+            SWITCH GOOGLE ACCOUNT
           </button>
         </div>
       )}

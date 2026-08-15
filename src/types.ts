@@ -101,6 +101,12 @@ export interface UserActivity {
   buktiFileId?: string;
   indikasiFake?: boolean;
   fakeReason?: string;
+  // Persistent AI Screen Recapture database fields
+  aiRecaptureVerdict?: string; // 'AUTHENTIC' | 'SCREEN_RECAPTURE_DETECTED' | 'SUSPICIOUS' | string
+  aiRecaptureConfidence?: number; // 0 - 100
+  aiRecaptureSummary?: string;
+  aiRecaptureIndicators?: string; // JSON array or comma-separated string
+  aiRecaptureCheckedAt?: string;
 }
 
 export interface ResetDeviceLog {
@@ -122,7 +128,7 @@ export interface ItemReviewHistory {
   actorRole: Role | string;
   actorEmail: string;
   actorNama: string;
-  actionType: 'APPROVAL_MANAGER' | 'REVISI_MANAGER' | 'APPROVAL_FINANCE' | 'REVISI_FINANCE' | 'PERBAIKAN_USER' | 'ITEM_CREATED' | 'PENGAJUAN_CREATED' | 'PENGAJUAN_REVISED';
+  actionType: 'APPROVAL_MANAGER' | 'APPROVAL_DIREKTUR' | 'REVISI_MANAGER' | 'REVISI_DIREKTUR' | 'APPROVAL_FINANCE' | 'REVISI_FINANCE' | 'PERBAIKAN_USER' | 'ITEM_CREATED' | 'PENGAJUAN_CREATED' | 'PENGAJUAN_REVISED';
   status: string; // 'DISETUJUI' | 'REVISI' | 'SUBMITTED' | 'PERBAIKAN SUBMITTED'
   catatan: string;
   tanggalPenggunaan: string;

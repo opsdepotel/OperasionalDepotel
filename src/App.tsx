@@ -25,6 +25,7 @@ import {
   fetchSites,
   fetchUserActivities,
   createUserActivity,
+  updateUserActivity,
   fetchResetDeviceLogs,
   createResetDeviceLog,
   fetchItemReviewHistories,
@@ -56,6 +57,7 @@ import { BbmListModal } from './components/BbmListModal';
 import { FinancialReportsModal } from './components/FinancialReportsModal';
 import { ItemHistoryModal } from './components/ItemHistoryModal';
 import { UserDashboardPreviewModal } from './components/UserDashboardPreviewModal';
+import { GoogleConnectionModal } from './components/GoogleConnectionModal';
 
 // Icons
 import {
@@ -72,6 +74,8 @@ export default function App() {
   const [token, setToken] = useState<string | null>(null);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isAuthAlertModalOpen, setIsAuthAlertModalOpen] = useState(false);
+  const [isAuthModalDismissed, setIsAuthModalDismissed] = useState(false);
 
   const isInvalidGoogleAccount = false;
 
@@ -222,8 +226,12 @@ export default function App() {
       if (token) {
         const expired = isGoogleTokenExpired();
         setIsTokenExpired(expired);
-        if (expired && (!error || !error.includes('Sesi Google'))) {
-          setError('Sesi Google Anda telah kadaluarsa (Masa aktif token 1 Jam). Data lokal & login aplikasi Anda tetap aman. Klik "Perbarui Sesi Google" untuk melanjutkan.');
+        if (expired) {
+          setIsAuthAlertModalOpen(true);
+          setIsAuthModalDismissed(false);
+          if (!error || !error.includes('Sesi Google')) {
+            setError('Sesi Google Anda telah kadaluarsa (Masa aktif token 1 Jam). Data lokal & login aplikasi Anda tetap aman. Silakan klik "1-Klik Koneksi Google" untuk melanjutkan.');
+          }
         }
       }
     };
@@ -274,12 +282,8 @@ export default function App() {
         err.message.toLowerCase().includes('token')
       );
       if (isAuthError) {
-        console.warn('Google API returned 401 Unauthorized. Resetting auth state...');
-        await logout();
-        setToken(null);
-        setUser(null);
-        setNeedsAuth(true);
-        setError('Sesi Google Anda telah berakhir atau tidak valid.');
+        console.warn('Google API returned 401 Unauthorized. Sesi token Google expired.');
+        await handleGoogleAuthError();
       } else {
         setError(err.message || 'Gagal menginisialisasi Google Workspace.');
       }
@@ -379,12 +383,8 @@ export default function App() {
         err.message.toLowerCase().includes('token')
       );
       if (isAuthError) {
-        console.warn('Google API returned 401 Unauthorized during refresh. Resetting auth...');
-        await logout();
-        setToken(null);
-        setUser(null);
-        setNeedsAuth(true);
-        setError('Sesi Google Anda telah berakhir atau tidak valid. Silakan hubungkan kembali Google Account Anda.');
+        console.warn('Google API returned 401 Unauthorized during refresh. Sesi token Google expired.');
+        await handleGoogleAuthError();
       } else {
         setError(err.message || 'Gagal memperbarui data.');
       }
@@ -426,7 +426,9 @@ export default function App() {
   const handleGoogleAuthError = async () => {
     console.warn('Google API returned 401 Unauthorized. Sesi token Google expired.');
     setIsTokenExpired(true);
-    setError('Sesi Google (ops.depotel@gmail.com) telah berakhir (Masa aktif token 1 Jam). Data lokal & login aplikasi Anda tetap aman. Klik "Perbarui Sesi Google" untuk melanjutkan.');
+    setIsAuthAlertModalOpen(true);
+    setIsAuthModalDismissed(false);
+    setError('Sesi Google (ops.depotel@gmail.com) telah berakhir (Masa aktif token 1 Jam). Data lokal & login aplikasi Anda tetap aman. Silakan klik "1-Klik Koneksi Google" untuk melanjutkan.');
   };
 
   const handleRenewGoogleToken = async () => {
@@ -439,6 +441,8 @@ export default function App() {
         setUser(result.user);
         setNeedsAuth(false);
         setIsTokenExpired(false);
+        setIsAuthAlertModalOpen(false);
+        setIsAuthModalDismissed(false);
         let sId = spreadsheetId;
         if (!sId) {
           sId = await findOrCreateDatabase(result.accessToken);
@@ -1290,6 +1294,23 @@ export default function App() {
     localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
   };
 
+  const handleUpdateActivity = async (updatedActivity: UserActivity) => {
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+
+    // Optimistic UI state update
+    setActivities(prev => prev.map(a => a.id.toUpperCase() === updatedActivity.id.toUpperCase() ? { ...a, ...updatedActivity } : a));
+
+    try {
+      await updateUserActivity(currentToken, currentSheetId, updatedActivity);
+      const allActs = await fetchUserActivities(currentToken, currentSheetId);
+      setActivities(allActs);
+      localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
+    } catch (err) {
+      console.error('Error updating activity in database:', err);
+    }
+  };
+
   // Workflow Action 5: Review Usage Items (Manager/Admin Action)
   const handleReviewUsageItems = async (
     itemDecisions: { itemId: string; status: ItemStatus; comment: string }[],
@@ -1436,7 +1457,7 @@ export default function App() {
 
   // Filter manager email list from existing profiles to make it easy for users to choose
   const managerEmails = profiles
-    .filter(p => p.role === Role.MANAGER)
+    .filter(p => p.role === Role.MANAGER || p.role === Role.DIREKTUR)
     .map(p => p.email);
 
   const parseIndonesianDate = (dateStr: string): Date | null => {
@@ -1615,8 +1636,68 @@ export default function App() {
     // Status Filter
     if (statusFilter !== 'ALL') {
       if (statusFilter === 'DIREKTUR_APPROVAL') {
-        if (r.status !== RequestStatus.PENDING_APPROVAL) return false;
+        if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
+        const direkturEmails = new Set<string>([
+          'margono@depotel.com',
+          'direktur@company.com'
+        ]);
+        profiles
+          .filter(p => p.role === Role.DIREKTUR)
+          .forEach(p => {
+            if (p.email) direkturEmails.add(p.email.trim().toLowerCase());
+          });
+        if (userProfile?.email) direkturEmails.add(userProfile.email.trim().toLowerCase());
+
+        const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
+        const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
+        const profileMgrEmail = (requesterProfile?.managerEmail || '').trim().toLowerCase();
+
+        const isDirect = (reqManagerEmail && (
+                           direkturEmails.has(reqManagerEmail) || 
+                           reqManagerEmail.includes('margono') || 
+                           reqManagerEmail.includes('direktur') || 
+                           (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
+                         )) ||
+                         (profileMgrEmail && (
+                           direkturEmails.has(profileMgrEmail) || 
+                           profileMgrEmail.includes('margono') || 
+                           profileMgrEmail.includes('direktur') || 
+                           (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
+                         )) ||
+                         (requesterProfile?.role === Role.MANAGER);
+
+        if (!isDirect) return false;
       } else if (statusFilter === 'DIREKTUR_RECONCILIATION') {
+        const direkturEmails = new Set<string>([
+          'margono@depotel.com',
+          'direktur@company.com'
+        ]);
+        profiles
+          .filter(p => p.role === Role.DIREKTUR)
+          .forEach(p => {
+            if (p.email) direkturEmails.add(p.email.trim().toLowerCase());
+          });
+        if (userProfile?.email) direkturEmails.add(userProfile.email.trim().toLowerCase());
+
+        const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
+        const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
+        const profileMgrEmail = (requesterProfile?.managerEmail || '').trim().toLowerCase();
+
+        const isDirect = (reqManagerEmail && (
+                           direkturEmails.has(reqManagerEmail) || 
+                           reqManagerEmail.includes('margono') || 
+                           reqManagerEmail.includes('direktur') || 
+                           (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
+                         )) ||
+                         (profileMgrEmail && (
+                           direkturEmails.has(profileMgrEmail) || 
+                           profileMgrEmail.includes('margono') || 
+                           profileMgrEmail.includes('direktur') || 
+                           (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
+                         )) ||
+                         (requesterProfile?.role === Role.MANAGER);
+
+        if (!isDirect) return false;
         if (![RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
         const reqItems = usageItems.filter(i => i.requestId === r.id);
         if (reqItems.length === 0) return false;
@@ -1769,8 +1850,8 @@ export default function App() {
   const getStatusLabel = (status: RequestStatus) => {
     switch (status) {
       case RequestStatus.PENDING_APPROVAL: return 'Menunggu Review Manager';
-      case RequestStatus.APPROVED: return 'Disetujui Penuh Manager';
-      case RequestStatus.PARTIALLY_APPROVED: return 'Disetujui Sebagian Manager';
+      case RequestStatus.APPROVED: return 'Disetujui oleh Manager';
+      case RequestStatus.PARTIALLY_APPROVED: return 'Disetujui Sebagian oleh Manager';
       case RequestStatus.REJECTED: return 'Diminta Revisi Manager';
       case RequestStatus.TRANSFERRED: return 'Dana Ditransfer Finance';
       case RequestStatus.REPORTING: return 'Pelaporan Penggunaan';
@@ -2072,6 +2153,7 @@ export default function App() {
             profiles={profiles}
             role={activeRole}
             onSaveActivity={handleSaveActivity}
+            onUpdateActivity={handleUpdateActivity}
             onBack={() => setActiveView('dashboard')}
           />
         ) : (
@@ -2386,7 +2468,9 @@ export default function App() {
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                       <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                         Daftar Pengajuan: <span className="text-indigo-600 font-bold">
-                          {statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Pengisian & Review Laporan)' :
+                          {statusFilter === 'DIREKTUR_APPROVAL' ? 'Alur Persetujuan Direktur (Tinjau Anggaran)' :
+                           statusFilter === 'DIREKTUR_RECONCILIATION' ? 'Alur Rekonsiliasi Direktur (Review Penggunaan Anggaran)' :
+                           statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Pengisian & Review Laporan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.MANAGER ? 'Review Penggunaan Anggaran (Termasuk Dana Talangan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.FINANCE ? 'Review Finansial' :
                            statusFilter === 'REPORTING' && activeRole === Role.DIREKTUR ? 'Proses Laporan Operasional' :
@@ -3179,6 +3263,7 @@ export default function App() {
         activities={activities}
         role={activeRole}
         userEmail={userProfile?.email}
+        onUpdateActivity={handleUpdateActivity}
         onOpenBbmRefillModal={userProfile?.aksesBBM ? () => setIsBbmModalOpen(true) : undefined}
         onPreviewDocument={(rawUrl) => {
           const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
@@ -3240,6 +3325,56 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Floating 1-Click Google Reconnect Banner when modal is dismissed */}
+      {(isTokenExpired || (!token && userProfile)) && !isAuthAlertModalOpen && (
+        <div 
+          id="google-auth-floating-banner"
+          className="fixed top-3 left-1/2 -translate-x-1/2 z-[9990] w-[95%] max-w-md bg-amber-600 text-white rounded-2xl shadow-2xl p-2.5 px-3.5 flex items-center justify-between gap-2 border border-amber-300 animate-slide-up"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-200 animate-ping shrink-0" />
+            <p className="text-xs font-bold truncate">
+              Sesi Google Terputus (Expired)
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleRenewGoogleToken}
+              disabled={isLoading}
+              className="py-1.5 px-3 bg-white hover:bg-amber-50 text-amber-800 font-extrabold text-[11px] rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>1-Klik Hubungkan</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsAuthAlertModalOpen(true);
+                setIsAuthModalDismissed(false);
+              }}
+              className="py-1.5 px-2.5 bg-amber-700/80 hover:bg-amber-700 text-white text-[11px] font-semibold rounded-xl transition-all cursor-pointer"
+              title="Buka Detail Status Koneksi"
+            >
+              Detail
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Popup Pemberitahuan Status Koneksi Google (Semua Role & Mengambang di Atas Layar Aktif) */}
+      <GoogleConnectionModal
+        isOpen={isAuthAlertModalOpen}
+        onClose={() => {
+          setIsAuthAlertModalOpen(false);
+          setIsAuthModalDismissed(true);
+        }}
+        onRenewToken={handleRenewGoogleToken}
+        isLoading={isLoading}
+        errorMessage={error}
+        userEmail={user?.email || (userProfile ? userProfile.email : 'ops.depotel@gmail.com')}
+      />
     </div>
   );
 }

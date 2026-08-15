@@ -20,6 +20,9 @@ async function fetchWithTimeout(resource: string | Request, options: RequestInit
     if (err.name === 'AbortError') {
       throw new Error('Permintaan ke Google API mengalami timeout (melebihi batas 30 detik). Silakan periksa koneksi internet Anda atau gunakan Mode Demo (Offline).');
     }
+    if (err.message === 'Failed to fetch' || (err.message && err.message.includes('Failed to fetch'))) {
+      throw new Error('Gagal terhubung ke Google API (Koneksi jaringan terputus atau diblokir). Silakan periksa koneksi internet Anda dan coba lagi.');
+    }
     throw err;
   } finally {
     clearTimeout(id);
@@ -51,6 +54,7 @@ const USERS_HEADERS = [
 const ACTIVITY_HEADERS = [
   'ActivityID', 'UserEmail', 'Tanggal', 'CreatedAt', 'SiteID', 'SiteName', 'CoordinatesDb', 'CoordinatesActual', 'Keterangan', 'BuktiUrl', 'BuktiFileId',
   'IndikasiFake', 'FakeReason',
+  'AiRecaptureVerdict', 'AiRecaptureConfidence', 'AiRecaptureSummary', 'AiRecaptureIndicators', 'AiRecaptureCheckedAt',
   'Timestamp'
 ];
 
@@ -69,7 +73,10 @@ function parseSheetRows<T>(headers: string[], rows: any[][], mapper: (rowMap: Re
   const dataRows = rows.slice(1);
 
   return dataRows.map((row) => {
-    const rowMap: Record<string, any> = {};
+    const rowMap: Record<string, any> = {
+      _rawRow: row,
+      _sheetHeaders: sheetHeaders
+    };
     headers.forEach((h, colIndex) => {
       let idx = sheetHeaders.indexOf(h);
       if (idx === -1) {
@@ -237,24 +244,107 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
 
 // Map row map to UserActivity
 function mapToUserActivity(row: Record<string, any>): UserActivity {
-  const ts = String(row.Timestamp || row.timestamp || row.CreatedAt || '');
-  const rawFake = row.IndikasiFake ?? row.indikasiFake;
-  const isFake = rawFake === true || String(rawFake).toUpperCase() === 'TRUE' || String(rawFake) === '1';
+  const getVal = (...keys: string[]): string => {
+    for (const k of keys) {
+      if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+        return String(row[k]).trim();
+      }
+      const kNorm = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+      for (const rowKey of Object.keys(row)) {
+        if (rowKey.startsWith('_')) continue;
+        if (rowKey.toLowerCase().replace(/[^a-z0-9]/g, '') === kNorm) {
+          if (row[rowKey] !== undefined && row[rowKey] !== null && String(row[rowKey]).trim() !== '') {
+            return String(row[rowKey]).trim();
+          }
+        }
+      }
+    }
+    return '';
+  };
+
+  const rawRow = Array.isArray(row._rawRow) ? row._rawRow : [];
+  const rawFake = getVal('IndikasiFake', 'indikasiFake', 'Indikasi Fake', 'FakeGPS', 'Fake GPS', 'Fake');
+  const isFake = rawFake === 'true' || rawFake.toUpperCase() === 'TRUE' || rawFake === '1' || rawFake.toUpperCase() === 'YA' || rawFake.toUpperCase() === 'YES';
+
+  // Extract AI Recapture fields from named columns or positional fallback
+  let rawVerdict = getVal('AiRecaptureVerdict', 'aiRecaptureVerdict', 'AI Recapture Verdict', 'AiVerdict', 'aiVerdict', 'Status Keaslian Foto', 'Keaslian Foto', 'Verdict', 'verdict', 'Status AI', 'StatusFoto');
+  let rawConfidenceStr = getVal('AiRecaptureConfidence', 'aiRecaptureConfidence', 'AI Recapture Confidence', 'AiConfidence', 'Confidence', 'Tingkat Keyakinan', 'Keyakinan', 'Akurasi');
+  let rawSummary = getVal('AiRecaptureSummary', 'aiRecaptureSummary', 'AI Recapture Summary', 'AiSummary', 'Summary', 'Ringkasan AI', 'Ringkasan');
+  let rawIndicators = getVal('AiRecaptureIndicators', 'aiRecaptureIndicators', 'AI Recapture Indicators', 'AiIndicators', 'Indicators', 'Indikator AI', 'Indikator');
+  let rawCheckedAt = getVal('AiRecaptureCheckedAt', 'aiRecaptureCheckedAt', 'AI Recapture Checked At', 'AiCheckedAt', 'CheckedAt', 'Waktu Cek AI', 'Tanggal Cek');
+
+  // If rawVerdict is placeholder or empty, clear it
+  if (
+    rawVerdict === '-' ||
+    rawVerdict.toLowerCase() === 'null' ||
+    rawVerdict.toLowerCase() === 'undefined' ||
+    rawVerdict.toLowerCase() === 'n/a' ||
+    rawVerdict.toLowerCase() === 'none' ||
+    rawVerdict.toLowerCase() === 'belum diperiksa' ||
+    rawVerdict.toLowerCase() === 'belum cek' ||
+    rawVerdict.toLowerCase() === 'not_checked' ||
+    rawVerdict.toLowerCase() === 'unchecked'
+  ) {
+    rawVerdict = '';
+  }
+
+  // Positional fallback if row has extra columns from the expanded 19-column schema (indexes 13..17)
+  if (!rawVerdict && rawRow.length >= 14 && rawRow[13]) {
+    const val13 = String(rawRow[13]).trim();
+    const val13Upper = val13.toUpperCase();
+    if (
+      val13Upper.includes('AUTHENTIC') ||
+      val13Upper.includes('RECAPTURE') ||
+      val13Upper.includes('LAYAR') ||
+      val13Upper.includes('ASLI') ||
+      val13Upper.includes('SUSPICIOUS') ||
+      val13Upper.includes('MENCURIGAKAN') ||
+      val13Upper === 'TRUE' ||
+      val13Upper === 'FALSE'
+    ) {
+      rawVerdict = val13;
+      if (!rawConfidenceStr && rawRow[14]) rawConfidenceStr = String(rawRow[14]).trim();
+      if (!rawSummary && rawRow[15]) rawSummary = String(rawRow[15]).trim();
+      if (!rawIndicators && rawRow[16]) rawIndicators = String(rawRow[16]).trim();
+      if (!rawCheckedAt && rawRow[17]) rawCheckedAt = String(rawRow[17]).trim();
+    }
+  }
+
+  // Parse confidence number safely (handles '95%', 95, 0.95, etc.)
+  let confidenceVal: number | undefined = undefined;
+  if (rawConfidenceStr) {
+    const cleanedNum = parseFloat(rawConfidenceStr.replace(/[^0-9.]/g, ''));
+    if (!isNaN(cleanedNum)) {
+      confidenceVal = cleanedNum <= 1 && cleanedNum > 0 ? Math.round(cleanedNum * 100) : Math.round(cleanedNum);
+    }
+  }
+
+  let ts = getVal('Timestamp', 'timestamp');
+  const createdAtVal = getVal('CreatedAt', 'createdAt');
+  if (!ts || ts.toUpperCase().includes('AUTHENTIC') || ts.toUpperCase().includes('RECAPTURE')) {
+    ts = createdAtVal || (rawRow.length >= 19 && rawRow[18] ? String(rawRow[18]).trim() : '');
+  }
+
   return {
-    id: String(row.ActivityID),
-    userEmail: String(row.UserEmail),
-    tanggal: String(row.Tanggal),
-    createdAt: String(row.CreatedAt),
+    id: getVal('ActivityID', 'activityId', 'id', 'Activity ID'),
+    userEmail: getVal('UserEmail', 'userEmail', 'Email', 'User Email'),
+    tanggal: getVal('Tanggal', 'tanggal', 'Date'),
+    createdAt: createdAtVal,
     timestamp: ts,
-    siteId: String(row.SiteID),
-    siteName: String(row.SiteName),
-    coordinatesDb: String(row.CoordinatesDb || ''),
-    coordinatesActual: String(row.CoordinatesActual || ''),
-    keterangan: String(row.Keterangan),
-    buktiUrl: String(row.BuktiUrl),
-    buktiFileId: String(row.BuktiFileId || ''),
+    siteId: getVal('SiteID', 'siteId', 'Site ID'),
+    siteName: getVal('SiteName', 'siteName', 'Site Name', 'Lokasi'),
+    coordinatesDb: getVal('CoordinatesDb', 'coordinatesDb', 'Coordinates Db'),
+    coordinatesActual: getVal('CoordinatesActual', 'coordinatesActual', 'Coordinates Actual'),
+    keterangan: getVal('Keterangan', 'keterangan', 'Deskripsi'),
+    buktiUrl: getVal('BuktiUrl', 'buktiUrl', 'Foto Bukti', 'Bukti URL'),
+    buktiFileId: getVal('BuktiFileId', 'buktiFileId', 'Bukti File ID'),
     indikasiFake: isFake,
-    fakeReason: String(row.FakeReason || row.fakeReason || '')
+    fakeReason: getVal('FakeReason', 'fakeReason', 'Fake Reason', 'Alasan Fake'),
+    aiRecaptureVerdict: rawVerdict || undefined,
+    aiRecaptureConfidence: confidenceVal,
+    aiRecaptureSummary: rawSummary || undefined,
+    aiRecaptureIndicators: rawIndicators || undefined,
+    aiRecaptureCheckedAt: rawCheckedAt || undefined
   };
 }
 
@@ -307,6 +397,9 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`, {
     headers: { Authorization: `Bearer ${token}` }
   });
+  if (res.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
   if (!res.ok) {
     let errorDetails = '';
     try {
@@ -356,7 +449,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
         { range: 'Pengajuan!A1:P1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
         { range: 'Users!A1:K1', values: [USERS_HEADERS] },
-        { range: 'Activity!A1:N1', values: [ACTIVITY_HEADERS] },
+        { range: 'Activity!A1:S1', values: [ACTIVITY_HEADERS] },
         { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
         { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
       ]
@@ -419,7 +512,7 @@ const setMockData = <T>(key: string, data: T): void => {
 
 export const defaultUsers: UserProfile[] = [
   { userId: 'admin', password: 'admin123', nama: 'Administrator System', email: 'admin@company.com', role: Role.ADMINISTRATOR, managerEmail: '', divisi: 'HQ-ADMIN', aksesBBM: false },
-  { userId: 'direktur', password: 'direktur123', nama: 'Direktur Utama', email: 'direktur@company.com', role: Role.DIREKTUR, managerEmail: '', divisi: 'HQ-EXECUTIVE', aksesBBM: false },
+  { userId: 'direktur', password: 'direktur123', nama: 'Margono (Direktur Utama)', email: 'margono@depotel.com', role: Role.DIREKTUR, managerEmail: '', divisi: 'HQ-EXECUTIVE', aksesBBM: false },
   { userId: 'finance', password: 'finance123', nama: 'Finance Depotel', email: 'ops.depotel@gmail.com', role: Role.FINANCE, managerEmail: '', divisi: 'HQ-CENTRAL', aksesBBM: true },
   { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: '', divisi: 'JKT-SOUTH-02', aksesBBM: false },
   { userId: 'staff', password: 'staff123', nama: 'Staff Lapangan', email: 'staff@company.com', role: Role.USER, managerEmail: 'manager@company.com', divisi: 'JKT-SOUTH-02', aksesBBM: true }
@@ -457,6 +550,22 @@ const defaultRequests: BudgetRequest[] = [
     createdAt: '11/07/2026, 14:30:00',
     buktiTransferUrl: '',
     buktiTransferFileId: ''
+  },
+  {
+    id: 'OPT-20260812-9827',
+    userEmail: 'staff@company.com',
+    managerEmail: 'manager@company.com',
+    tanggalPemakaian: '2026-08-12',
+    siteId: 'JKT-SOUTH-02',
+    jumlahPengajuan: 3500000,
+    keterangan: '[DANA TALANGAN] Perbaikan & Operasional Darurat Lapangan',
+    status: RequestStatus.REVIEW_MANAGER,
+    managerActionAmount: 3500000,
+    managerComment: 'Disetujui penuh oleh Manager untuk operasional lapangan.',
+    adminActionAmount: 3500000,
+    createdAt: '12/08/2026, 09:15:00',
+    buktiTransferUrl: '',
+    buktiTransferFileId: ''
   }
 ];
 
@@ -474,6 +583,20 @@ const defaultUsageItems: UsageReportItem[] = [
     statusAdmin: ItemStatus.PENDING,
     adminComment: '',
     updatedAt: '11/07/2026, 16:00:00'
+  },
+  {
+    id: 'ITEM-2',
+    requestId: 'OPT-20260812-9827',
+    tanggalPenggunaan: '2026-08-12',
+    nominal: 3500000,
+    keterangan: 'Nota Pembelian & Perbaikan Darurat Lapangan',
+    buktiUrl: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=300',
+    buktiFileId: 'mock_file_perbaikan',
+    statusManager: ItemStatus.APPROVED,
+    managerComment: 'Laporan dan bukti nota sesuai.',
+    statusAdmin: ItemStatus.PENDING,
+    adminComment: '',
+    updatedAt: '12/08/2026, 10:30:00'
   }
 ];
 
@@ -1154,6 +1277,11 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
     BuktiFileId: activity.buktiFileId || '',
     IndikasiFake: activity.indikasiFake ? 'TRUE' : 'FALSE',
     FakeReason: activity.fakeReason || '',
+    AiRecaptureVerdict: activity.aiRecaptureVerdict || '',
+    AiRecaptureConfidence: activity.aiRecaptureConfidence !== undefined ? activity.aiRecaptureConfidence : '',
+    AiRecaptureSummary: activity.aiRecaptureSummary || '',
+    AiRecaptureIndicators: activity.aiRecaptureIndicators || '',
+    AiRecaptureCheckedAt: activity.aiRecaptureCheckedAt || '',
     Timestamp: nowTimestamp
   });
 
@@ -1171,6 +1299,98 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
   if (!appendRes.ok) {
     const txt = await appendRes.text();
     throw new Error(`Gagal menyimpan kegiatan: ${txt}`);
+  }
+}
+
+// Update User Activity (e.g. AI Screen Recapture results, corrections, etc.)
+export async function updateUserActivity(token: string, spreadsheetId: string, activity: UserActivity): Promise<void> {
+  if (token === 'mock_demo_token') {
+    const list = getMockData<UserActivity[]>('mock_db_kegiatan', []);
+    const idx = list.findIndex(a => a.id.toUpperCase() === activity.id.toUpperCase());
+    if (idx !== -1) {
+      list[idx] = { ...list[idx], ...activity };
+      setMockData('mock_db_kegiatan', list);
+    }
+    return;
+  }
+
+  // Ensure headers if row 1 does not have the 19 columns
+  try {
+    const headerCheckRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:S1`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (headerCheckRes.ok) {
+      const headerData = await headerCheckRes.json();
+      const existingHeaders = headerData.values?.[0] || [];
+      const hasVerdictHeader = existingHeaders.some((h: any) => String(h).toLowerCase().includes('recapture') || String(h).toLowerCase().includes('verdict'));
+      if (!hasVerdictHeader || existingHeaders.length < ACTIVITY_HEADERS.length) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:S1?valueInputOption=USER_ENTERED`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ values: [ACTIVITY_HEADERS] })
+        });
+      }
+    }
+  } catch (headerErr) {
+    console.warn('Could not auto-verify Activity headers:', headerErr);
+  }
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:A1000`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error('Gagal membaca data kegiatan untuk update.');
+
+  const data = await res.json();
+  const activityIds = data.values ? data.values.map((v: any[]) => String(v[0]).trim().toUpperCase()) : [];
+  const rowIdx = activityIds.indexOf(activity.id.trim().toUpperCase());
+
+  if (rowIdx === -1) {
+    throw new Error(`Data kegiatan dengan ActivityID ${activity.id} tidak ditemukan di Google Sheets.`);
+  }
+
+  const nowTimestamp = activity.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  activity.timestamp = nowTimestamp;
+
+  const sheetRowIdx = rowIdx + 1;
+  const rowData = objectToRow(ACTIVITY_HEADERS, {
+    ActivityID: activity.id,
+    UserEmail: activity.userEmail,
+    Tanggal: activity.tanggal,
+    CreatedAt: activity.createdAt || nowTimestamp,
+    SiteID: activity.siteId,
+    SiteName: activity.siteName,
+    CoordinatesDb: activity.coordinatesDb,
+    CoordinatesActual: activity.coordinatesActual,
+    Keterangan: activity.keterangan,
+    BuktiUrl: activity.buktiUrl,
+    BuktiFileId: activity.buktiFileId || '',
+    IndikasiFake: activity.indikasiFake ? 'TRUE' : 'FALSE',
+    FakeReason: activity.fakeReason || '',
+    AiRecaptureVerdict: activity.aiRecaptureVerdict || '',
+    AiRecaptureConfidence: activity.aiRecaptureConfidence !== undefined ? activity.aiRecaptureConfidence : '',
+    AiRecaptureSummary: activity.aiRecaptureSummary || '',
+    AiRecaptureIndicators: activity.aiRecaptureIndicators || '',
+    AiRecaptureCheckedAt: activity.aiRecaptureCheckedAt || '',
+    Timestamp: nowTimestamp
+  });
+
+  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A${sheetRowIdx}:S${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      values: [rowData]
+    })
+  });
+
+  if (!updateRes.ok) {
+    const txt = await updateRes.text();
+    throw new Error(`Gagal mengupdate hasil analisis kegiatan di database: ${txt}`);
   }
 }
 

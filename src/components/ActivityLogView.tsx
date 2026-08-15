@@ -6,9 +6,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor } from 'lucide-react';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
+import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 
 // Helper to parse coordinate string and calculate Haversine distance
 function parseCoords(coordStr: string): { lat: number; lng: number } | null {
@@ -61,6 +62,7 @@ interface ActivityLogViewProps {
     indikasiFake?: boolean;
     fakeReason?: string;
   }, photoFile?: File) => Promise<void>;
+  onUpdateActivity?: (act: UserActivity) => Promise<void> | void;
   onBack: () => void;
 }
 
@@ -72,6 +74,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   profiles = [],
   role,
   onSaveActivity,
+  onUpdateActivity,
   onBack
 }) => {
   const currentRole = role || userProfile?.role || Role.USER;
@@ -118,14 +121,235 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [selectedPhotoActivity, setSelectedPhotoActivity] = useState<UserActivity | null>(null);
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
   const [selectedOriginalUrl, setSelectedOriginalUrl] = useState<string | null>(null);
+  const [selectedPhotoFileId, setSelectedPhotoFileId] = useState<string | null>(null);
+  const [selectedPhotoTitle, setSelectedPhotoTitle] = useState<string | null>(null);
+  const [isPhotoLoading, setIsPhotoLoading] = useState(false);
+  const [photoError, setPhotoError] = useState(false);
+  const [fallbackAttempted, setFallbackAttempted] = useState(false);
 
-  useBackHandler(showAddForm, () => setShowAddForm(false), 'activity_addForm');
-  useBackHandler(!!selectedPhotoUrl, () => {
+  // AI Screen Recapture State
+  const [aiRecaptureResults, setAiRecaptureResults] = useState<Record<string, AiRecaptureResult>>({});
+  const [isAiRecaptureModalOpen, setIsAiRecaptureModalOpen] = useState(false);
+  const [selectedAiActivity, setSelectedAiActivity] = useState<UserActivity | null>(null);
+  const [selectedAiPhotoUrl, setSelectedAiPhotoUrl] = useState<string | null>(null);
+  const [selectedAiPhotoFileId, setSelectedAiPhotoFileId] = useState<string | null>(null);
+  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
+  const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
+
+  // Helper to extract AI Screen Recapture result from database fields or in-memory state
+  const getAiRecaptureResult = (act: UserActivity): AiRecaptureResult | null => {
+    if (aiRecaptureResults[act.id]) {
+      return aiRecaptureResults[act.id];
+    }
+    const verdictRaw = act.aiRecaptureVerdict ? String(act.aiRecaptureVerdict).trim() : '';
+    if (
+      !verdictRaw ||
+      verdictRaw === '-' ||
+      verdictRaw.toLowerCase() === 'null' ||
+      verdictRaw.toLowerCase() === 'undefined' ||
+      verdictRaw.toLowerCase() === 'n/a' ||
+      verdictRaw.toLowerCase() === 'none' ||
+      verdictRaw.toLowerCase() === 'belum diperiksa' ||
+      verdictRaw.toLowerCase() === 'belum cek' ||
+      verdictRaw.toLowerCase() === 'not_checked' ||
+      verdictRaw.toLowerCase() === 'unchecked'
+    ) {
+      return null;
+    }
+
+    const vUpper = verdictRaw.toUpperCase().replace(/[\s_-]+/g, '');
+    const isRecapture = 
+      vUpper.includes('RECAPTURE') ||
+      vUpper.includes('FOTOLAYAR') ||
+      vUpper.includes('LAYAR') ||
+      vUpper.includes('SCREEN') ||
+      vUpper.includes('SPOOF') ||
+      vUpper.includes('PALSU') ||
+      vUpper.includes('FAKE') ||
+      vUpper === 'TRUE' ||
+      vUpper === '1';
+
+    const isSuspicious = !isRecapture && (
+      vUpper.includes('SUSPICIOUS') ||
+      vUpper.includes('MENCURIGAKAN') ||
+      vUpper.includes('RAGU')
+    );
+
+    const isAuthentic = !isRecapture && !isSuspicious && (
+      vUpper.includes('AUTHENTIC') ||
+      vUpper.includes('ASLI') ||
+      vUpper.includes('VALID') ||
+      vUpper.includes('DIRECT') ||
+      vUpper.includes('ORIGINAL') ||
+      vUpper === 'FALSE' ||
+      vUpper === '0'
+    );
+
+    // If it is none of these valid verdicts, treat as not checked
+    if (!isRecapture && !isSuspicious && !isAuthentic) {
+      return null;
+    }
+
+    const standardVerdict = isRecapture
+      ? 'SCREEN_RECAPTURE_DETECTED'
+      : isSuspicious
+        ? 'SUSPICIOUS'
+        : 'AUTHENTIC';
+
+    let indicators: string[] = [];
+    if (act.aiRecaptureIndicators) {
+      try {
+        const parsed = JSON.parse(act.aiRecaptureIndicators);
+        indicators = Array.isArray(parsed) ? parsed : [String(parsed)];
+      } catch {
+        indicators = act.aiRecaptureIndicators.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+      }
+    }
+
+    let conf = act.aiRecaptureConfidence;
+    if (typeof conf === 'string') {
+      const parsed = parseFloat(String(conf).replace(/[^0-9.]/g, ''));
+      conf = !isNaN(parsed) ? (parsed <= 1 && parsed > 0 ? Math.round(parsed * 100) : Math.round(parsed)) : undefined;
+    }
+    const finalConfidence = conf ?? (isRecapture ? 95 : isSuspicious ? 70 : 98);
+
+    return {
+      isRecapture,
+      confidence: finalConfidence,
+      verdict: standardVerdict,
+      summary: act.aiRecaptureSummary || (
+        isRecapture
+          ? 'Terdeteksi foto ulang dari layar digital (Tersimpan di Database).'
+          : isSuspicious
+            ? 'Status foto memerlukan verifikasi manual (Tersimpan di Database).'
+            : 'Foto asli teridentifikasi diambil langsung di lokasi fisik (Tersimpan di Database).'
+      ),
+      indicators: indicators.length > 0 ? indicators : [
+        isRecapture ? 'Tercatat indikasi foto layar di database' : isSuspicious ? 'Tercatat status mencurigakan di database' : 'Tercatat foto asli di database'
+      ],
+      recommendation: isRecapture
+        ? 'Periksa keaslian fisik atau hubungi pelapor kegiatan.'
+        : isSuspicious
+          ? 'Lakukan konfirmasi visual langsung dengan pengguna.'
+          : 'Foto bukti terverifikasi valid dan tersimpan di database.',
+      checkedAt: act.aiRecaptureCheckedAt
+    };
+  };
+
+  const resetPhotoModal = () => {
+    setSelectedPhotoActivity(null);
     setSelectedPhotoUrl(null);
     setSelectedOriginalUrl(null);
-  }, 'activity_photoModal');
+    setSelectedPhotoFileId(null);
+    setSelectedPhotoTitle(null);
+    setIsPhotoLoading(false);
+    setPhotoError(false);
+    setFallbackAttempted(false);
+  };
+
+  useBackHandler(showAddForm, () => setShowAddForm(false), 'activity_addForm');
+  useBackHandler(!!selectedPhotoUrl, resetPhotoModal, 'activity_photoModal');
+  useBackHandler(isAiRecaptureModalOpen, () => setIsAiRecaptureModalOpen(false), 'activity_aiRecaptureModal');
+
+  // Trigger AI Screen Recapture Inspection
+  const handleRunAiRecapture = async (
+    act: UserActivity,
+    explicitPhotoUrl?: string,
+    explicitFileId?: string,
+    forceReanalyze = false
+  ) => {
+    let fileId = explicitFileId || act.buktiFileId?.trim() || '';
+    if (!fileId && act.buktiUrl) {
+      const m = act.buktiUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+                act.buktiUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                act.buktiUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (m && m[1]) fileId = m[1];
+    }
+
+    const photoUrl = explicitPhotoUrl || (
+      act.buktiUrl?.startsWith('data:')
+        ? act.buktiUrl
+        : fileId
+          ? `https://drive.google.com/thumbnail?sz=w1200&id=${fileId}`
+          : act.buktiUrl
+    );
+
+    setSelectedAiActivity(act);
+    setSelectedAiPhotoUrl(photoUrl);
+    setSelectedAiPhotoFileId(fileId || null);
+    setIsAiRecaptureModalOpen(true);
+    setAiAnalysisError(null);
+
+    // 1. If result is already saved in database or cached state and not forcing re-analysis, load immediately without calling AI API!
+    const existingResult = getAiRecaptureResult(act);
+    if (existingResult && !forceReanalyze) {
+      if (!aiRecaptureResults[act.id]) {
+        setAiRecaptureResults(prev => ({ ...prev, [act.id]: existingResult }));
+      }
+      return;
+    }
+
+    setIsAiAnalyzing(true);
+    try {
+      const payload = {
+        imageBase64: photoUrl?.startsWith('data:') ? photoUrl : undefined,
+        imageUrl: !photoUrl?.startsWith('data:') ? (photoUrl || act.buktiUrl) : undefined,
+        fileId: fileId || undefined,
+        activityInfo: {
+          siteId: act.siteId,
+          siteName: act.siteName,
+          tanggal: act.tanggal,
+          userEmail: act.userEmail,
+          keterangan: act.keterangan,
+        },
+      };
+
+      const res = await fetch('/api/ai/check-screen-recapture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Gagal menjalankan analisis AI Screen Recapture.');
+      }
+
+      const newResult: AiRecaptureResult = {
+        ...data.data,
+        checkedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+      };
+
+      setAiRecaptureResults(prev => ({
+        ...prev,
+        [act.id]: newResult,
+      }));
+
+      // Automatically persist to Google Sheet Activity database so it won't ever need re-checking
+      if (onUpdateActivity) {
+        try {
+          await onUpdateActivity({
+            ...act,
+            aiRecaptureVerdict: newResult.verdict,
+            aiRecaptureConfidence: newResult.confidence,
+            aiRecaptureSummary: newResult.summary,
+            aiRecaptureIndicators: JSON.stringify(newResult.indicators || []),
+            aiRecaptureCheckedAt: newResult.checkedAt
+          });
+        } catch (err) {
+          console.error('Failed to auto-save AI result to database:', err);
+        }
+      }
+    } catch (err: any) {
+      console.error('AI Screen Recapture check failed:', err);
+      setAiAnalysisError(err.message || 'Gagal memeriksa keaslian foto dengan AI.');
+    } finally {
+      setIsAiAnalyzing(false);
+    }
+  };
 
   // Form State
   const lastGpsPositionRef = useRef<GeolocationPosition | null>(null);
@@ -1031,21 +1255,21 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                       {/* User Badge Info Header */}
                       <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-1">
                         <div className="flex items-center gap-2">
-                          <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                          <span className="text-xs font-bold text-slate-800">{userName}</span>
+                          <User className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span className="text-sm font-bold text-slate-800">{userName}</span>
                           {formattedDivisi && formattedDivisi !== '-' && (
                             <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
                               {formattedDivisi}
                             </span>
                           )}
                         </div>
-                        <span className="text-[10px] text-slate-400 font-medium truncate max-w-[120px]">
-                          {act.userEmail}
+                        <span className="text-[11px] text-slate-500 font-semibold font-mono tracking-tight shrink-0">
+                          {act.tanggal} {act.createdAt ? (act.createdAt.includes(',') ? act.createdAt.split(',')[1]?.trim() : act.createdAt.includes(' ') ? act.createdAt.split(' ')[1]?.trim() : act.createdAt) : ''}
                         </span>
                       </div>
 
                       <div>
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
                           <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
                             Site: {act.siteId}
                           </span>
@@ -1054,23 +1278,78 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                             {act.buktiUrl && (
                               <button
                                 onClick={() => {
-                                  const displayUrl = act.buktiFileId?.trim() 
-                                    ? `https://drive.google.com/thumbnail?sz=w1000&id=${act.buktiFileId.trim()}` 
-                                    : act.buktiUrl;
+                                  let fileId = act.buktiFileId?.trim() || '';
+                                  if (!fileId && act.buktiUrl) {
+                                    const m = act.buktiUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || 
+                                              act.buktiUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                                              act.buktiUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                                    if (m && m[1]) fileId = m[1];
+                                  }
+
+                                  const displayUrl = act.buktiUrl?.startsWith('data:')
+                                    ? act.buktiUrl
+                                    : fileId
+                                      ? `https://drive.google.com/thumbnail?sz=w1000&id=${fileId}`
+                                      : act.buktiUrl;
+
+                                  const originalUrl = act.buktiUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+
+                                  setSelectedPhotoActivity(act);
                                   setSelectedPhotoUrl(displayUrl);
-                                  setSelectedOriginalUrl(act.buktiUrl);
+                                  setSelectedOriginalUrl(originalUrl);
+                                  setSelectedPhotoFileId(fileId || null);
+                                  setSelectedPhotoTitle(`Site: ${act.siteId} - ${act.siteName || ''}`);
+                                  setIsPhotoLoading(true);
+                                  setPhotoError(false);
+                                  setFallbackAttempted(false);
                                 }}
                                 type="button"
-                                className="flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-1 rounded-lg transition-all"
-                                title="Klik untuk melihat foto"
+                                className="flex items-center gap-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2.5 py-1 rounded-lg transition-all shadow-2xs cursor-pointer active:scale-95"
+                                title="Klik untuk melihat foto bukti kegiatan"
                               >
                                 <Camera className="w-3.5 h-3.5 text-indigo-600" />
                                 <span>Foto Bukti</span>
                               </button>
                             )}
-                            <span className="text-[10px] text-slate-400 font-semibold font-mono">
-                              {act.tanggal} {act.createdAt ? act.createdAt.split(',')[1]?.trim() || '' : ''}
-                            </span>
+
+                            {/* Administrator-Only: AI Screen Recapture / Spoofing Check */}
+                            {currentRole === Role.ADMINISTRATOR && act.buktiUrl && (() => {
+                              const aiRes = getAiRecaptureResult(act);
+                              const isDbSaved = !!(act.aiRecaptureVerdict || aiRes?.checkedAt);
+
+                              let btnStyle = 'bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-purple-500/10 hover:from-amber-500/20 hover:to-indigo-500/20 text-indigo-900 border-indigo-200';
+                              let btnText = 'AI Screen Recapture';
+                              let btnTitle = 'Periksa keaslian foto dengan AI (klik untuk analisis)';
+
+                              if (aiRes) {
+                                if (aiRes.isRecapture || aiRes.verdict === 'SCREEN_RECAPTURE_DETECTED') {
+                                  btnStyle = 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 ring-1 ring-rose-200';
+                                  btnText = `🚨 Foto Layar (${aiRes.confidence}%)`;
+                                  btnTitle = `Terindikasi Foto Layar (${aiRes.confidence}%)${isDbSaved ? ' - Tersimpan di Database' : ''}`;
+                                } else if (aiRes.verdict === 'SUSPICIOUS') {
+                                  btnStyle = 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 ring-1 ring-amber-200';
+                                  btnText = `⚠️ Ragu (${aiRes.confidence}%)`;
+                                  btnTitle = `Mencurigakan / Butuh Verifikasi Manual (${aiRes.confidence}%)${isDbSaved ? ' - Tersimpan di Database' : ''}`;
+                                } else {
+                                  btnStyle = 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300 ring-1 ring-emerald-200';
+                                  btnText = `🛡️ Foto Asli (${aiRes.confidence}%)`;
+                                  btnTitle = `Foto Asli / Langsung (${aiRes.confidence}%)${isDbSaved ? ' - Tersimpan di Database' : ''}`;
+                                }
+                              }
+
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRunAiRecapture(act)}
+                                  className={`flex items-center gap-1 text-[10px] font-bold px-2.5 py-1 rounded-lg transition-all shadow-2xs cursor-pointer active:scale-95 border ${btnStyle}`}
+                                  title={btnTitle}
+                                  id={`ai-screen-recapture-btn-${act.id}`}
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                  <span>{btnText}</span>
+                                </button>
+                              );
+                            })()}
                           </div>
                         </div>
                         
@@ -1185,52 +1464,156 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       {/* Pop Up Photo Modal */}
       {selectedPhotoUrl && (
         <div 
-          className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4"
-          onClick={() => {
-            setSelectedPhotoUrl(null);
-            setSelectedOriginalUrl(null);
-          }}
+          className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[999] flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+          onClick={resetPhotoModal}
         >
           <div 
-            className="relative max-w-md w-full bg-slate-900 rounded-2xl overflow-hidden shadow-2xl flex flex-col"
+            className="relative max-w-2xl w-full bg-slate-900 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] border border-slate-800 animate-scale-up"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="p-3 border-b border-slate-800 flex items-center justify-between bg-slate-950">
-              <span className="text-xs font-bold text-white tracking-wide">Foto Bukti Kegiatan</span>
+            {/* Header */}
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950">
+              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-950/80 border border-indigo-800/50 flex items-center justify-center shrink-0">
+                  <Camera className="w-4 h-4 text-indigo-400" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">FOTO BUKTI KEGIATAN</h3>
+                  <p className="text-xs font-bold text-white truncate mt-0.5">{selectedPhotoTitle || 'Foto Lapangan'}</p>
+                </div>
+              </div>
               <button 
-                onClick={() => {
-                  setSelectedPhotoUrl(null);
-                  setSelectedOriginalUrl(null);
-                }}
-                className="text-slate-400 hover:text-white transition-colors p-1"
+                onClick={resetPhotoModal}
+                className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition-all cursor-pointer shrink-0"
+                title="Tutup"
               >
-                <span className="text-xs font-bold font-mono">TUTUP [X]</span>
+                <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="bg-black/40 flex items-center justify-center p-1">
-              <img 
-                src={selectedPhotoUrl} 
-                alt="Bukti Foto Lapangan" 
-                className="w-full h-auto max-h-[70vh] object-contain"
-                referrerPolicy="no-referrer"
-              />
-            </div>
-            <div className="p-3 bg-slate-950 flex items-center justify-end gap-3 border-t border-slate-800">
-              {selectedOriginalUrl && (
-                <a
-                  href={selectedOriginalUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-bold rounded-lg transition-colors shadow-sm"
-                >
-                  <ExternalLink className="w-3.5 h-3.5" />
-                  Buka Dokumen Asli
-                </a>
+
+            {/* Main Image Container */}
+            <div className="bg-slate-950 flex flex-col items-center justify-center p-3 sm:p-4 relative min-h-[300px] max-h-[70vh] overflow-auto">
+              {isPhotoLoading && !photoError && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 z-20 gap-2.5">
+                  <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                  <span className="text-xs font-semibold text-slate-300">Memuat foto bukti...</span>
+                </div>
               )}
+
+              {!photoError ? (
+                <img 
+                  src={selectedPhotoUrl} 
+                  alt="Bukti Foto Lapangan" 
+                  className={`max-w-full max-h-[65vh] w-auto h-auto object-contain rounded-2xl shadow-lg transition-opacity duration-300 ${isPhotoLoading ? 'opacity-0' : 'opacity-100'}`}
+                  referrerPolicy="no-referrer"
+                  onLoad={() => setIsPhotoLoading(false)}
+                  onError={() => {
+                    setIsPhotoLoading(false);
+                    if (selectedPhotoFileId && !fallbackAttempted) {
+                      setFallbackAttempted(true);
+                      setSelectedPhotoUrl(`https://lh3.googleusercontent.com/d/${selectedPhotoFileId}`);
+                    } else {
+                      setPhotoError(true);
+                    }
+                  }}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center text-center p-6 space-y-3 bg-slate-900/60 rounded-2xl border border-slate-800 my-auto">
+                  <AlertCircle className="w-12 h-12 text-amber-400 shrink-0" />
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-white">Preview Gambar Tidak Dapat Ditampilkan Langsung</h4>
+                    <p className="text-xs text-slate-400 max-w-md leading-relaxed">
+                      Google Drive membatasi tampilan tersemat (embed) untuk file ini. Anda dapat tetap melihat foto bukti secara penuh melalui tombol di bawah.
+                    </p>
+                  </div>
+                  {selectedOriginalUrl && (
+                    <a
+                      href={selectedOriginalUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-md active:scale-95 cursor-pointer"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      Buka Foto di Google Drive / Tab Baru
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-3.5 bg-slate-950 flex items-center justify-between border-t border-slate-800 gap-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-400 font-medium truncate hidden sm:inline">
+                  {selectedPhotoFileId ? `Drive ID: ${selectedPhotoFileId}` : 'Dokumen Foto Terverifikasi'}
+                </span>
+
+                {/* Administrator AI Screen Recapture Trigger Button from Photo Modal */}
+                {currentRole === Role.ADMINISTRATOR && selectedPhotoActivity && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleRunAiRecapture(
+                        selectedPhotoActivity,
+                        selectedPhotoUrl || undefined,
+                        selectedPhotoFileId || undefined
+                      );
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-600 to-indigo-600 hover:from-amber-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
+                    title="Periksa apakah foto ini asli diambil langsung atau memotret layar perangkat"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>AI Screen Recapture</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 ml-auto">
+                {selectedOriginalUrl && (
+                  <a
+                    href={selectedOriginalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm active:scale-95 shrink-0 cursor-pointer"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    Buka Dokumen Asli
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={resetPhotoModal}
+                  className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold rounded-xl transition-all cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {/* AI Screen Recapture Forensic Modal */}
+      <AiScreenRecaptureModal
+        isOpen={isAiRecaptureModalOpen}
+        onClose={() => setIsAiRecaptureModalOpen(false)}
+        activity={selectedAiActivity}
+        photoUrl={selectedAiPhotoUrl}
+        photoFileId={selectedAiPhotoFileId}
+        result={selectedAiActivity ? getAiRecaptureResult(selectedAiActivity) : null}
+        isLoading={isAiAnalyzing}
+        error={aiAnalysisError}
+        onReanalyze={() => {
+          if (selectedAiActivity) {
+            handleRunAiRecapture(
+              selectedAiActivity,
+              selectedAiPhotoUrl || undefined,
+              selectedAiPhotoFileId || undefined,
+              true
+            );
+          }
+        }}
+      />
     </div>
   );
 };

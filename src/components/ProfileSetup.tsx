@@ -85,7 +85,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   const managerEmails = Array.from(
     new Set(
       profiles
-        .filter(p => p.role === Role.MANAGER)
+        .filter(p => p.role === Role.MANAGER || p.role === Role.DIREKTUR)
         .map(p => p.email)
         .filter(Boolean)
     )

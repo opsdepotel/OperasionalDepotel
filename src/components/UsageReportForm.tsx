@@ -1628,7 +1628,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       {/* Modal Popup Foto Aktivitas User */}
       {previewActivityPhoto && (
-        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[70] flex items-center justify-center p-4 animate-fade-in">
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1647,23 +1647,38 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
             {/* Content Preview Foto */}
             <div className="flex-1 overflow-hidden rounded-2xl bg-slate-900 flex items-center justify-center relative min-h-[280px] max-h-[60vh] border border-slate-200 p-2">
-              {previewActivityPhoto.fileId || previewActivityPhoto.url ? (
-                <img
-                  src={
-                    previewActivityPhoto.fileId?.trim()
-                      ? `https://drive.google.com/thumbnail?sz=w1000&id=${previewActivityPhoto.fileId.trim()}`
-                      : previewActivityPhoto.url
-                  }
-                  alt={previewActivityPhoto.title}
-                  className="max-w-full max-h-[55vh] object-contain rounded-xl"
-                  onError={(e) => {
-                    const target = e.target as HTMLElement;
-                    target.style.display = 'none';
-                    const fallback = document.getElementById('activity-photo-fallback');
-                    if (fallback) fallback.classList.remove('hidden');
-                  }}
-                />
-              ) : null}
+              {(() => {
+                let fileId = previewActivityPhoto.fileId?.trim() || '';
+                if (!fileId && previewActivityPhoto.url) {
+                  const m = previewActivityPhoto.url.match(/\/d\/([a-zA-Z0-9_-]+)/) || 
+                            previewActivityPhoto.url.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                            previewActivityPhoto.url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+                  if (m && m[1]) fileId = m[1];
+                }
+
+                const displaySrc = previewActivityPhoto.url?.startsWith('data:')
+                  ? previewActivityPhoto.url
+                  : fileId
+                    ? `https://drive.google.com/thumbnail?sz=w1000&id=${fileId}`
+                    : previewActivityPhoto.url;
+
+                if (!displaySrc) return null;
+
+                return (
+                  <img
+                    src={displaySrc}
+                    alt={previewActivityPhoto.title}
+                    className="max-w-full max-h-[55vh] object-contain rounded-xl"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      const target = e.target as HTMLElement;
+                      target.style.display = 'none';
+                      const fallback = document.getElementById('activity-photo-fallback');
+                      if (fallback) fallback.classList.remove('hidden');
+                    }}
+                  />
+                );
+              })()}
 
               <div 
                 id="activity-photo-fallback" 

@@ -2272,9 +2272,55 @@ User Agent: ${navigator.userAgent}`;
     const activeReqs = requests.filter(r => r.status !== RequestStatus.CANCELLED);
     const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
 
-    // Executive Direktur approval & reconciliation tasks across company operations
-    const pendingBudgetReview = activeReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
-    const pendingReportReview = activeReqs.filter(r => {
+    // Direct reports approval & reconciliation tasks for Direktur (where managerEmail matches Direktur email or hierarchy)
+    const direkturEmails = new Set<string>([
+      'margono@depotel.com',
+      'direktur@company.com'
+    ]);
+    profiles
+      .filter(p => p.role === Role.DIREKTUR)
+      .forEach(p => {
+        if (p.email) direkturEmails.add(p.email.trim().toLowerCase());
+      });
+    if (email) direkturEmails.add(email.trim().toLowerCase());
+    if (userProfile?.email) direkturEmails.add(userProfile.email.trim().toLowerCase());
+
+    const isDirekturDirectReq = (r: BudgetRequest) => {
+      const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
+      // Direct check on ManagerEmail field (e.g. margono@depotel.com)
+      if (reqManagerEmail && (
+        direkturEmails.has(reqManagerEmail) || 
+        reqManagerEmail.includes('margono') || 
+        reqManagerEmail.includes('direktur') || 
+        (email && reqManagerEmail === email.trim().toLowerCase()) ||
+        (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
+      )) {
+        return true;
+      }
+
+      // Check hierarchy from user profiles
+      const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
+      if (requesterProfile) {
+        const profileMgrEmail = (requesterProfile.managerEmail || '').trim().toLowerCase();
+        if (profileMgrEmail && (
+          direkturEmails.has(profileMgrEmail) || 
+          profileMgrEmail.includes('margono') || 
+          profileMgrEmail.includes('direktur') || 
+          (email && profileMgrEmail === email.trim().toLowerCase()) ||
+          (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
+        )) {
+          return true;
+        }
+        if (requesterProfile.role === Role.MANAGER) return true;
+      }
+      return false;
+    };
+
+    const direkturDirectReqs = activeReqs.filter(r => isDirekturDirectReq(r));
+    const pendingBudgetReview = direkturDirectReqs.filter(r => 
+      r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
+    ).length;
+    const pendingReportReview = direkturDirectReqs.filter(r => {
       if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
       const reqItems = usageItems.filter(item => item.requestId === r.id);
       if (reqItems.length === 0) return false;
@@ -2354,7 +2400,7 @@ User Agent: ${navigator.userAgent}`;
                 <span className="text-2xl font-display font-bold text-slate-900">{pendingBudgetReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
                 <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Persetujuan (Aksi)</span>
               </div>
-              <p className="text-[9px] text-slate-400 mt-1 font-medium">Pengajuan anggaran operasional perusahaan</p>
+              <p className="text-[9px] text-slate-400 mt-1 font-medium">Pengajuan anggaran dari bawahan hirarki Direktur</p>
             </div>
           </div>
 
@@ -2375,7 +2421,7 @@ User Agent: ${navigator.userAgent}`;
                 <span className="text-2xl font-display font-bold text-slate-900">{pendingReportReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
                 <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Review Laporan (Aksi)</span>
               </div>
-              <p className="text-[9px] text-slate-400 mt-1 font-medium">Laporan nota & dana talangan operasional perusahaan</p>
+              <p className="text-[9px] text-slate-400 mt-1 font-medium">Laporan nota & dana talangan dari bawahan hirarki Direktur</p>
             </div>
           </div>
         </div>

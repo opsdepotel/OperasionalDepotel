@@ -7,7 +7,8 @@ import React, { useState } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, RequestStatus } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon } from 'lucide-react';
+import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles } from 'lucide-react';
+import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 
 interface BbmListModalProps {
   isOpen: boolean;
@@ -18,6 +19,7 @@ interface BbmListModalProps {
   activities?: UserActivity[];
   role?: Role;
   userEmail?: string;
+  onUpdateActivity?: (act: UserActivity) => Promise<void> | void;
   onOpenBbmRefillModal?: () => void;
   onPreviewDocument?: (url: string) => void;
 }
@@ -94,6 +96,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   activities = [],
   role,
   userEmail,
+  onUpdateActivity,
   onOpenBbmRefillModal,
   onPreviewDocument
 }) => {
@@ -142,8 +145,210 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
     tanggal: string;
   } | null>(null);
 
+  // AI Screen Recapture State
+  const [aiRecaptureResults, setAiRecaptureResults] = useState<Record<string, AiRecaptureResult>>({});
+  const [isAiRecaptureModalOpen, setIsAiRecaptureModalOpen] = useState(false);
+  const [selectedAiActivity, setSelectedAiActivity] = useState<UserActivity | null>(null);
+  const [selectedAiPhotoUrl, setSelectedAiPhotoUrl] = useState<string | null>(null);
+  const [selectedAiPhotoFileId, setSelectedAiPhotoFileId] = useState<string | null>(null);
+  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
+  const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
+
+  // Helper to extract AI Screen Recapture result from database fields or in-memory state
+  const getAiRecaptureResult = (act: UserActivity): AiRecaptureResult | null => {
+    if (aiRecaptureResults[act.id]) {
+      return aiRecaptureResults[act.id];
+    }
+    const verdictRaw = act.aiRecaptureVerdict ? String(act.aiRecaptureVerdict).trim() : '';
+    if (
+      !verdictRaw ||
+      verdictRaw === '-' ||
+      verdictRaw.toLowerCase() === 'null' ||
+      verdictRaw.toLowerCase() === 'undefined' ||
+      verdictRaw.toLowerCase() === 'n/a' ||
+      verdictRaw.toLowerCase() === 'none' ||
+      verdictRaw.toLowerCase() === 'belum diperiksa' ||
+      verdictRaw.toLowerCase() === 'belum cek' ||
+      verdictRaw.toLowerCase() === 'not_checked' ||
+      verdictRaw.toLowerCase() === 'unchecked'
+    ) {
+      return null;
+    }
+
+    const vUpper = verdictRaw.toUpperCase().replace(/[\s_-]+/g, '');
+    const isRecapture = 
+      vUpper.includes('RECAPTURE') ||
+      vUpper.includes('FOTOLAYAR') ||
+      vUpper.includes('LAYAR') ||
+      vUpper.includes('SCREEN') ||
+      vUpper.includes('SPOOF') ||
+      vUpper.includes('PALSU') ||
+      vUpper.includes('FAKE') ||
+      vUpper === 'TRUE' ||
+      vUpper === '1';
+
+    const isSuspicious = !isRecapture && (
+      vUpper.includes('SUSPICIOUS') ||
+      vUpper.includes('MENCURIGAKAN') ||
+      vUpper.includes('RAGU')
+    );
+
+    const isAuthentic = !isRecapture && !isSuspicious && (
+      vUpper.includes('AUTHENTIC') ||
+      vUpper.includes('ASLI') ||
+      vUpper.includes('VALID') ||
+      vUpper.includes('DIRECT') ||
+      vUpper.includes('ORIGINAL') ||
+      vUpper === 'FALSE' ||
+      vUpper === '0'
+    );
+
+    // If it is none of these valid verdicts, treat as not checked
+    if (!isRecapture && !isSuspicious && !isAuthentic) {
+      return null;
+    }
+
+    const standardVerdict = isRecapture
+      ? 'SCREEN_RECAPTURE_DETECTED'
+      : isSuspicious
+        ? 'SUSPICIOUS'
+        : 'AUTHENTIC';
+
+    let indicators: string[] = [];
+    if (act.aiRecaptureIndicators) {
+      try {
+        const parsed = JSON.parse(act.aiRecaptureIndicators);
+        indicators = Array.isArray(parsed) ? parsed : [String(parsed)];
+      } catch {
+        indicators = act.aiRecaptureIndicators.split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+      }
+    }
+
+    let conf = act.aiRecaptureConfidence;
+    if (typeof conf === 'string') {
+      const parsed = parseFloat(String(conf).replace(/[^0-9.]/g, ''));
+      conf = !isNaN(parsed) ? (parsed <= 1 && parsed > 0 ? Math.round(parsed * 100) : Math.round(parsed)) : undefined;
+    }
+    const finalConfidence = conf ?? (isRecapture ? 95 : isSuspicious ? 70 : 98);
+
+    return {
+      isRecapture,
+      confidence: finalConfidence,
+      verdict: standardVerdict,
+      summary: act.aiRecaptureSummary || (
+        isRecapture
+          ? 'Terdeteksi foto ulang dari layar digital (Tersimpan di Database).'
+          : isSuspicious
+            ? 'Status foto memerlukan verifikasi manual (Tersimpan di Database).'
+            : 'Foto asli teridentifikasi diambil langsung di lokasi fisik (Tersimpan di Database).'
+      ),
+      indicators: indicators.length > 0 ? indicators : [
+        isRecapture ? 'Tercatat indikasi foto layar di database' : isSuspicious ? 'Tercatat status mencurigakan di database' : 'Tercatat foto asli di database'
+      ],
+      recommendation: isRecapture
+        ? 'Periksa keaslian fisik atau hubungi pelapor kegiatan.'
+        : isSuspicious
+          ? 'Lakukan konfirmasi visual langsung dengan pengguna.'
+          : 'Foto bukti terverifikasi valid dan tersimpan di database.',
+      checkedAt: act.aiRecaptureCheckedAt
+    };
+  };
+
   useBackHandler(!!selectedPhotoUrl, () => setSelectedPhotoUrl(null), 'bbmList_photoUrl');
   useBackHandler(!!selectedUserActivityModal, () => setSelectedUserActivityModal(null), 'bbmList_userActivity');
+  useBackHandler(isAiRecaptureModalOpen, () => setIsAiRecaptureModalOpen(false), 'bbmList_aiRecapture');
+
+  const handleRunAiRecapture = async (
+    act: UserActivity,
+    forceReanalyze = false
+  ) => {
+    let fileId = act.buktiFileId?.trim() || '';
+    if (!fileId && act.buktiUrl) {
+      const m = act.buktiUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+                act.buktiUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                act.buktiUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      if (m && m[1]) fileId = m[1];
+    }
+
+    const photoUrl = act.buktiUrl?.startsWith('data:')
+      ? act.buktiUrl
+      : fileId
+        ? `https://drive.google.com/thumbnail?sz=w1200&id=${fileId}`
+        : act.buktiUrl;
+
+    setSelectedAiActivity(act);
+    setSelectedAiPhotoUrl(photoUrl);
+    setSelectedAiPhotoFileId(fileId || null);
+    setIsAiRecaptureModalOpen(true);
+    setAiAnalysisError(null);
+
+    // 1. If result is already saved in database or cached state and not forcing re-analysis, load immediately without calling AI API!
+    const existingResult = getAiRecaptureResult(act);
+    if (existingResult && !forceReanalyze) {
+      if (!aiRecaptureResults[act.id]) {
+        setAiRecaptureResults(prev => ({ ...prev, [act.id]: existingResult }));
+      }
+      return;
+    }
+
+    setIsAiAnalyzing(true);
+    try {
+      const payload = {
+        imageBase64: photoUrl?.startsWith('data:') ? photoUrl : undefined,
+        imageUrl: !photoUrl?.startsWith('data:') ? (photoUrl || act.buktiUrl) : undefined,
+        fileId: fileId || undefined,
+        activityInfo: {
+          siteId: act.siteId,
+          siteName: act.siteName,
+          tanggal: act.tanggal,
+          userEmail: act.userEmail,
+          keterangan: act.keterangan,
+        },
+      };
+
+      const res = await fetch('/api/ai/check-screen-recapture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Gagal menjalankan analisis AI Screen Recapture.');
+      }
+
+      const newResult: AiRecaptureResult = {
+        ...data.data,
+        checkedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+      };
+
+      setAiRecaptureResults(prev => ({
+        ...prev,
+        [act.id]: newResult,
+      }));
+
+      // Automatically persist to Google Sheet Activity database so it won't ever need re-checking
+      if (onUpdateActivity) {
+        try {
+          await onUpdateActivity({
+            ...act,
+            aiRecaptureVerdict: newResult.verdict,
+            aiRecaptureConfidence: newResult.confidence,
+            aiRecaptureSummary: newResult.summary,
+            aiRecaptureIndicators: JSON.stringify(newResult.indicators || []),
+            aiRecaptureCheckedAt: newResult.checkedAt
+          });
+        } catch (err) {
+          console.error('Failed to auto-save AI result to database in BbmListModal:', err);
+        }
+      }
+    } catch (err: any) {
+      console.error('AI Screen Recapture failed in BbmListModal:', err);
+      setAiAnalysisError(err.message || 'Gagal memeriksa keaslian foto dengan AI.');
+    } finally {
+      setIsAiAnalyzing(false);
+    }
+  };
 
   // Helper date normalizer
   const getNormalizedYmd = (dateStr?: string): string => {
@@ -666,16 +871,56 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                       {/* Photo & GPS Action Buttons */}
                       {(act.buktiUrl || gmapsUrl) && (
                         <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
-                          {act.buktiUrl ? (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedPhotoUrl(displayPhoto)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-xl text-xs font-bold transition-all cursor-pointer border border-indigo-200/60 shadow-2xs"
-                            >
-                              <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
-                              <span>Foto Bukti Kegiatan</span>
-                            </button>
-                          ) : <div />}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {act.buktiUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPhotoUrl(displayPhoto)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-xl text-xs font-bold transition-all cursor-pointer border border-indigo-200/60 shadow-2xs"
+                              >
+                                <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>Foto Bukti Kegiatan</span>
+                              </button>
+                            ) : null}
+
+                            {/* Administrator AI Screen Recapture Check Button */}
+                            {role === Role.ADMINISTRATOR && act.buktiUrl && (() => {
+                              const aiRes = getAiRecaptureResult(act);
+                              const isDbSaved = !!(act.aiRecaptureVerdict || aiRes?.checkedAt);
+
+                              let btnStyle = 'bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-purple-500/10 hover:from-amber-500/20 hover:to-indigo-500/20 text-indigo-900 border-indigo-200';
+                              let btnText = 'AI Screen Recapture';
+                              let btnTitle = 'Periksa keaslian foto dengan AI: foto langsung vs foto layar';
+
+                              if (aiRes) {
+                                if (aiRes.isRecapture || aiRes.verdict === 'SCREEN_RECAPTURE_DETECTED') {
+                                  btnStyle = 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-300 ring-1 ring-rose-200';
+                                  btnText = `🚨 Foto Layar (${aiRes.confidence}%)`;
+                                  btnTitle = `Terindikasi Foto Layar (${aiRes.confidence}%)${isDbSaved ? ' - Tersimpan di Database' : ''}`;
+                                } else if (aiRes.verdict === 'SUSPICIOUS') {
+                                  btnStyle = 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 ring-1 ring-amber-200';
+                                  btnText = `⚠️ Ragu (${aiRes.confidence}%)`;
+                                  btnTitle = `Mencurigakan / Butuh Verifikasi Manual (${aiRes.confidence}%)${isDbSaved ? ' - Tersimpan di Database' : ''}`;
+                                } else {
+                                  btnStyle = 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300 ring-1 ring-emerald-200';
+                                  btnText = `🛡️ Foto Asli (${aiRes.confidence}%)`;
+                                  btnTitle = `Foto Asli / Langsung (${aiRes.confidence}%)${isDbSaved ? ' - Tersimpan di Database' : ''}`;
+                                }
+                              }
+
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRunAiRecapture(act)}
+                                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer border shadow-2xs ${btnStyle}`}
+                                  title={btnTitle}
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                                  <span>{btnText}</span>
+                                </button>
+                              );
+                            })()}
+                          </div>
 
                           {gmapsUrl && (() => {
                             const currentRole = role || Role.USER;
@@ -719,6 +964,23 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
           </div>
         </div>
       )}
+
+      {/* AI Screen Recapture Forensic Modal */}
+      <AiScreenRecaptureModal
+        isOpen={isAiRecaptureModalOpen}
+        onClose={() => setIsAiRecaptureModalOpen(false)}
+        activity={selectedAiActivity}
+        photoUrl={selectedAiPhotoUrl}
+        photoFileId={selectedAiPhotoFileId}
+        result={selectedAiActivity ? getAiRecaptureResult(selectedAiActivity) : null}
+        isLoading={isAiAnalyzing}
+        error={aiAnalysisError}
+        onReanalyze={() => {
+          if (selectedAiActivity) {
+            handleRunAiRecapture(selectedAiActivity, true);
+          }
+        }}
+      />
     </div>
   );
 };
