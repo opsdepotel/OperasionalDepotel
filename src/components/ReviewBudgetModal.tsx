@@ -320,8 +320,9 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
                 <input
                   type="text"
                   inputMode="numeric"
+                  pattern="[0-9]*"
                   value={approvedAmount}
-                  onChange={(e) => setApprovedAmount(e.target.value)}
+                  onChange={(e) => setApprovedAmount(e.target.value.replace(/\D/g, ''))}
                   placeholder="contoh: 1500000"
                   className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
                   required

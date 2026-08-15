@@ -369,8 +369,9 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
               <input
                 type="text"
                 inputMode="numeric"
+                pattern="[0-9]*"
                 value={nominal}
-                onChange={(e) => setNominal(e.target.value)}
+                onChange={(e) => setNominal(e.target.value.replace(/\D/g, ''))}
                 placeholder="0"
                 required
                 className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all"

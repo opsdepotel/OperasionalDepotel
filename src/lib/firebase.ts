@@ -32,15 +32,21 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
-  // If we already have a cached token in memory, use it immediately
+  // If we have a stored token, check if it's already expired
   const storedToken = localStorage.getItem('g_access_token');
   if (storedToken) {
-    cachedAccessToken = storedToken;
+    if (isGoogleTokenExpired()) {
+      cachedAccessToken = null;
+      localStorage.removeItem('g_access_token');
+      localStorage.removeItem('g_token_timestamp');
+    } else {
+      cachedAccessToken = storedToken;
+    }
   }
 
   if (!auth) {
     const backupToken = localStorage.getItem('g_access_token');
-    if (backupToken) {
+    if (backupToken && !isGoogleTokenExpired()) {
       cachedAccessToken = backupToken;
       const storedUserJson = localStorage.getItem('g_google_user');
       let parsedUser: User | null = null;
@@ -62,16 +68,16 @@ export const initAuth = (
 
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
-      if (cachedAccessToken) {
+      if (cachedAccessToken && !isGoogleTokenExpired()) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else {
         // If we don't have the cached access token in memory or localStorage,
         // we check if there's any stored token
         const backupToken = localStorage.getItem('g_access_token');
-        if (backupToken) {
+        if (backupToken && !isGoogleTokenExpired()) {
           cachedAccessToken = backupToken;
           if (onAuthSuccess) onAuthSuccess(user, backupToken);
-        } else if (!isSigningIn) {
+        } else {
           cachedAccessToken = null;
           localStorage.removeItem('g_access_token');
           if (onAuthFailure) onAuthFailure();
@@ -81,7 +87,7 @@ export const initAuth = (
       // If there's no auth user, but we have a stored token, we can still use it!
       // This is helpful if we want to bypass Google login completely for daily use.
       const backupToken = localStorage.getItem('g_access_token');
-      if (backupToken) {
+      if (backupToken && !isGoogleTokenExpired()) {
         cachedAccessToken = backupToken;
         // Mock a user object or retrieve from localStorage
         const storedUserJson = localStorage.getItem('g_google_user');
@@ -99,11 +105,9 @@ export const initAuth = (
         }
       }
 
-      if (!isSigningIn) {
-        cachedAccessToken = null;
-        localStorage.removeItem('g_access_token');
-        if (onAuthFailure) onAuthFailure();
-      }
+      cachedAccessToken = null;
+      localStorage.removeItem('g_access_token');
+      if (onAuthFailure) onAuthFailure();
     }
   });
 };

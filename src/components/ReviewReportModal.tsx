@@ -192,16 +192,16 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         // If the manager or direktur rejects any item, it goes back to User for reporting/correction
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        // If approved, for Dana Talangan go directly to PENDING_TALANGAN_TRANSFER, otherwise move to REVIEW_ADMIN
-        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REVIEW_ADMIN;
+        // After manager approves, status moves to REVIEW_ADMIN for Finance to review
+        nextRequestStatus = RequestStatus.REVIEW_ADMIN;
       }
     } else {
-      // Role is ADMIN
+      // Role is ADMIN / FINANCE
       if (hasRejections) {
-        // If Admin rejects any item, it goes back to User for reporting/correction
+        // If Finance rejects any item, it goes back to User for reporting/correction
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        // If Admin approves all, for Dana Talangan go to PENDING_TALANGAN_TRANSFER, otherwise keep as REPORTING (ready for Form Closing)
+        // If Finance approves all items, Dana Talangan moves to PENDING_TALANGAN_TRANSFER for reimbursement transfer & closing
         nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
       }
     }
@@ -442,6 +442,40 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         const totalTransferAmount = parseNumericValue(request.adminActionAmount || request.jumlahPengajuan);
         const selisih = totalApprovedAmount - totalTransferAmount;
 
+        const allItemsApprovedByManager = currentItems.length > 0 && currentItems.every(i => {
+          const dec = decisions[i.id];
+          return (dec ? dec.status : i.statusManager) === ItemStatus.APPROVED;
+        });
+
+        const totalManagerApproved = currentItems
+          .filter(i => (decisions[i.id]?.status || i.statusManager) === ItemStatus.APPROVED)
+          .reduce((sum, i) => sum + (Number(i.nominal) || 0), 0);
+
+        if ((role === Role.MANAGER || role === Role.DIREKTUR) && isTalangan && allItemsApprovedByManager) {
+          return (
+            <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-blue-950 text-white p-4 rounded-2xl border border-indigo-700/60 shadow-lg space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-400/40 flex items-center justify-center text-indigo-300">
+                    <ShieldCheck className="w-4.5 h-4.5" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Verifikasi Item Dana Talangan (Manager)</h4>
+                    <p className="text-[10px] text-indigo-200">Seluruh item nota disetujui. Kolom ManagerActionAmount akan mencatat total nominal disetujui.</p>
+                  </div>
+                </div>
+                <span className="text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-indigo-500/30 text-indigo-300 border border-indigo-400/30">
+                  Lanjut ke Finance
+                </span>
+              </div>
+              <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50 flex items-center justify-between text-xs mt-1">
+                <span className="text-[10px] text-slate-400 font-semibold uppercase">Total Disetujui Manager [ManagerActionAmount]</span>
+                <span className="font-bold text-emerald-300 font-display text-sm">{formatIDR(totalManagerApproved)}</span>
+              </div>
+            </div>
+          );
+        }
+
         if (role === Role.FINANCE && request.status !== RequestStatus.CLOSED && allItemsApprovedByFinance) {
           if (isTalangan) {
             return (
@@ -514,8 +548,14 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2.5 text-xs text-emerald-900 shadow-xs">
               <CheckCircle2 className="w-4.5 h-4.5 text-emerald-600 shrink-0" />
               <div>
-                <p className="font-bold text-emerald-950">Seluruh Item Laporan Telah Disetujui</p>
-                <p className="text-[10px] text-emerald-700 font-medium leading-tight">Laporan item ini lengkap dan terverifikasi. Klik tombol di bawah ini untuk melakukan Closing UID.</p>
+                <p className="font-bold text-emerald-950">
+                  {isTalangan ? 'Seluruh Item Dana Talangan Telah Disetujui Finance' : 'Seluruh Item Laporan Telah Disetujui'}
+                </p>
+                <p className="text-[10px] text-emerald-700 font-medium leading-tight">
+                  {isTalangan
+                    ? 'Item talangan terverifikasi. Klik tombol di bawah untuk memindahkan ke status Menunggu Transfer Dana Talangan.'
+                    : 'Laporan item ini lengkap dan terverifikasi. Klik tombol di bawah ini untuk melakukan Closing UID.'}
+                </p>
               </div>
             </div>
           )}

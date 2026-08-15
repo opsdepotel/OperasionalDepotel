@@ -37,8 +37,6 @@ export const GoogleConnectionModal: React.FC<GoogleConnectionModalProps> = ({
 }) => {
   const [isSuccess, setIsSuccess] = useState(false);
 
-  if (!isOpen) return null;
-
   const handleConnectClick = async () => {
     try {
       await onRenewToken();
@@ -51,6 +49,8 @@ export const GoogleConnectionModal: React.FC<GoogleConnectionModalProps> = ({
       setIsSuccess(false);
     }
   };
+
+  if (!isOpen) return null;
 
   return (
     <div 

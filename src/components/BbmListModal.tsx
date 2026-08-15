@@ -101,8 +101,6 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   onOpenBbmRefillModal,
   onPreviewDocument
 }) => {
-  if (!isOpen) return null;
-
   // Format local date string YYYY-MM-DD
   const getTodayDateStr = () => {
     const d = new Date();
@@ -419,6 +417,8 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   // Calculate total statistics for selected date / filtered
   const totalCount = filteredRequests.length;
   const totalNominal = filteredRequests.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/15 backdrop-blur-[2px] animate-fade-in">

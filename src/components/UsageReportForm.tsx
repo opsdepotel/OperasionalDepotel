@@ -207,10 +207,10 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       if (hasRejections) {
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REVIEW_ADMIN;
+        nextRequestStatus = RequestStatus.REVIEW_ADMIN;
       }
     } else {
-      // Role is ADMIN
+      // Role is ADMIN / FINANCE
       if (hasRejections) {
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
@@ -518,20 +518,25 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             someFound ? (
               <div className="space-y-1.5 pl-5">
                 {siteResults.map((res, idx) => (
-                  <div key={idx} className="text-xs flex flex-wrap gap-x-1 items-baseline">
-                    <span className="font-mono font-bold text-slate-500">{res.id}:</span>
+                  <div key={idx} className="text-xs flex flex-wrap gap-x-1.5 items-baseline">
+                    <span className="font-mono font-bold text-slate-700">[{res.id}]:</span>
                     {res.found ? (
                       <span className="text-slate-800 font-semibold">{res.siteName}</span>
                     ) : (
-                      <span className="text-rose-500 italic text-[10px] font-medium">Tidak ditemukan/tidak terdaftar</span>
+                      <span className="text-rose-500 italic text-[10px] font-medium">* Site ID tidak ditemukan/tidak terdaftar</span>
                     )}
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-xs text-rose-500 font-semibold pl-5">
-                * Site ID tidak ditemukan/tidak terdaftar
-              </p>
+              <div className="space-y-1.5 pl-5">
+                {siteResults.map((res, idx) => (
+                  <div key={idx} className="text-xs flex flex-wrap gap-x-1.5 items-baseline">
+                    <span className="font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">[{res.id}]</span>
+                    <span className="text-rose-500 font-medium text-xs">* Site ID tidak ditemukan/tidak terdaftar</span>
+                  </div>
+                ))}
+              </div>
             )
           ) : (
             siteResults[0]?.found ? (
@@ -547,9 +552,12 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               </div>
             ) : (
               request.siteId.trim() && (
-                <p className="text-xs text-rose-500 font-semibold pl-5">
-                  * Site ID tidak ditemukan/tidak terdaftar
-                </p>
+                <div className="pl-5 space-y-1">
+                  <p className="text-xs text-rose-500 font-semibold flex flex-wrap items-center gap-1.5">
+                    <span className="font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">[{siteResults[0]?.id || request.siteId.trim()}]</span>
+                    <span>* Site ID tidak ditemukan/tidak terdaftar</span>
+                  </p>
+                </div>
               )
             )
           )}
@@ -1165,9 +1173,10 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   <input
                     type="text"
                     inputMode="numeric"
+                    pattern="[0-9]*"
                     value={nominal}
-                    onChange={(e) => setNominal(e.target.value)}
-                    placeholder="contoh: 450000 atau 450.000"
+                    onChange={(e) => setNominal(e.target.value.replace(/\D/g, ''))}
+                    placeholder="contoh: 450000"
                     className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
                     required
                   />

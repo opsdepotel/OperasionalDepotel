@@ -95,7 +95,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   useEffect(() => {
     if (selectedUser) {
       const balance = getUserBalance(selectedUser.email);
-      setInputAmount(Math.abs(balance).toString());
+      setInputAmount(Math.round(Math.abs(balance)).toString());
     } else {
       setInputAmount('');
     }
@@ -417,8 +417,9 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
               <input
                 type="text"
                 inputMode="numeric"
+                pattern="[0-9]*"
                 value={inputAmount}
-                onChange={(e) => setInputAmount(e.target.value)}
+                onChange={(e) => setInputAmount(e.target.value.replace(/\D/g, ''))}
                 placeholder="Masukkan nominal adjustment..."
                 className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-bold"
                 required

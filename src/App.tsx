@@ -769,12 +769,16 @@ export default function App() {
   };
 
   // Workflow Action 1: Create or Revise Budget Request
-  const handleAddBudgetRequest = async (newRequest: BudgetRequest) => {
+  const handleAddBudgetRequest = async (
+    newRequest: BudgetRequest,
+    firstItem?: UsageReportItem,
+    itemFile?: File | null
+  ) => {
     if (!token || !spreadsheetId) return;
     const isExisting = requests.some(r => r.id === newRequest.id);
-    const actionFn = isExisting
-      ? () => updateBudgetRequest(token, spreadsheetId, newRequest)
-      : () => createBudgetRequest(token, spreadsheetId, newRequest);
+    const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
+
+    let finalReportItem: UsageReportItem | undefined = firstItem;
 
     const historyLog: ItemReviewHistory = {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -786,7 +790,9 @@ export default function App() {
       actorNama: userProfile?.nama || userProfile?.email || newRequest.userEmail,
       actionType: isExisting ? 'PENGAJUAN_REVISED' : 'PENGAJUAN_CREATED',
       status: isExisting ? 'PENGAJUAN REVISI' : 'SUBMITTED',
-      catatan: isExisting ? 'Revisi pengajuan anggaran dikirim ulang oleh pemohon' : 'Pengajuan anggaran baru dibuat oleh pemohon',
+      catatan: isExisting 
+        ? 'Revisi pengajuan anggaran dikirim ulang oleh pemohon' 
+        : (isReqTalangan ? 'Pengajuan Dana Talangan & item pertama dibuat' : 'Pengajuan anggaran baru dibuat oleh pemohon'),
       tanggalPenggunaan: newRequest.tanggalPemakaian,
       nominal: newRequest.jumlahPengajuan,
       keterangan: newRequest.keterangan
@@ -794,15 +800,42 @@ export default function App() {
 
     const success = await runGoogleAction(
       async () => {
-        await actionFn();
+        // If there is an item file to upload for Dana Talangan first item
+        if (itemFile && driveFolderId) {
+          const uploadResult = await uploadReceiptFile(token, driveFolderId, itemFile);
+          if (finalReportItem) {
+            finalReportItem = {
+              ...finalReportItem,
+              buktiUrl: uploadResult.viewUrl,
+              buktiFileId: uploadResult.fileId
+            };
+          }
+        }
+
+        if (isExisting) {
+          await updateBudgetRequest(token, spreadsheetId, newRequest);
+        } else {
+          await createBudgetRequest(token, spreadsheetId, newRequest);
+        }
+
+        // Atomically store first item in Laporan sheet for Dana Talangan
+        if (finalReportItem && !isExisting) {
+          await createUsageItem(token, spreadsheetId, finalReportItem);
+        }
+
         await createItemReviewHistory(token, spreadsheetId, historyLog);
       },
-      isExisting ? 'Gagal mengupdate revisi pengajuan.' : 'Gagal menambahkan pengajuan.'
+      isExisting 
+        ? 'Gagal mengupdate revisi pengajuan.' 
+        : (isReqTalangan ? 'Gagal menyimpan Pengajuan & Item Dana Talangan.' : 'Gagal menambahkan pengajuan.')
     );
+
     if (success !== null) {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setEditingRequest(null);
-      const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
+      if (finalReportItem) {
+        setUsageItems(prev => [...prev, finalReportItem!]);
+      }
       if (isReqTalangan) {
         setSelectedRequest(newRequest);
         setActiveView('report-usage');
@@ -1375,9 +1408,39 @@ export default function App() {
         await createBatchItemReviewHistories(currentToken, currentSheetId, historyLogs);
       }
 
+      const isReqTalangan = reqToUse.id.startsWith('OPT-') || 
+                            reqToUse.id.startsWith('BBMDS') || 
+                            reqToUse.id.startsWith('BBM_DurenSawit') || 
+                            reqToUse.tipePengajuan === 'DANA_TALANGAN' || 
+                            reqToUse.keterangan.startsWith('[DANA TALANGAN]');
+
+      let updatedManagerActionAmount = reqToUse.managerActionAmount;
+      let updatedManagerComment = reqToUse.managerComment;
+
+      if (isManager) {
+        // Calculate total nominal of all items approved by Manager for this request
+        const totalApprovedByManager = targetItems.reduce((sum, item) => {
+          const dec = itemDecisions.find(d => d.itemId === item.id);
+          const finalStatus = dec ? dec.status : item.statusManager;
+          return finalStatus === ItemStatus.APPROVED ? sum + (Number(item.nominal) || 0) : sum;
+        }, 0);
+
+        if (isReqTalangan) {
+          updatedManagerActionAmount = totalApprovedByManager;
+          const comments = itemDecisions
+            .filter(d => d.comment && d.comment.trim().length > 0)
+            .map(d => d.comment.trim());
+          if (comments.length > 0) {
+            updatedManagerComment = comments.join('; ');
+          }
+        }
+      }
+
       const updatedReq: BudgetRequest = {
         ...reqToUse,
-        status: nextRequestStatus
+        status: nextRequestStatus,
+        managerActionAmount: updatedManagerActionAmount,
+        managerComment: updatedManagerComment
       };
       await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
     }, 'Gagal memproses review penggunaan.');
@@ -2097,6 +2160,7 @@ export default function App() {
             initialIsTalangan={initialIsTalangan}
             sites={sites}
             initialRequest={editingRequest || undefined}
+            userProfile={userProfile}
           />
         ) : activeView === 'report-usage' && selectedRequest ? (
           <UsageReportForm
@@ -3103,28 +3167,30 @@ export default function App() {
                                          req.status === RequestStatus.PENDING_TALANGAN_TRANSFER) && (
                                         <button
                                           onClick={() => setTransferReq(req)}
-                                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm"
+                                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
                                         >
-                                          Proses Transfer
+                                          {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+                                            ? 'Transfer & Closing Talangan'
+                                            : 'Proses Transfer'}
                                         </button>
                                       )}
 
                                       {(req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REPORTING) && (
                                         <button
                                           onClick={() => setReviewReportReq(req)}
-                                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all"
+                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
                                         >
-                                          Tinjau Item Laporan
+                                          {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? 'Review Item Talangan' : 'Tinjau Item Laporan'}
                                         </button>
                                       )}
 
-                                      {req.status !== RequestStatus.APPROVED && req.status !== RequestStatus.PARTIALLY_APPROVED && req.status !== RequestStatus.REVIEW_ADMIN && req.status !== RequestStatus.REPORTING && (
+                                      {req.status !== RequestStatus.APPROVED && req.status !== RequestStatus.PARTIALLY_APPROVED && req.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && req.status !== RequestStatus.REVIEW_ADMIN && req.status !== RequestStatus.REPORTING && (
                                         <button
                                           onClick={() => {
                                             setSelectedRequest(req);
                                             setActiveView('report-usage');
                                           }}
-                                          className="px-3 py-1.5 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold rounded-xl transition-all"
+                                          className="px-3 py-1.5 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold rounded-xl transition-all cursor-pointer"
                                         >
                                           Rincian Laporan
                                         </button>

@@ -3,20 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { BudgetRequest, RequestStatus, SiteInfo } from '../types';
+import React, { useState, useRef } from 'react';
+import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles, ExternalLink } from 'lucide-react';
+import {
+  Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles,
+  Camera, UploadCloud, X, Image as ImageIcon, AlertTriangle, ShieldCheck, CheckCircle2
+} from 'lucide-react';
 
 interface BudgetRequestFormProps {
   userEmail: string;
   managerEmail: string;
   defaultSiteId: string;
-  onSubmit: (req: BudgetRequest) => Promise<void>;
+  onSubmit: (req: BudgetRequest, firstItem?: UsageReportItem, itemFile?: File | null) => Promise<void>;
   onClose: () => void;
   initialIsTalangan?: boolean;
   sites?: SiteInfo[];
   initialRequest?: BudgetRequest;
+  userProfile?: UserProfile;
 }
 
 export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
@@ -27,7 +31,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   onClose,
   initialIsTalangan = false,
   sites = [],
-  initialRequest
+  initialRequest,
+  userProfile
 }) => {
   const [isTalangan, setIsTalangan] = useState(() => {
     if (initialRequest) {
@@ -49,19 +54,76 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   const [keterangan, setKeterangan] = useState(() => 
     initialRequest?.keterangan ? initialRequest.keterangan : ''
   );
+
+  // States for Dana Talangan Item Pertama
+  const [itemTanggal, setItemTanggal] = useState(() => {
+    const d = new Date();
+    return d.toISOString().split('T')[0];
+  });
+  const [itemNominal, setItemNominal] = useState<string>('');
+  const [itemKeterangan, setItemKeterangan] = useState<string>('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  // Popup Modal Alert when User submits without Talangan Item
+  const [showItemPromptModal, setShowItemPromptModal] = useState<boolean>(false);
+  const [missingItemReason, setMissingItemReason] = useState<string>('');
+
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const itemSectionRef = useRef<HTMLDivElement>(null);
+
+  const isMobileUser = userProfile?.mobile === true ||
+    String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
+    String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
+    String(userProfile?.mobile).trim() === '1';
+
+  // Format IDR Currency
+  const formatIDR = (num: any) => {
+    const val = parseNumericValue(num);
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0
+    }).format(val);
+  };
+
+  // Handle file selection
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isMobileUser && e.target === fileInputRef.current) {
+      alert('Akun Anda dikonfigurasi Wajib Mobile. Semua foto bukti nota wajib diambil langsung dari Kamera HP.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+    if (e.target.files && e.target.files.length > 0) {
+      const file = e.target.files[0];
+      setSelectedFile(file);
+      const url = URL.createObjectURL(file);
+      setPreviewUrl(url);
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(null);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+  };
 
   // Extract and match site IDs. Format is "XXXNNN" (3 letters, 3 digits)
   const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
   const regexMatches = siteId.match(siteIdRegex) || [];
   const uniqueMatches = Array.from(new Set(regexMatches.map(m => m.toUpperCase())));
   
-  // If user typed something but it doesn't match the format yet, fall back to single string
   const parsedIds = uniqueMatches.length > 0 ? uniqueMatches : (siteId.trim() ? [siteId.trim().toUpperCase()] : []);
   const isMultiple = parsedIds.length > 1;
 
-  // Map each parsed ID to its matching site in the database
   const siteResults = parsedIds.map(id => {
     const found = sites.find(s => s.siteId.toUpperCase().trim() === id);
     return {
@@ -77,7 +139,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   // Helper to generate a clean UID
   const generateUID = () => {
     const todayStr = tanggalPemakaian.replace(/-/g, '');
-    const randomHex = Math.floor(1000 + Math.random() * 9000); // 4-digit numeric code
+    const randomHex = Math.floor(1000 + Math.random() * 9000);
     const prefix = isTalangan ? 'OPT' : 'OP';
     return `${prefix}-${todayStr}-${randomHex}`;
   };
@@ -86,22 +148,48 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
     e.preventDefault();
     setError(null);
 
-    let amount = 0;
-    if (!isTalangan) {
-      amount = parseNumericValue(jumlahPengajuan);
-      if (amount <= 0) {
-        setError('Jumlah Pengajuan anggaran harus lebih besar dari Rp 0.');
-        return;
-      }
-    }
-
     if (!siteId.trim()) {
       setError('Site ID / Lokasi wajib diisi.');
       return;
     }
     if (!keterangan.trim()) {
-      setError(isTalangan ? 'Keterangan Pelaporan wajib diisi.' : 'Keterangan Pengajuan wajib diisi.');
+      setError(isTalangan ? 'Keterangan Kegiatan wajib diisi.' : 'Keterangan Pengajuan wajib diisi.');
       return;
+    }
+
+    // Validation for Dana Talangan: MUST HAVE FIRST ITEM
+    let talanganAmount = 0;
+    let firstItem: UsageReportItem | undefined = undefined;
+
+    if (isTalangan && !initialRequest) {
+      const parsedItemAmount = parseNumericValue(itemNominal);
+      const hasNominal = parsedItemAmount > 0;
+      const hasKeterangan = !!itemKeterangan.trim();
+      const hasProof = !!selectedFile;
+
+      if (!hasNominal || !hasKeterangan || !hasProof) {
+        let reasons: string[] = [];
+        if (!hasNominal) reasons.push('Nominal pengeluaran (> Rp 0)');
+        if (!hasKeterangan) reasons.push('Keterangan / Uraian nota');
+        if (!hasProof) reasons.push('Foto bukti nota / kuitansi pembayaran');
+
+        setMissingItemReason(`Harap lengkapi: ${reasons.join(', ')}.`);
+        setShowItemPromptModal(true);
+        return;
+      }
+
+      talanganAmount = parsedItemAmount;
+    }
+
+    let finalAmount = 0;
+    if (!isTalangan) {
+      finalAmount = parseNumericValue(jumlahPengajuan);
+      if (finalAmount <= 0) {
+        setError('Jumlah Pengajuan anggaran harus lebih besar dari Rp 0.');
+        return;
+      }
+    } else {
+      finalAmount = initialRequest ? parseNumericValue(jumlahPengajuan) : talanganAmount;
     }
 
     setIsSubmitting(true);
@@ -113,7 +201,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         managerEmail: initialRequest ? initialRequest.managerEmail : managerEmail,
         tanggalPemakaian,
         siteId: siteId.toUpperCase().trim(),
-        jumlahPengajuan: amount,
+        jumlahPengajuan: finalAmount,
         keterangan: isTalangan 
           ? (keterangan.trim().startsWith('[DANA TALANGAN]') ? keterangan.trim() : `[DANA TALANGAN] ${keterangan.trim()}`)
           : keterangan.trim(),
@@ -123,7 +211,27 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         adminActionAmount: 0,
         createdAt: initialRequest?.createdAt || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
       };
-      await onSubmit(newRequest);
+
+      if (isTalangan && !initialRequest && selectedFile) {
+        const timestamp = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+        firstItem = {
+          id: `ITEM-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+          requestId: uid,
+          tanggalPenggunaan: itemTanggal,
+          nominal: talanganAmount,
+          keterangan: itemKeterangan.trim(),
+          buktiUrl: '',
+          buktiFileId: '',
+          statusManager: ItemStatus.PENDING,
+          managerComment: '',
+          statusAdmin: ItemStatus.PENDING,
+          adminComment: '',
+          updatedAt: timestamp,
+          timestamp: timestamp
+        };
+      }
+
+      await onSubmit(newRequest, firstItem, selectedFile);
     } catch (err: any) {
       setError(err.message || 'Gagal mengirimkan pengajuan anggaran.');
     } finally {
@@ -132,7 +240,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-lg p-5 animate-slide-up">
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-lg p-5 animate-slide-up relative">
       <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-50">
         <div>
           <h2 className="font-display font-bold text-slate-800 text-sm">
@@ -143,7 +251,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           <p className="text-[10px] text-slate-400">
             {initialRequest
               ? `Perbaiki rincian pengajuan untuk UID ${initialRequest.id}`
-              : (isTalangan ? 'Pelaporan penggunaan dana talangan pribadi' : 'Pengajuan dana operasional')}
+              : (isTalangan ? 'Pengajuan Dana Talangan disimpan bersama item nota pertama' : 'Pengajuan dana operasional')}
           </p>
         </div>
         <button
@@ -156,36 +264,38 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       </div>
 
       {/* Segmented Control for Request Type */}
-      <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl mb-4">
-        <button
-          type="button"
-          onClick={() => {
-            setIsTalangan(false);
-            setError(null);
-          }}
-          className={`py-1.5 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
-            !isTalangan
-              ? 'bg-white text-slate-800 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          Pengajuan Anggaran
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setIsTalangan(true);
-            setError(null);
-          }}
-          className={`py-1.5 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
-            isTalangan
-              ? 'bg-white text-slate-800 shadow-sm'
-              : 'text-slate-500 hover:text-slate-700'
-          }`}
-        >
-          Dana Talangan Pribadi
-        </button>
-      </div>
+      {!initialRequest && (
+        <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl mb-4">
+          <button
+            type="button"
+            onClick={() => {
+              setIsTalangan(false);
+              setError(null);
+            }}
+            className={`py-1.5 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
+              !isTalangan
+                ? 'bg-white text-slate-800 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Pengajuan Anggaran
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsTalangan(true);
+              setError(null);
+            }}
+            className={`py-1.5 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
+              isTalangan
+                ? 'bg-white text-slate-800 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            Dana Talangan Pribadi
+          </button>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && (
@@ -203,89 +313,105 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           </p>
         </div>
 
-        {/* Date Field */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">
-            {isTalangan ? 'Tanggal Penggunaan Dana' : 'Tanggal Pemakaian'}
-          </label>
-          <div className="relative">
-            <input
-              type="date"
-              value={tanggalPemakaian}
-              onChange={(e) => setTanggalPemakaian(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-              required
-            />
-            <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          </div>
-        </div>
+        {/* 1. INFORMASI UMUM PENGAJUAN */}
+        <div className="space-y-3">
+          <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
+            <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-[10px]">1</span>
+            <span>Informasi Kegiatan & Lokasi</span>
+          </h3>
 
-        {/* Site ID / Lokasi */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">Site ID / Lokasi Pemakaian</label>
-          <div className="relative">
-            <input
-              type="text"
-              value={siteId}
-              onChange={(e) => setSiteId(e.target.value.toUpperCase())}
-              placeholder="Site ID / lokasi"
-              className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-              required
-            />
-            <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+          {/* Date Field */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">
+              {isTalangan ? 'Tanggal Kegiatan / Talangan' : 'Tanggal Pemakaian'}
+            </label>
+            <div className="relative">
+              <input
+                type="date"
+                value={tanggalPemakaian}
+                onChange={(e) => {
+                  setTanggalPemakaian(e.target.value);
+                  if (isTalangan && !itemTanggal) {
+                    setItemTanggal(e.target.value);
+                  }
+                }}
+                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                required
+              />
+              <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            </div>
           </div>
 
-          {/* Site ID Detail Match Info */}
-          {parsedIds.length > 0 && (
-            isMultiple ? (
-              someFound ? (
-                <div className="mt-1.5 p-2.5 bg-emerald-50 border border-emerald-100 rounded-xl space-y-1.5 animate-slide-up">
-                  <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
-                    <span>Site Terverifikasi (Multiple)</span>
+          {/* Site ID / Lokasi */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">Site ID / Lokasi Pemakaian</label>
+            <div className="relative">
+              <input
+                type="text"
+                value={siteId}
+                onChange={(e) => setSiteId(e.target.value.toUpperCase())}
+                placeholder="Site ID / lokasi (contoh: JKT123)"
+                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                required
+              />
+              <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            </div>
+
+            {/* Site ID Detail Match Info */}
+            {parsedIds.length > 0 && (
+              isMultiple ? (
+                someFound ? (
+                  <div className="mt-1.5 p-2.5 bg-emerald-50 border border-emerald-100 rounded-xl space-y-1.5 animate-slide-up">
+                    <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+                      <span>Site Terverifikasi (Multiple)</span>
+                    </div>
+                    <div className="space-y-1 ml-2.5">
+                      {siteResults.filter(r => r.found).map((res, idx) => (
+                        <div key={idx} className="text-[10px] flex flex-wrap gap-x-1 items-baseline">
+                          <span className="font-mono font-bold text-slate-600">{res.id}:</span>
+                          <span className="text-emerald-700 font-medium">{res.siteName}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                  <div className="space-y-1 ml-2.5">
-                    {siteResults.filter(r => r.found).map((res, idx) => (
-                      <div key={idx} className="text-[10px] flex flex-wrap gap-x-1 items-baseline">
-                        <span className="font-mono font-bold text-slate-600">{res.id}:</span>
-                        <span className="text-emerald-700 font-medium">{res.siteName}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : null
-            ) : (
-              siteResults[0]?.found ? (
-                <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-100 rounded-xl space-y-0.5 animate-slide-up">
-                  <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
-                    <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
-                    <span>Site Terverifikasi</span>
-                  </div>
-                  <p className="text-[10px] font-semibold text-slate-700 ml-2.5">
-                    Nama: <span className="text-emerald-700">{siteResults[0].siteName}</span>
-                  </p>
-                  {siteResults[0].coordinates && (
-                    <p className="text-[9px] text-slate-500 font-mono ml-2.5 flex items-center gap-1">
-                      Koord:{" "}
-                      <a
-                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(siteResults[0].coordinates.trim())}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-0.5 transition-colors"
-                        title="Buka di Google Maps"
-                      >
-                        <span>{siteResults[0].coordinates}</span>
-                        <ExternalLink className="w-2.5 h-2.5" />
-                      </a>
+                ) : null
+              ) : (
+                siteResults[0]?.found ? (
+                  <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-100 rounded-xl space-y-0.5 animate-slide-up">
+                    <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+                      <span>Site Terverifikasi</span>
+                    </div>
+                    <p className="text-[10px] font-semibold text-slate-700 ml-2.5">
+                      Nama: <span className="text-emerald-700">{siteResults[0].siteName}</span>
                     </p>
-                  )}
-                </div>
-              ) : null
-            )
-          )}
+                  </div>
+                ) : null
+              )
+            )}
+          </div>
+
+          {/* Keterangan Umum */}
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">
+              {isTalangan ? 'Keterangan Umum Kegiatan / Tujuan Talangan' : 'Keterangan / Tujuan Pemakaian'}
+            </label>
+            <div className="relative">
+              <textarea
+                value={keterangan}
+                onChange={(e) => setKeterangan(e.target.value)}
+                placeholder="Jelaskan kebutuhan kegiatan atau operasional di lapangan"
+                rows={2}
+                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                required
+              />
+              <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            </div>
+          </div>
         </div>
 
-        {/* Jumlah Pengajuan atau Info Dana Talangan */}
+        {/* 2. JUMLAH PENGAJUAN (STANDAR) ATAU ITEM PERTAMA (DANA TALANGAN) */}
         {!isTalangan ? (
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">Jumlah Pengajuan (Rupiah)</label>
@@ -293,8 +419,9 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
               <input
                 type="text"
                 inputMode="numeric"
+                pattern="[0-9]*"
                 value={jumlahPengajuan}
-                onChange={(e) => setJumlahPengajuan(e.target.value)}
+                onChange={(e) => setJumlahPengajuan(e.target.value.replace(/\D/g, ''))}
                 placeholder="contoh: 1500000"
                 className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
                 required
@@ -303,56 +430,220 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
             </div>
             {jumlahPengajuan && parseNumericValue(jumlahPengajuan) > 0 && (
               <p className="text-[10px] text-indigo-600 font-semibold mt-1">
-                Setara dengan: {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseNumericValue(jumlahPengajuan))}
+                Setara dengan: {formatIDR(jumlahPengajuan)}
               </p>
             )}
           </div>
-        ) : (
-          <div className="bg-indigo-50/50 border border-indigo-100 text-indigo-700 rounded-xl p-3.5 text-xs space-y-1">
-            <p className="font-semibold flex items-center gap-1.5 text-[11px]">
-              <Coins className="w-4 h-4 text-indigo-500" />
-              <span>Sistem Dana Talangan Pribadi</span>
-            </p>
-            <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-              Sistem ini untuk melaporkan pengeluaran tanpa mengajukan dana di awal. Nilai pengeluaran aktual dihitung dari nota-nota bukti pemakaian yang Anda tambahkan setelah form laporan ini dibuat, yang nantinya dihitung sebagai pengurang saldo operasional Anda.
-            </p>
+        ) : !initialRequest && (
+          <div ref={itemSectionRef} className="space-y-3 pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center text-[10px]">2</span>
+                <span>Rincian Item Pertama Dana Talangan (Wajib)</span>
+              </h3>
+            </div>
+
+            <div className="bg-emerald-50/50 border border-emerald-100 text-emerald-800 rounded-xl p-3 text-[10px] leading-relaxed">
+              <p className="font-bold flex items-center gap-1 text-[11px] text-emerald-900 mb-0.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Item Dana Talangan</span>
+              </p>
+              Dana Talangan harus memiliki minimal satu item.  Masukkan item pertama Dana Talangan, untuk item-item selanjutnya dapat ditambahkan melalui Penambahan Item Dana Talangan.
+            </div>
+
+            {/* Tanggal Nota */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">Tanggal Nota / Kuitansi</label>
+              <div className="relative">
+                <input
+                  type="date"
+                  value={itemTanggal}
+                  onChange={(e) => setItemTanggal(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  required
+                />
+                <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+            </div>
+
+            {/* Nominal Item */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Nominal Item Pengeluaran (Rupiah) <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={itemNominal}
+                  onChange={(e) => setItemNominal(e.target.value.replace(/\D/g, ''))}
+                  placeholder="contoh: 150000"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-semibold text-slate-800"
+                />
+                <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+              {itemNominal && parseNumericValue(itemNominal) > 0 && (
+                <p className="text-[10px] text-emerald-700 font-bold mt-1">
+                  Nominal Dana Talangan: {formatIDR(itemNominal)}
+                </p>
+              )}
+            </div>
+
+            {/* Keterangan Rincian Nota */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Keterangan / Rincian Nota <span className="text-rose-500">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={itemKeterangan}
+                  onChange={(e) => setItemKeterangan(e.target.value)}
+                  placeholder="contoh: Pembelian bensin genset 15 liter di SPBU"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                />
+                <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+            </div>
+
+            {/* Upload Bukti Nota / Foto */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1">
+                Foto Bukti Nota / Kuitansi <span className="text-rose-500">*</span>
+              </label>
+
+              {/* Hidden file inputs */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                accept="image/*"
+                className="hidden"
+              />
+              <input
+                type="file"
+                ref={cameraInputRef}
+                onChange={handleFileChange}
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+              />
+
+              {previewUrl && selectedFile ? (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3 animate-fade-in">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-200 border border-slate-300 shrink-0">
+                      <img
+                        src={previewUrl}
+                        alt="Preview Nota"
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold text-slate-800 truncate">{selectedFile.name}</p>
+                      <p className="text-[10px] text-slate-400">{(selectedFile.size / 1024).toFixed(0)} KB • Siap Diunggah</p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRemoveFile}
+                    className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition-colors"
+                    title="Hapus foto"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="py-3 px-3 border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all text-indigo-700 cursor-pointer"
+                  >
+                    <Camera className="w-5 h-5 text-indigo-600" />
+                    <span className="text-[11px] font-bold">Kamera HP (Native)</span>
+                  </button>
+
+                  {!isMobileUser ? (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="py-3 px-3 border-2 border-dashed border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all text-slate-600 cursor-pointer"
+                    >
+                      <UploadCloud className="w-5 h-5 text-slate-500" />
+                      <span className="text-[11px] font-bold">Galeri / File</span>
+                    </button>
+                  ) : (
+                    <div className="py-3 px-3 border border-amber-200 bg-amber-50/50 rounded-2xl flex flex-col items-center justify-center text-center p-2">
+                      <span className="text-[10px] font-bold text-amber-800">Mode Mobile Aktif</span>
+                      <span className="text-[9px] text-amber-600">Hanya Kamera HP diizinkan</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
-
-        {/* Keterangan */}
-        <div>
-          <label className="block text-xs font-semibold text-slate-500 mb-1">
-            {isTalangan ? 'Keterangan Kegiatan / Tujuan' : 'Keterangan / Tujuan Pemakaian'}
-          </label>
-          <div className="relative">
-            <textarea
-              value={keterangan}
-              onChange={(e) => setKeterangan(e.target.value)}
-              placeholder="Sebutkan rincian rencana penggunaan dana"
-              rows={3}
-              className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-              required
-            />
-            <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-          </div>
-        </div>
 
         {/* Submit Button */}
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
+          className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
         >
           <Sparkles className="w-4 h-4" />
           <span>
             {isSubmitting 
-              ? 'Memproses...' 
+              ? 'Menyimpan Pengajuan Dana Talangan...' 
               : (initialRequest
                   ? 'Kirim Revisi Pengajuan'
-                  : (isTalangan ? 'Buat Laporan Dana Talangan' : 'Kirim Pengajuan Anggaran'))}
+                  : (isTalangan ? 'Simpan Pengajuan Dana Talangan' : 'Kirim Pengajuan Anggaran'))}
           </span>
         </button>
       </form>
+
+      {/* POPUP MODAL: WARNING JIKA ITEM DANA TALANGAN BELUM DITAMBAHKAN */}
+      {showItemPromptModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl border border-slate-100 p-6 flex flex-col items-center text-center animate-scale-up space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-amber-100 border border-amber-200 text-amber-600 flex items-center justify-center">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+
+            <div>
+              <h3 className="font-display font-bold text-slate-800 text-base">
+                Item Dana Talangan Wajib Diisi
+              </h3>
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                Pengajuan Dana Talangan tidak dapat disimpan dengan nilai <strong>Rp 0</strong>. Database Pengajuan dan Laporan disimpan bersama item pertama pengeluaran.
+              </p>
+              {missingItemReason && (
+                <div className="mt-2.5 p-2.5 bg-rose-50 border border-rose-100 rounded-xl text-[11px] font-semibold text-rose-700 text-left">
+                  {missingItemReason}
+                </div>
+              )}
+            </div>
+
+            <div className="w-full pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowItemPromptModal(false);
+                  if (itemSectionRef.current) {
+                    itemSectionRef.current.scrollIntoView({ behavior: 'smooth' });
+                  }
+                }}
+                className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-100 transition-all cursor-pointer"
+              >
+                Lengkapi Item Dana Talangan Sekarang
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

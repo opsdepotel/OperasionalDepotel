@@ -351,8 +351,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                       <input
                         type="text"
                         inputMode="numeric"
+                        pattern="[0-9]*"
                         value={transferredAmount}
-                        onChange={(e) => setTransferredAmount(e.target.value)}
+                        onChange={(e) => setTransferredAmount(e.target.value.replace(/\D/g, ''))}
                         placeholder="Nominal transfer"
                         className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
                         required
