@@ -1777,71 +1777,48 @@ export default function App() {
       if (!matchId && !matchDesc && !matchSite && !matchUser && !matchName && !matchUserId && !matchDivisi) return false;
     }
 
+    // DIREKTUR Role UID Filter: APPROVAL group = direct subordinates (MANAGER & FINANCE), MONITORING group = all other UIDs
+    if (activeRole === Role.DIREKTUR) {
+      const direkturEmails = new Set<string>([
+        'margono@depotel.com',
+        'direktur@company.com'
+      ]);
+      profiles
+        .filter(p => p.role === Role.DIREKTUR)
+        .forEach(p => {
+          if (p.email) direkturEmails.add(p.email.trim().toLowerCase());
+        });
+      if (userProfile?.email) direkturEmails.add(userProfile.email.trim().toLowerCase());
+
+      const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
+      const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
+      const profileMgrEmail = (requesterProfile?.managerEmail || '').trim().toLowerCase();
+
+      const isDirectSubordinate = 
+        (requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE) ||
+        (reqManagerEmail && (
+          direkturEmails.has(reqManagerEmail) || 
+          reqManagerEmail.includes('margono') || 
+          reqManagerEmail.includes('direktur') || 
+          (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
+        )) ||
+        (profileMgrEmail && (
+          direkturEmails.has(profileMgrEmail) || 
+          profileMgrEmail.includes('margono') || 
+          profileMgrEmail.includes('direktur') || 
+          (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
+        ));
+
+      if (statusFilter === 'DIREKTUR_APPROVAL' || statusFilter === 'DIREKTUR_RECONCILIATION') {
+        if (!isDirectSubordinate) return false;
+      }
+    }
+
     // Status Filter
     if (statusFilter !== 'ALL') {
       if (statusFilter === 'DIREKTUR_APPROVAL') {
         if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
-        const direkturEmails = new Set<string>([
-          'margono@depotel.com',
-          'direktur@company.com'
-        ]);
-        profiles
-          .filter(p => p.role === Role.DIREKTUR)
-          .forEach(p => {
-            if (p.email) direkturEmails.add(p.email.trim().toLowerCase());
-          });
-        if (userProfile?.email) direkturEmails.add(userProfile.email.trim().toLowerCase());
-
-        const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
-        const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
-        const profileMgrEmail = (requesterProfile?.managerEmail || '').trim().toLowerCase();
-
-        const isDirect = (reqManagerEmail && (
-                           direkturEmails.has(reqManagerEmail) || 
-                           reqManagerEmail.includes('margono') || 
-                           reqManagerEmail.includes('direktur') || 
-                           (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
-                         )) ||
-                         (profileMgrEmail && (
-                           direkturEmails.has(profileMgrEmail) || 
-                           profileMgrEmail.includes('margono') || 
-                           profileMgrEmail.includes('direktur') || 
-                           (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
-                         )) ||
-                         (requesterProfile?.role === Role.MANAGER);
-
-        if (!isDirect) return false;
       } else if (statusFilter === 'DIREKTUR_RECONCILIATION') {
-        const direkturEmails = new Set<string>([
-          'margono@depotel.com',
-          'direktur@company.com'
-        ]);
-        profiles
-          .filter(p => p.role === Role.DIREKTUR)
-          .forEach(p => {
-            if (p.email) direkturEmails.add(p.email.trim().toLowerCase());
-          });
-        if (userProfile?.email) direkturEmails.add(userProfile.email.trim().toLowerCase());
-
-        const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
-        const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
-        const profileMgrEmail = (requesterProfile?.managerEmail || '').trim().toLowerCase();
-
-        const isDirect = (reqManagerEmail && (
-                           direkturEmails.has(reqManagerEmail) || 
-                           reqManagerEmail.includes('margono') || 
-                           reqManagerEmail.includes('direktur') || 
-                           (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
-                         )) ||
-                         (profileMgrEmail && (
-                           direkturEmails.has(profileMgrEmail) || 
-                           profileMgrEmail.includes('margono') || 
-                           profileMgrEmail.includes('direktur') || 
-                           (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
-                         )) ||
-                         (requesterProfile?.role === Role.MANAGER);
-
-        if (!isDirect) return false;
         if (![RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
         const reqItems = usageItems.filter(i => i.requestId === r.id);
         if (reqItems.length === 0) return false;
@@ -2410,7 +2387,7 @@ export default function App() {
                         ) : (
                           <>
                             Role: <span className="text-indigo-600 font-bold">{activeRole}</span>
-                            {userProfile && userProfile.divisi && (
+                            {userProfile && userProfile.divisi && activeRole !== Role.DIREKTUR && (
                               <span>
                                 | Divisi : {formatDivisiSubDivisi(userProfile.divisi, userProfile.subDivisi)}
                               </span>

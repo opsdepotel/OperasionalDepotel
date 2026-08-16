@@ -82,6 +82,18 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [isAutoGpsActive, setIsAutoGpsActive] = useState<boolean>(true);
   const [prevGpsModalPosition, setPrevGpsModalPosition] = useState<GeolocationPosition | null>(null);
 
+  const [direkturGroupTab, setDirekturGroupTab] = useState<'APPROVAL' | 'MONITORING'>('APPROVAL');
+
+  useEffect(() => {
+    if (role === Role.DIREKTUR && activeFilter) {
+      if (activeFilter === 'DIREKTUR_APPROVAL' || activeFilter === 'DIREKTUR_RECONCILIATION') {
+        setDirekturGroupTab('APPROVAL');
+      } else if (['PENDING', 'APPROVED', 'REPORTING', 'CLOSED'].includes(activeFilter)) {
+        setDirekturGroupTab('MONITORING');
+      }
+    }
+  }, [role, activeFilter]);
+
   useBackHandler(isGpsModalOpen, () => setIsGpsModalOpen(false), 'dashboardStats_gpsModal');
 
   useEffect(() => {
@@ -2441,6 +2453,13 @@ User Agent: ${navigator.userAgent}`;
 
     const isDirekturDirectReq = (r: BudgetRequest) => {
       const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
+      const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
+
+      // Check role of requester (MANAGER and FINANCE are direct subordinates of Direktur)
+      if (requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE) {
+        return true;
+      }
+
       // Direct check on ManagerEmail field (e.g. margono@depotel.com)
       if (reqManagerEmail && (
         direkturEmails.has(reqManagerEmail) || 
@@ -2453,7 +2472,6 @@ User Agent: ${navigator.userAgent}`;
       }
 
       // Check hierarchy from user profiles
-      const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
       if (requesterProfile) {
         const profileMgrEmail = (requesterProfile.managerEmail || '').trim().toLowerCase();
         if (profileMgrEmail && (
@@ -2465,7 +2483,6 @@ User Agent: ${navigator.userAgent}`;
         )) {
           return true;
         }
-        if (requesterProfile.role === Role.MANAGER) return true;
       }
       return false;
     };
@@ -2482,250 +2499,312 @@ User Agent: ${navigator.userAgent}`;
     }).length;
     const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
 
-    // Company-wide Executive stats
+    // Company-wide Executive stats for MONITORING (memuat seluruh UID perusahaan, sama seperti Role Finance)
+    const monitoringReqs = activeReqs;
+
     // 1. PENGAJUAN (Pending Approval by Manager / Partially Approved)
-    const pengajuanCount = activeReqs.filter(r => 
+    const pengajuanCount = monitoringReqs.filter(r => 
       r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
     ).length;
 
     // 2. MENUNGGU TRANSFER (Approved by Manager or Bailout Reimbursement pending)
-    const menungguTransferCount = activeReqs.filter(r => 
+    const menungguTransferCount = monitoringReqs.filter(r => 
       r.status === RequestStatus.APPROVED || r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
     ).length;
 
     // 3. PROSES LAPORAN (Transferred, Reporting, Review Manager, Review Admin)
-    const prosesLaporanCount = activeReqs.filter(r => 
+    const prosesLaporanCount = monitoringReqs.filter(r => 
       [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)
     ).length;
 
     // 4. CLOSED (Closed requests excluding BBMDS)
-    const closedCount = activeReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
+    const closedCount = monitoringReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
 
-    // Financial totals for executive summary
+    // Financial totals for executive summary (Monitoring) - aligned with Role Finance formulas
+    const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+
     const totalPengajuan = activeReqs.reduce((sum, r) => sum + (r.jumlahPengajuan || 0), 0);
-    const totalTransferred = activeReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
-    const totalClosed = activeReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+    const totalTransferred = requests
+      .filter(r => !isBbmRequest(r))
+      .reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+    const totalClosed = usageItems
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItem(item))
+      .reduce((sum, item) => sum + (item.nominal || 0), 0);
 
     return (
       <div className="space-y-4">
-        {/* FITUR TAMBAHAN: Urgent Task Card untuk Direktur */}
-        {totalApprovalTasks > 0 ? (
-          <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
-            <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center text-purple-700 shrink-0">
-              <ClipboardCheck className="w-5.5 h-5.5" />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-purple-900 text-xs tracking-wide uppercase">TUGAS PERSETUJUAN DIREKTUR ({totalApprovalTasks})</h3>
-              <p className="text-xs text-purple-700 font-medium mt-0.5">
-                Ada {pendingBudgetReview} pengajuan anggaran baru dan {pendingReportReview} laporan operasional yang membutuhkan tinjauan Anda.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
-            <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
-              <CheckCircle2 className="w-5.5 h-5.5" />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-emerald-900 text-xs tracking-wide uppercase">SEMUA TINJAUAN DIREKTUR BERES</h3>
-              <p className="text-xs text-emerald-700 font-medium mt-0.5">
-                Tidak ada tugas persetujuan anggaran atau review laporan bawahan langsung yang tertunda.
-              </p>
+        {/* DIREKTUR TAB SWITCHER */}
+        <div className="bg-slate-100 p-1.5 rounded-2xl flex items-center gap-1.5 border border-slate-200/80 shadow-xs">
+          <button
+            type="button"
+            onClick={() => {
+              setDirekturGroupTab('APPROVAL');
+              if (onSelectFilter && (activeFilter === 'DIREKTUR_APPROVAL' || activeFilter === 'DIREKTUR_RECONCILIATION')) {
+                onSelectFilter('ALL');
+              }
+            }}
+            className={`flex-1 py-2.5 px-3 rounded-xl font-display font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              direkturGroupTab === 'APPROVAL'
+                ? 'bg-purple-600 text-white shadow-md'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <ClipboardCheck className="w-4 h-4" />
+            <span>APPROVAL</span>
+            {totalApprovalTasks > 0 && (
+              <span className={`px-2 py-0.5 text-[10px] rounded-full font-bold ${
+                direkturGroupTab === 'APPROVAL' ? 'bg-purple-800 text-purple-100' : 'bg-purple-600 text-white'
+              }`}>
+                {totalApprovalTasks}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setDirekturGroupTab('MONITORING');
+              if (onSelectFilter && (activeFilter === 'DIREKTUR_APPROVAL' || activeFilter === 'DIREKTUR_RECONCILIATION')) {
+                onSelectFilter('ALL');
+              }
+            }}
+            className={`flex-1 py-2.5 px-3 rounded-xl font-display font-black text-xs transition-all cursor-pointer flex items-center justify-center gap-2 ${
+              direkturGroupTab === 'MONITORING'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>MONITORING</span>
+          </button>
+        </div>
+
+        {/* KELOMPOK APPROVAL TAB CONTENT */}
+        {direkturGroupTab === 'APPROVAL' && (
+          <div className="space-y-4">
+            {/* Urgent Task Card untuk Direktur */}
+            {totalApprovalTasks > 0 ? (
+              <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center text-purple-700 shrink-0">
+                  <ClipboardCheck className="w-5.5 h-5.5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-purple-900 text-xs tracking-wide uppercase">TUGAS PERSETUJUAN DIREKTUR ({totalApprovalTasks})</h3>
+                  <p className="text-xs text-purple-700 font-medium mt-0.5">
+                    Ada {pendingBudgetReview} pengajuan anggaran baru dan {pendingReportReview} laporan operasional yang membutuhkan tinjauan Anda.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+                  <CheckCircle2 className="w-5.5 h-5.5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-emerald-900 text-xs tracking-wide uppercase">SEMUA TINJAUAN DIREKTUR BERES</h3>
+                  <p className="text-xs text-emerald-700 font-medium mt-0.5">
+                    Tidak ada tugas persetujuan anggaran atau review laporan bawahan langsung yang tertunda.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* 2 Kartu Akses Approval & Review Direktur */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div 
+                onClick={() => handleCardClick('DIREKTUR_APPROVAL')}
+                className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
+                  activeFilter === 'DIREKTUR_APPROVAL' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <div>
+                  <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest flex items-center gap-1">
+                    <span>ALUR PERSETUJUAN DIREKTUR</span>
+                  </p>
+                  <h4 className="font-display font-black text-slate-800 text-xs mt-1">Approval Pengajuan Anggaran</h4>
+                </div>
+                <div>
+                  <div className="flex items-end justify-between mt-2">
+                    <span className="text-2xl font-display font-bold text-slate-900">{pendingBudgetReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                    <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Persetujuan (Aksi)</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-1 font-medium">Pengajuan anggaran dari bawahan hirarki Direktur</p>
+                </div>
+              </div>
+
+              <div 
+                onClick={() => handleCardClick('DIREKTUR_RECONCILIATION')}
+                className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
+                  activeFilter === 'DIREKTUR_RECONCILIATION' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <div>
+                  <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest flex items-center gap-1">
+                    <span>ALUR REKONSILIASI DIREKTUR</span>
+                  </p>
+                  <h4 className="font-display font-black text-slate-800 text-xs mt-1">Review Penggunaan Anggaran</h4>
+                </div>
+                <div>
+                  <div className="flex items-end justify-between mt-2">
+                    <span className="text-2xl font-display font-bold text-slate-900">{pendingReportReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                    <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Review Laporan (Aksi)</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-1 font-medium">Laporan nota & dana talangan dari bawahan hirarki Direktur</p>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
-        {/* FITUR TAMBAHAN: 2 Kartu Akses Approval & Review Direktur */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div 
-            onClick={() => handleCardClick('DIREKTUR_APPROVAL')}
-            className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
-              activeFilter === 'DIREKTUR_APPROVAL' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
-            }`}
-          >
-            <div>
-              <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest flex items-center gap-1">
-                <span>ALUR PERSETUJUAN DIREKTUR</span>
-              </p>
-              <h4 className="font-display font-black text-slate-800 text-xs mt-1">Approval Pengajuan Anggaran</h4>
-            </div>
-            <div>
-              <div className="flex items-end justify-between mt-2">
-                <span className="text-2xl font-display font-bold text-slate-900">{pendingBudgetReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Persetujuan (Aksi)</span>
-              </div>
-              <p className="text-[9px] text-slate-400 mt-1 font-medium">Pengajuan anggaran dari bawahan hirarki Direktur</p>
-            </div>
-          </div>
-
-          <div 
-            onClick={() => handleCardClick('DIREKTUR_RECONCILIATION')}
-            className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
-              activeFilter === 'DIREKTUR_RECONCILIATION' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
-            }`}
-          >
-            <div>
-              <p className="text-[10px] font-bold text-purple-600 uppercase tracking-widest flex items-center gap-1">
-                <span>ALUR REKONSILIASI DIREKTUR</span>
-              </p>
-              <h4 className="font-display font-black text-slate-800 text-xs mt-1">Review Penggunaan Anggaran</h4>
-            </div>
-            <div>
-              <div className="flex items-end justify-between mt-2">
-                <span className="text-2xl font-display font-bold text-slate-900">{pendingReportReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Review Laporan (Aksi)</span>
-              </div>
-              <p className="text-[9px] text-slate-400 mt-1 font-medium">Laporan nota & dana talangan dari bawahan hirarki Direktur</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Banner Direktur */}
-        <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg border border-purple-800/50">
-          <div className="flex items-center justify-between">
-            <div>
-              <span className="text-[10px] font-bold tracking-widest text-purple-300 uppercase bg-purple-950/80 px-2.5 py-1 rounded-lg border border-purple-700/50">
-                Ringkasan Eksekutif Direktur
-              </span>
-              <h2 className="text-base font-display font-bold mt-2 text-white">Monitoring Operasional Anggaran</h2>
-              <p className="text-[11px] text-purple-200 mt-0.5">
-                Tinjauan & review status UID pengajuan anggaran seluruh operasional perusahaan.
-              </p>
-            </div>
-            <div className="hidden sm:flex w-11 h-11 rounded-2xl bg-purple-500/20 border border-purple-400/30 items-center justify-center shrink-0">
-              <ShieldCheck className="w-6 h-6 text-purple-300" />
-            </div>
-          </div>
-        </div>
-
-        {/* 4 Core Cards Grid */}
-        <div className="grid grid-cols-2 gap-3.5">
-          {/* Card 1: PENGAJUAN */}
-          <div
-            onClick={() => handleCardClick('PENDING')}
-            className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
-              activeFilter === 'PENDING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
-            }`}
-          >
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN</p>
-            <div className="flex items-end justify-between mt-2">
-              <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{pengajuanCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-              <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Tinjauan</span>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-2 font-medium">Menunggu persetujuan Manager</p>
-          </div>
-
-          {/* Card 2: MENUNGGU TRANSFER */}
-          <div
-            onClick={() => handleCardClick('APPROVED')}
-            className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
-              activeFilter === 'APPROVED' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
-            }`}
-          >
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">MENUNGGU TRANSFER</p>
-            <div className="flex items-end justify-between mt-2">
-              <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{menungguTransferCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-              <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-blue-200/60">Transfer</span>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-2 font-medium">Disetujui, antrean pencairan Finance</p>
-          </div>
-
-          {/* Card 3: PROSES LAPORAN */}
-          <div
-            onClick={() => handleCardClick('REPORTING')}
-            className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
-              activeFilter === 'REPORTING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
-            }`}
-          >
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PROSES LAPORAN</p>
-            <div className="flex items-end justify-between mt-2">
-              <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{prosesLaporanCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-              <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Penggunaan</span>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-2 font-medium">Pengisian & verifikasi laporan</p>
-          </div>
-
-          {/* Card 4: CLOSED */}
-          <div
-            onClick={() => handleCardClick('CLOSED')}
-            className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
-              activeFilter === 'CLOSED' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
-            }`}
-          >
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CLOSED</p>
-            <div className="flex items-end justify-between mt-2">
-              <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{closedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-              <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-emerald-200/60">Selesai</span>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-2 font-medium">Laporan lengkap & ter-closing</p>
-          </div>
-        </div>
-
-        {/* Kartu Activity User - DIREKTUR */}
-        {(() => {
-          const getTodayStr = () => {
-            const d = new Date();
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-          };
-          const todayStr = getTodayStr();
-
-          const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayStr).length;
-
-          return (
-            <div 
-              onClick={onOpenActivities}
-              className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-sm hover:border-purple-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between bg-gradient-to-r from-purple-50/40 via-white to-indigo-50/30"
-              id="direktur-activity-card"
-            >
-              <div>
-                <div className="flex items-center gap-1.5">
-                  <p className="text-[10px] font-bold text-purple-700 tracking-widest uppercase">ACTIVITY USER (SEMUA USER)</p>
-                  <span className="text-[9px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
-                    Eksekutif
-                  </span>
-                </div>
-                <div className="flex items-baseline gap-1 mt-2">
-                  <span className="text-3xl font-display font-bold text-slate-900">{todayAllActivitiesCount}</span>
-                  <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
-                </div>
-                <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat log kegiatan seluruh user (Filter Divisi, User &amp; Tanggal)</p>
-              </div>
-              <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 shadow-sm">
-                <CalendarCheck className="w-6 h-6" />
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* Total Financial Summary Card */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">IKHTISAR REKONSILIASI KEUANGAN</p>
-          <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
-            <div>
-              <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wider">Total Pengajuan</span>
-              <span className="text-sm font-bold font-display text-slate-800">{formatIDR(totalPengajuan)}</span>
-            </div>
-            <div>
-              <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wider">Total Dana Ditransfer</span>
-              <span className="text-sm font-bold font-display text-indigo-600">{formatIDR(totalTransferred)}</span>
-            </div>
-            <div className="col-span-2 pt-3 border-t border-slate-100">
+        {/* KELOMPOK MONITORING TAB CONTENT */}
+        {direkturGroupTab === 'MONITORING' && (
+          <div className="space-y-4">
+            {/* Banner Direktur */}
+            <div className="bg-gradient-to-r from-purple-900 via-indigo-900 to-slate-900 text-white p-5 rounded-2xl shadow-lg border border-purple-800/50">
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-[10px] text-slate-400 block font-semibold uppercase tracking-wider">Total Closing Terverifikasi</span>
-                  <span className="text-base font-extrabold font-display text-emerald-600 mt-0.5 block">{formatIDR(totalClosed)}</span>
+                  <span className="text-[10px] font-bold tracking-widest text-purple-300 uppercase bg-purple-950/80 px-2.5 py-1 rounded-lg border border-purple-700/50">
+                    Ringkasan Eksekutif Direktur
+                  </span>
+                  <h2 className="text-base font-display font-bold mt-2 text-white">Monitoring Operasional Anggaran</h2>
+                  <p className="text-[11px] text-purple-200 mt-0.5">
+                    Tinjauan & review status UID pengajuan anggaran seluruh operasional perusahaan.
+                  </p>
                 </div>
-                <div className="text-right">
-                  <span className="text-[9px] text-slate-400 block font-semibold uppercase tracking-wider">Selisih Belum Closing</span>
-                  <span className="text-sm font-extrabold font-display text-amber-600 mt-0.5 block">{formatIDR(totalTransferred - totalClosed)}</span>
+                <div className="hidden sm:flex w-11 h-11 rounded-2xl bg-purple-500/20 border border-purple-400/30 items-center justify-center shrink-0">
+                  <ShieldCheck className="w-6 h-6 text-purple-300" />
+                </div>
+              </div>
+            </div>
+
+            {/* 4 Core Cards Grid */}
+            <div className="grid grid-cols-2 gap-3.5">
+              {/* Card 1: PENGAJUAN */}
+              <div
+                onClick={() => handleCardClick('PENDING')}
+                className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
+                  activeFilter === 'PENDING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN</p>
+                <div className="flex items-end justify-between mt-2">
+                  <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{pengajuanCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                  <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-amber-200/60">Tinjauan</span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-2 font-medium">Menunggu persetujuan Manager</p>
+              </div>
+
+              {/* Card 2: MENUNGGU TRANSFER */}
+              <div
+                onClick={() => handleCardClick('APPROVED')}
+                className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
+                  activeFilter === 'APPROVED' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">MENUNGGU TRANSFER</p>
+                <div className="flex items-end justify-between mt-2">
+                  <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{menungguTransferCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                  <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-blue-200/60">Transfer</span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-2 font-medium">Disetujui, antrean pencairan Finance</p>
+              </div>
+
+              {/* Card 3: PROSES LAPORAN */}
+              <div
+                onClick={() => handleCardClick('REPORTING')}
+                className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
+                  activeFilter === 'REPORTING' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PROSES LAPORAN</p>
+                <div className="flex items-end justify-between mt-2">
+                  <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{prosesLaporanCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                  <span className="text-[9px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-purple-200/60">Penggunaan</span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-2 font-medium">Pengisian & verifikasi laporan</p>
+              </div>
+
+              {/* Card 4: CLOSED */}
+              <div
+                onClick={() => handleCardClick('CLOSED')}
+                className={`p-4 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md ${
+                  activeFilter === 'CLOSED' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">CLOSED</p>
+                <div className="flex items-end justify-between mt-2">
+                  <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{closedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                  <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-emerald-200/60">Selesai</span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-2 font-medium">Laporan lengkap & ter-closing</p>
+              </div>
+            </div>
+
+            {/* Kartu Activity User - DIREKTUR */}
+            {(() => {
+              const getTodayStr = () => {
+                const d = new Date();
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+              };
+              const todayStr = getTodayStr();
+
+              const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayStr).length;
+
+              return (
+                <div 
+                  onClick={onOpenActivities}
+                  className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-sm hover:border-purple-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between bg-gradient-to-r from-purple-50/40 via-white to-indigo-50/30"
+                  id="direktur-activity-card"
+                >
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-[10px] font-bold text-purple-700 tracking-widest uppercase">ACTIVITY USER (SEMUA USER)</p>
+                      <span className="text-[9px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                        Eksekutif
+                      </span>
+                    </div>
+                    <div className="flex items-baseline gap-1 mt-2">
+                      <span className="text-3xl font-display font-bold text-slate-900">{todayAllActivitiesCount}</span>
+                      <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
+                    </div>
+                    <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat log kegiatan seluruh user (Filter Divisi, User &amp; Tanggal)</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 shadow-sm">
+                    <CalendarCheck className="w-6 h-6" />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Total Financial Summary Card */}
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">IKHTISAR REKONSILIASI KEUANGAN</p>
+              <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+                <div>
+                  <span className="text-[9px] text-slate-400 block font-semibold uppercase tracking-wider">Total Pengajuan</span>
+                  <span className="text-base font-extrabold font-display text-slate-800 mt-0.5 block">{formatIDR(totalPengajuan)}</span>
+                </div>
+                <div>
+                  <span className="text-[9px] text-slate-400 block font-semibold uppercase tracking-wider">Total Dana Ditransfer</span>
+                  <span className="text-base font-extrabold font-display text-indigo-600 mt-0.5 block">{formatIDR(totalTransferred)}</span>
+                </div>
+                <div className="col-span-2 grid grid-cols-2 gap-4 pt-3 border-t border-slate-100">
+                  <div>
+                    <span className="text-[9px] text-slate-400 block font-semibold uppercase tracking-wider">Total Closing Terverifikasi</span>
+                    <span className="text-base font-extrabold font-display text-emerald-600 mt-0.5 block">{formatIDR(totalClosed)}</span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-slate-400 block font-semibold uppercase tracking-wider">Selisih Belum Closing</span>
+                    <span className="text-base font-extrabold font-display text-amber-600 mt-0.5 block">{formatIDR(totalTransferred - totalClosed)}</span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
