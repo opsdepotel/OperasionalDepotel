@@ -197,6 +197,7 @@ export default function App() {
   // Search/Filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [dashboardTab, setDashboardTab] = useState<'APPROVAL' | 'SUBMISSION'>('APPROVAL');
   const [initialIsTalangan, setInitialIsTalangan] = useState(false);
   const [expandedReportReqIds, setExpandedReportReqIds] = useState<Record<string, boolean>>({});
 
@@ -763,6 +764,86 @@ export default function App() {
     if (success !== null) {
       setUserProfile(updatedProfile);
       setProfiles(prev => prev.map(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase() ? updatedProfile : p));
+      return true;
+    }
+    return false;
+  };
+
+  // Profile Update Foto Profile
+  const handleUpdateProfilePhoto = async (currentProf: UserProfile, photoFile?: File | null): Promise<boolean> => {
+    if (!currentProf) return false;
+    let fotoUrl = currentProf.fotoProfile || '';
+    let fotoFileId = currentProf.fotoProfileFileId || '';
+
+    const currentToken = token || '';
+    const currentSheetId = spreadsheetId || '';
+
+    if (photoFile) {
+      // User uploaded a photo file -> upload to Google Drive if connected
+      if (currentToken && driveFolderId && currentToken !== 'mock_demo_token') {
+        try {
+          const uploadRes = await uploadReceiptFile(currentToken, driveFolderId, photoFile);
+          fotoFileId = uploadRes.fileId;
+          // Use direct drive thumbnail URL for reliable image rendering across devices
+          fotoUrl = `https://drive.google.com/thumbnail?sz=w1000&id=${uploadRes.fileId}`;
+        } catch (err) {
+          console.warn('Gagal unggah foto profil ke Google Drive, menggunakan base64 data URL:', err);
+          fotoUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target?.result as string || '');
+            reader.readAsDataURL(photoFile);
+          });
+        }
+      } else {
+        // Fallback for mock/local mode
+        fotoUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target?.result as string || '');
+          reader.readAsDataURL(photoFile);
+        });
+        fotoFileId = `mock_profile_${Date.now()}`;
+      }
+    } else if (photoFile === null) {
+      // User requested deletion
+      fotoUrl = '';
+      fotoFileId = '';
+    }
+
+    const updatedProfile: UserProfile = {
+      ...currentProf,
+      fotoProfile: fotoUrl,
+      fotoProfileFileId: fotoFileId
+    };
+
+    const success = await runGoogleAction(
+      () => saveUserProfile(currentToken, currentSheetId, updatedProfile),
+      'Gagal memperbarui foto profil.'
+    );
+
+    if (success !== null) {
+      setUserProfile(updatedProfile);
+      setProfiles(prev => prev.map(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase() ? updatedProfile : p));
+      localStorage.setItem('op_app_cached_profiles', JSON.stringify(
+        profiles.map(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase() ? updatedProfile : p)
+      ));
+
+      // Reload database profiles ONLY when profile photo changes
+      if (currentToken && currentSheetId) {
+        try {
+          const freshProfiles = await fetchProfiles(currentToken, currentSheetId);
+          if (freshProfiles && freshProfiles.length > 0) {
+            setProfiles(freshProfiles);
+            localStorage.setItem('op_app_cached_profiles', JSON.stringify(freshProfiles));
+            const freshUser = freshProfiles.find(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase());
+            if (freshUser) {
+              setUserProfile(freshUser);
+            }
+          }
+        } catch (reloadErr) {
+          console.warn('Gagal memuat ulang database user setelah update foto profil:', reloadErr);
+        }
+      }
+
       return true;
     }
     return false;
@@ -1662,16 +1743,16 @@ export default function App() {
     if (r.status === RequestStatus.CANCELLED) return false;
 
     // Role based scoping
-    if (activeRole === Role.USER) {
-      // User only sees their own requests
+    if (activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && dashboardTab === 'SUBMISSION')) {
+      // User only sees their own requests in submission mode
       if (r.userEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
     } else if (activeRole === Role.MANAGER) {
       // Manager sees requests assigned to them
       if (userProfile?.email && r.managerEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
     }
     // DIREKTUR, FINANCE & ADMINISTRATOR see all requests across the organization!
-    // Finance sees everything!
-    if (activeRole === Role.FINANCE) {
+    // Finance sees everything in APPROVAL mode!
+    if (activeRole === Role.FINANCE && dashboardTab !== 'SUBMISSION') {
       if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && statusFilter === 'REPORTING') {
         const reqItems = usageItems.filter(i => i.requestId === r.id);
         if (reqItems.length === 0 || !reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
@@ -1778,8 +1859,8 @@ export default function App() {
           if (r.status !== RequestStatus.TRANSFERRED) return false;
         }
       } else if (statusFilter === 'REPORTING') {
-        // For USER, "Proses Laporan" should display all requests that are REPORTING, TRANSFERRED, REVIEW_MANAGER, or REVIEW_ADMIN.
-        if (activeRole === Role.USER) {
+        // For USER or SUBMISSION tab, "Proses Laporan" displays all reporting requests
+        if (activeRole === Role.USER || dashboardTab === 'SUBMISSION') {
           if (r.status !== RequestStatus.TRANSFERRED &&
               r.status !== RequestStatus.REPORTING &&
               r.status !== RequestStatus.REVIEW_MANAGER &&
@@ -1884,6 +1965,34 @@ export default function App() {
     }
   };
 
+  const getStatusTextColor = (status: RequestStatus) => {
+    switch (status) {
+      case RequestStatus.PENDING_APPROVAL:
+        return 'text-amber-600';
+      case RequestStatus.APPROVED:
+      case RequestStatus.PARTIALLY_APPROVED:
+        return 'text-blue-600';
+      case RequestStatus.REJECTED:
+        return 'text-amber-700';
+      case RequestStatus.TRANSFERRED:
+        return 'text-emerald-600';
+      case RequestStatus.REPORTING:
+        return 'text-purple-600';
+      case RequestStatus.REVIEW_MANAGER:
+        return 'text-indigo-600';
+      case RequestStatus.REVIEW_ADMIN:
+        return 'text-cyan-600';
+      case RequestStatus.PENDING_TALANGAN_TRANSFER:
+        return 'text-pink-600 animate-pulse';
+      case RequestStatus.CLOSED:
+        return 'text-slate-500';
+      case RequestStatus.CANCELLED:
+        return 'text-slate-400 line-through';
+      default:
+        return 'text-slate-600';
+    }
+  };
+
   const getLeftBorderColor = (status: RequestStatus) => {
     switch (status) {
       case RequestStatus.PENDING_APPROVAL:
@@ -1910,15 +2019,26 @@ export default function App() {
     }
   };
 
-  const getStatusLabel = (status: RequestStatus) => {
+  const getStatusLabel = (status: RequestStatus, userEmail?: string) => {
+    let requesterProfile = userEmail ? profiles.find(p => p.email.trim().toLowerCase() === userEmail.trim().toLowerCase()) : null;
+    if (!requesterProfile && userProfile) {
+      if (activeRole === Role.MANAGER || activeRole === Role.FINANCE) {
+        if (dashboardTab === 'SUBMISSION') {
+          requesterProfile = userProfile;
+        }
+      }
+    }
+    const isRequesterManagerOrFinance = requesterProfile ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE) : false;
+    const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
+
     switch (status) {
-      case RequestStatus.PENDING_APPROVAL: return 'Menunggu Review Manager';
-      case RequestStatus.APPROVED: return 'Disetujui oleh Manager';
-      case RequestStatus.PARTIALLY_APPROVED: return 'Disetujui Sebagian oleh Manager';
-      case RequestStatus.REJECTED: return 'Diminta Revisi Manager';
+      case RequestStatus.PENDING_APPROVAL: return `Menunggu Review ${supervisorTitle}`;
+      case RequestStatus.APPROVED: return `Disetujui oleh ${supervisorTitle}`;
+      case RequestStatus.PARTIALLY_APPROVED: return `Disetujui Sebagian oleh ${supervisorTitle}`;
+      case RequestStatus.REJECTED: return `Diminta Revisi ${supervisorTitle}`;
       case RequestStatus.TRANSFERRED: return 'Dana Ditransfer Finance';
       case RequestStatus.REPORTING: return 'Pelaporan Penggunaan';
-      case RequestStatus.REVIEW_MANAGER: return 'Review Laporan (Manager)';
+      case RequestStatus.REVIEW_MANAGER: return `Review Laporan (${supervisorTitle})`;
       case RequestStatus.REVIEW_ADMIN: return 'Review Laporan (Finance)';
       case RequestStatus.PENDING_TALANGAN_TRANSFER: return 'Menunggu Transfer Dana Talangan';
       case RequestStatus.CLOSED: return 'Closing';
@@ -2143,9 +2263,12 @@ export default function App() {
           <ProfileSettings
             userProfile={userProfile}
             onUpdatePassword={handleUpdatePassword}
+            onUpdateProfilePhoto={handleUpdateProfilePhoto}
             onClose={() => setActiveView('dashboard')}
             theme={theme}
             onThemeChange={setTheme}
+            token={token}
+            driveFolderId={driveFolderId}
           />
         ) : activeView === 'new-request' && userProfile ? (
           <BudgetRequestForm
@@ -2248,7 +2371,17 @@ export default function App() {
                           : 'bg-emerald-500 text-white border-emerald-600 shadow-xs hover:bg-emerald-600'
                       }`}
                     >
-                      {userProfile?.nama ? (
+                      {userProfile?.fotoProfile ? (
+                        <img
+                          src={userProfile.fotoProfile}
+                          alt={userProfile.nama || 'Profile'}
+                          className="w-full h-full rounded-xl object-cover"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                          }}
+                        />
+                      ) : userProfile?.nama ? (
                         <span>{userProfile.nama.charAt(0).toUpperCase()}</span>
                       ) : userProfile?.userId ? (
                         <span>{userProfile.userId.charAt(0).toUpperCase()}</span>
@@ -2344,6 +2477,8 @@ export default function App() {
                   onOpenBbmModal={() => setIsBbmModalOpen(true)}
                   onOpenBbmListModal={() => setIsBbmListModalOpen(true)}
                   histories={itemReviewHistories}
+                  activeTab={dashboardTab}
+                  onSelectTab={setDashboardTab}
                 />
               </>
             ) : (
@@ -2364,6 +2499,7 @@ export default function App() {
                   <ReviewBudgetModal
                     request={reviewBudgetReq}
                     requesterName={profiles.find(p => p.email.toLowerCase() === reviewBudgetReq.userEmail.toLowerCase())?.nama || reviewBudgetReq.userEmail}
+                    profiles={profiles}
                     sites={sites}
                     histories={itemReviewHistories}
                     onApprove={handleReviewBudget}
@@ -2401,6 +2537,7 @@ export default function App() {
                   <TransferModal
                     request={transferReq}
                     requesterName={profiles.find(p => p.email.toLowerCase() === transferReq.userEmail.toLowerCase())?.nama || transferReq.userEmail}
+                    profiles={profiles}
                     onTransfer={handleAdminTransfer}
                     onReject={handleRejectTransfer}
                     histories={itemReviewHistories}
@@ -2502,7 +2639,12 @@ export default function App() {
                           <p className="text-slate-700 font-medium">Keterangan: <strong>{cancelConfirmReq.keterangan}</strong></p>
                           <p className="text-slate-700 font-medium">Nominal: <strong className="text-indigo-600">{formatIDR(cancelConfirmReq.jumlahPengajuan)}</strong></p>
                           {cancelConfirmReq.managerComment && (
-                            <p className="text-amber-700 font-medium text-[11px] pt-1">Catatan Revisi Manager: "{cancelConfirmReq.managerComment}"</p>
+                            <p className="text-amber-700 font-medium text-[11px] pt-1">
+                              {(() => {
+                                const p = profiles.find(prof => prof.email.trim().toLowerCase() === (cancelConfirmReq?.userEmail || '').trim().toLowerCase());
+                                return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Revisi Direktur:' : 'Catatan Revisi Manager:';
+                              })()} "{cancelConfirmReq.managerComment}"
+                            </p>
                           )}
                         </div>
                       </div>
@@ -2540,7 +2682,7 @@ export default function App() {
                            statusFilter === 'REPORTING' && activeRole === Role.DIREKTUR ? 'Proses Laporan Operasional' :
                            statusFilter === 'CLOSED' ? 'Arsip / UID Selesai (Closed)' :
                            statusFilter === 'REJECTED' && activeRole === Role.FINANCE ? 'Pengajuan Rejected (Revisi Finance)' :
-                           getStatusLabel(statusFilter as RequestStatus) || statusFilter}
+                           getStatusLabel(statusFilter as RequestStatus, filteredRequests[0]?.userEmail || userProfile?.email) || statusFilter}
                         </span>
                       </h3>
                     </div>
@@ -2662,12 +2804,12 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* Action buttons moved here for USER role */}
-                      {activeRole === Role.USER && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && (
+                      {/* Action buttons for USER role and MANAGER/FINANCE (PENGAJUAN / PENDING mode) */}
+                      {(activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && (dashboardTab === 'SUBMISSION' || statusFilter === 'PENDING' || statusFilter === RequestStatus.PENDING_APPROVAL))) && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && (
                         <div className="flex gap-2 pt-1">
                           <button
                             onClick={() => {
-                              if (!userProfile?.managerEmail) {
+                              if (!userProfile?.managerEmail && activeRole === Role.USER) {
                                 alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
                               } else {
                                 setEditingRequest(null);
@@ -2682,7 +2824,7 @@ export default function App() {
                           </button>
                           <button
                             onClick={() => {
-                              if (!userProfile?.managerEmail) {
+                              if (!userProfile?.managerEmail && activeRole === Role.USER) {
                                 alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
                               } else {
                                 setEditingRequest(null);
@@ -2740,15 +2882,23 @@ export default function App() {
                               className={`bg-white border-l-4 ${getLeftBorderColor(req.status)} border border-slate-200 rounded-2xl p-4 shadow-sm space-y-3 hover:border-slate-300 hover:shadow-md transition-all relative`}
                             >
                               {/* Header card info */}
-                              <div className="flex items-start justify-between">
-                                <div>
-                                  <span className="text-[9px] font-mono text-slate-400 block">{req.id}</span>
-                                  <h4 className="text-xs font-bold text-slate-800 mt-0.5 whitespace-pre-wrap">{req.keterangan}</h4>
-                                  <p className="text-[10px] text-slate-500 font-medium flex items-center gap-1.5 mt-0.5 flex-wrap">
+                              <div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[9px] font-mono text-slate-400 font-bold">{req.id}</span>
+                                  <span className={`text-[9px] font-mono font-bold bg-slate-100 border border-slate-200 px-2 py-0.5 rounded ${getStatusTextColor(req.status)}`}>
+                                    {getStatusLabel(req.status, req.userEmail)}
+                                  </span>
+                                </div>
+                                <h4 className="text-xs font-bold text-slate-800 mt-1 whitespace-pre-wrap">{req.keterangan}</h4>
+                                <div className="text-[10px] text-slate-500 font-medium space-y-1 mt-1">
+                                  {/* SiteID & Tanggal Penggunaan: sejajar vertikal rata kiri */}
+                                  <div className="flex flex-col items-start gap-0.5">
                                     <span>Site: <strong>{req.siteId}</strong></span>
-                                    <span>•</span>
                                     <span>Tgl Penggunaan: <strong className="text-indigo-600">{req.tanggalPemakaian}</strong></span>
-                                    <span>•</span>
+                                  </div>
+
+                                  {/* Pemohon & Divisi: sejajar horisontal di bawah Tanggal Penggunaan */}
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <span>Pemohon: <strong>{requesterName}</strong></span>
                                     {requesterProfile?.divisi && (
                                       <>
@@ -2764,11 +2914,8 @@ export default function App() {
                                         </span>
                                       </>
                                     )}
-                                  </p>
+                                  </div>
                                 </div>
-                                <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${getStatusBadgeStyles(req.status)}`}>
-                                  {getStatusLabel(req.status)}
-                                </span>
                               </div>
 
                               {/* Middle info with budget values */}
@@ -2780,7 +2927,7 @@ export default function App() {
                                   </span>
                                 </div>
                                 <div>
-                                  <span className="block text-[8px] font-bold text-slate-400 uppercase">Disetujui Mgr</span>
+                                  <span className="block text-[8px] font-bold text-slate-400 uppercase">Disetujui</span>
                                   <span className="font-semibold text-emerald-600">
                                     {req.status === RequestStatus.PENDING_APPROVAL || req.status === RequestStatus.REJECTED
                                       ? '-'
@@ -2822,7 +2969,12 @@ export default function App() {
                                 <div className="bg-slate-50/80 p-2.5 rounded-xl border border-slate-100 space-y-1.5 text-[10px] text-slate-600">
                                   {req.managerComment && req.status !== RequestStatus.REJECTED && (
                                     <div className="flex items-start gap-1.5">
-                                      <span className="font-semibold text-slate-500 shrink-0">Catatan Manager:</span>
+                                      <span className="font-semibold text-slate-500 shrink-0">
+                                        {(() => {
+                                          const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
+                                          return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Direktur:' : 'Catatan Manager:';
+                                        })()}
+                                      </span>
                                       <span className="italic text-slate-700">{req.managerComment}</span>
                                     </div>
                                   )}
@@ -2885,7 +3037,12 @@ export default function App() {
                                 <div className="bg-amber-50 text-amber-800 p-2.5 rounded-xl text-[10px] border border-amber-200 space-y-2">
                                   {req.managerComment && (
                                     <p>
-                                      <strong>Catatan Revisi Manager:</strong> {req.managerComment}
+                                      <strong>
+                                        {(() => {
+                                          const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
+                                          return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Revisi Direktur:' : 'Catatan Revisi Manager:';
+                                        })()}
+                                      </strong> {req.managerComment}
                                     </p>
                                   )}
                                   <div className="flex items-center justify-between pt-1 border-t border-amber-200/60">
@@ -2933,7 +3090,12 @@ export default function App() {
                                         </div>
                                         {item.statusManager === ItemStatus.REJECTED && item.managerComment && (
                                           <p className="text-[10px] text-rose-700 font-medium leading-tight">
-                                            <strong className="text-slate-600">Catatan Manager:</strong> "{item.managerComment}"
+                                            <strong className="text-slate-600">
+                                              {(() => {
+                                                const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
+                                                return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Direktur:' : 'Catatan Manager:';
+                                              })()}
+                                            </strong> "{item.managerComment}"
                                           </p>
                                         )}
                                         {item.statusAdmin === ItemStatus.REJECTED && item.adminComment && (
@@ -2949,7 +3111,7 @@ export default function App() {
 
                               {/* Action buttons on card based on role & status */}
                               <div className="flex items-center justify-between pt-2 border-t border-slate-50 text-xs">
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-col items-start gap-1">
                                   <span className="text-[9px] font-mono text-slate-400">
                                     {req.createdAt ? `Dibuat: ${req.createdAt}` : ''}
                                   </span>
@@ -3228,7 +3390,7 @@ export default function App() {
 
       {/* Document/Photo Preview Popup Modal */}
       {previewDocument && (
-        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[100] flex items-center justify-center p-4 animate-fade-in">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">

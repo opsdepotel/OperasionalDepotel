@@ -8,7 +8,7 @@ import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserPr
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -31,6 +31,8 @@ interface DashboardStatsProps {
   onOpenBbmModal?: () => void;
   onOpenBbmListModal?: () => void;
   histories?: ItemReviewHistory[];
+  activeTab?: 'APPROVAL' | 'SUBMISSION';
+  onSelectTab?: (tab: 'APPROVAL' | 'SUBMISSION') => void;
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -51,8 +53,18 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   userProfile,
   onOpenBbmModal,
   onOpenBbmListModal,
-  histories = []
+  histories = [],
+  activeTab,
+  onSelectTab
 }) => {
+  const [internalTab, setInternalTab] = useState<'APPROVAL' | 'SUBMISSION'>('APPROVAL');
+  const currentTab = activeTab !== undefined ? activeTab : internalTab;
+  const handleTabChange = (newTab: 'APPROVAL' | 'SUBMISSION') => {
+    setInternalTab(newTab);
+    if (onSelectTab) {
+      onSelectTab(newTab);
+    }
+  };
   const [isTransactionReportOpen, setIsTransactionReportOpen] = useState(false);
   const [transactionSearchQuery, setTransactionSearchQuery] = useState('');
 
@@ -258,10 +270,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     return getRequestDate(r);
   };
 
-  const getStatusLabel = (status: RequestStatus) => {
+  const getStatusLabel = (status: RequestStatus, userEmail?: string) => {
+    const requesterProfile = userEmail ? profiles.find(p => p.email.trim().toLowerCase() === userEmail.trim().toLowerCase()) : null;
+    const isRequesterManagerOrFinance = requesterProfile ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE) : (role === Role.MANAGER || role === Role.FINANCE);
+    const supervisorTitle = isRequesterManagerOrFinance ? 'DIREKTUR' : 'MANAGER';
+
     switch (status) {
       case RequestStatus.PENDING_APPROVAL:
-        return 'PENDING MANAGER';
+        return `PENDING ${supervisorTitle}`;
       case RequestStatus.APPROVED:
       case RequestStatus.PARTIALLY_APPROVED:
         return 'DISETUJUI';
@@ -270,7 +286,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       case RequestStatus.REPORTING:
         return 'PROSES LAPORAN';
       case RequestStatus.REVIEW_MANAGER:
-        return 'REVIEW MANAGER';
+        return `REVIEW ${supervisorTitle}`;
       case RequestStatus.REVIEW_ADMIN:
         return 'REVIEW FINANCE';
       case RequestStatus.CLOSED:
@@ -407,10 +423,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     doc.save(`Laporan_Saldo_Operasional_${cleanName}_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
-  const renderStatusBadge = (status: RequestStatus) => {
+  const renderStatusBadge = (status: RequestStatus, userEmail?: string) => {
+    const requesterProfile = userEmail ? profiles.find(p => p.email.trim().toLowerCase() === userEmail.trim().toLowerCase()) : null;
+    const isRequesterManagerOrFinance = requesterProfile ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE) : (role === Role.MANAGER || role === Role.FINANCE);
+    const supervisorTitle = isRequesterManagerOrFinance ? 'DIREKTUR' : 'MANAGER';
+
     switch (status) {
       case RequestStatus.PENDING_APPROVAL:
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">PENDING MANAGER</span>;
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">PENDING {supervisorTitle}</span>;
       case RequestStatus.APPROVED:
       case RequestStatus.PARTIALLY_APPROVED:
         return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">DISETUJUI</span>;
@@ -419,7 +439,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       case RequestStatus.REPORTING:
         return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">PROSES LAPORAN</span>;
       case RequestStatus.REVIEW_MANAGER:
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 border border-cyan-200">REVIEW MANAGER</span>;
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-100 text-cyan-800 border border-cyan-200">REVIEW {supervisorTitle}</span>;
       case RequestStatus.REVIEW_ADMIN:
         return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200">REVIEW FINANCE</span>;
       case RequestStatus.CLOSED:
@@ -508,11 +528,15 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     );
   };
 
-  // Compute stats based on roles
-  if (role === Role.USER) {
+  // Reusable User Dashboard View for USER role or MANAGER/FINANCE Pengajuan Anggaran tab
+  const renderUserDashboardView = () => {
     const myReqs = requests.filter(r => r.userEmail.toLowerCase() === email.toLowerCase() && r.status !== RequestStatus.CANCELLED);
     const myReqIds = myReqs.map(r => r.id);
     const myUsage = usageItems.filter(item => myReqIds.includes(item.requestId));
+
+    const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === email.trim().toLowerCase());
+    const isRequesterManagerOrFinance = requesterProfile ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE) : (role === Role.MANAGER || role === Role.FINANCE);
+    const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
 
     const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
     const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
@@ -583,7 +607,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 {[
                   taskReportNeeded > 0 ? `${taskReportNeeded} pengajuan siap dilaporkan` : '',
                   taskCorrections > 0 ? `${taskCorrections} laporan perlu perbaikan` : '',
-                  taskRejected > 0 ? `${taskRejected} pengajuan perlu revisi Manager` : ''
+                  taskRejected > 0 ? `${taskRejected} pengajuan perlu revisi ${supervisorTitle}` : ''
                 ].filter(Boolean).join(', ')}.
               </p>
             </div>
@@ -614,10 +638,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN</p>
               <div className="flex items-end justify-between mt-2">
                 <span className="text-3xl font-display font-bold text-slate-900">{pendingApprCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Manager</span>
+                <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider">{supervisorTitle}</span>
               </div>
             </div>
-            <p className="text-[9px] text-slate-400 mt-2 font-medium">Menunggu Approval Manager</p>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Menunggu Approval {supervisorTitle}</p>
           </div>
 
           <div 
@@ -977,14 +1001,16 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         {renderBbmCard()}
       </div>
     );
-  }
+  };
 
-  if (role === Role.MANAGER) {
+  if (role === Role.USER) {
+    return renderUserDashboardView();
+  }  if (role === Role.MANAGER) {
     const managerReqs = requests.filter(r => r.managerEmail.toLowerCase() === email.toLowerCase());
     const managerReqIds = managerReqs.map(r => r.id);
     const managerUsage = usageItems.filter(item => managerReqIds.includes(item.requestId));
 
-    // Active tasks for Manager:
+    // Active tasks for Manager Approval:
     // 1. Initial approval needed: requests in PENDING_APPROVAL
     const pendingBudgetReview = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
 
@@ -996,126 +1022,188 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
     }).length;
 
-    const totalTasks = pendingBudgetReview + pendingReportReview;
+    const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
+
+    // Active tasks for Manager's own submissions:
+    const myPersonalReqs = requests.filter(r => r.userEmail.toLowerCase() === email.toLowerCase() && r.status !== RequestStatus.CANCELLED);
+    const myPersonalReqIds = myPersonalReqs.map(r => r.id);
+    const myPersonalUsage = usageItems.filter(item => myPersonalReqIds.includes(item.requestId));
+    const myTaskReportNeeded = myPersonalReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING).length;
+    const myTaskCorrections = myPersonalReqs.filter(r => 
+      [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
+      myPersonalUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
+    ).length;
+    const myTaskRejected = myPersonalReqs.filter(r => r.status === RequestStatus.REJECTED).length;
+    const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
 
     // Request Stats for Manager's Team
     const teamPendingAppr = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
-    const teamReporting = managerReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING).length;
     const teamUnderReview = pendingReportReview;
-    const isBbmRequestManager = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
-    const teamClosed = managerReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequestManager(r)).length;
 
     return (
       <div className="space-y-4">
-        {/* Urgent Task Card */}
-        {totalTasks > 0 ? (
-          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
-            <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center text-indigo-700 shrink-0">
-              <ClipboardCheck className="w-5.5 h-5.5" />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-indigo-900 text-xs tracking-wide uppercase">TUGAS PERSETUJUAN ({totalTasks})</h3>
-              <p className="text-xs text-indigo-700 font-medium mt-0.5">
-                Ada {pendingBudgetReview} pengajuan anggaran baru dan {pendingReportReview} laporan operasional tim yang membutuhkan tinjauan Anda.
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
-            <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
-              <CheckCircle2 className="w-5.5 h-5.5" />
-            </div>
-            <div>
-              <h3 className="font-display font-bold text-emerald-900 text-xs tracking-wide uppercase">SEMUA TINJAUAN BERES</h3>
-              <p className="text-xs text-emerald-700 font-medium mt-0.5">
-                Selamat! Anda telah memproses semua tugas persetujuan anggaran dan laporan tim.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* 2 Stats Cards (Approval & Review) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div 
-            onClick={() => handleCardClick('PENDING')}
-            className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md flex flex-col justify-between min-h-[140px] ${
-              activeFilter === 'PENDING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
+        {/* Dual Tab Switcher for MANAGER */}
+        <div className="bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 flex items-center gap-1.5 shadow-xs">
+          <button
+            type="button"
+            onClick={() => handleTabChange('APPROVAL')}
+            className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              currentTab === 'APPROVAL'
+                ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/60'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
             }`}
           >
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">ALUR PERSETUJUAN</p>
-              <h4 className="font-display font-black text-slate-800 text-xs mt-1">Approval Pengajuan Anggaran</h4>
-            </div>
-            <div>
-              <div className="flex items-end justify-between mt-3">
-                <span className="text-3xl font-display font-bold text-slate-900">{teamPendingAppr} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Persetujuan</span>
-              </div>
-              <p className="text-[9px] text-slate-400 mt-2 font-medium">Menunggu persetujuan awal anggaran baru</p>
-            </div>
-          </div>
+            <ShieldCheck className={`w-4 h-4 ${currentTab === 'APPROVAL' ? 'text-indigo-600' : 'text-slate-400'}`} />
+            <span>APPROVAL</span>
+            {totalApprovalTasks > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                currentTab === 'APPROVAL'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'bg-rose-100 text-rose-700'
+              }`}>
+                {totalApprovalTasks}
+              </span>
+            )}
+          </button>
 
-          <div 
-            onClick={() => handleCardClick('REPORTING')}
-            className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md flex flex-col justify-between min-h-[140px] ${
-              activeFilter === 'REPORTING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
+          <button
+            type="button"
+            onClick={() => handleTabChange('SUBMISSION')}
+            className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              currentTab === 'SUBMISSION'
+                ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/60'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
             }`}
           >
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">ALUR REKONSILIASI</p>
-              <h4 className="font-display font-black text-slate-800 text-xs mt-1">Review Penggunaan Anggaran</h4>
-            </div>
-            <div>
-              <div className="flex items-end justify-between mt-3">
-                <span className="text-3xl font-display font-bold text-slate-900">{teamUnderReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Review Laporan</span>
-              </div>
-              <p className="text-[9px] text-slate-400 mt-2 font-medium">Berisi UID yang telah ditransfer Admin dan dilaporkan penggunannya oleh User (termasuk Laporan Dana Talangan User)</p>
-            </div>
-          </div>
+            <FileText className={`w-4 h-4 ${currentTab === 'SUBMISSION' ? 'text-indigo-600' : 'text-slate-400'}`} />
+            <span>PENGAJUAN</span>
+            {totalUserTasks > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                currentTab === 'SUBMISSION'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'bg-amber-100 text-amber-700'
+              }`}>
+                {totalUserTasks}
+              </span>
+            )}
+          </button>
         </div>
 
-        {/* Kartu Activity User - MANAGER */}
-        {(() => {
-          const getTodayStr = () => {
-            const d = new Date();
-            const year = d.getFullYear();
-            const month = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-          };
-          const todayStr = getTodayStr();
-
-          // Subordinates emails
-          const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === email.toLowerCase() || p.email.toLowerCase() === email.toLowerCase());
-          const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
-
-          const todayTeamActivitiesCount = activities.filter(act => 
-            subEmails.has(act.userEmail.toLowerCase()) && act.tanggal === todayStr
-          ).length;
-
-          return (
-            <div 
-              onClick={onOpenActivities}
-              className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
-              id="manager-activity-card"
-            >
-              <div>
-                <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">ACTIVITY USER (TIM BAWAHAN)</p>
-                <div className="flex items-baseline gap-1 mt-2">
-                  <span className="text-3xl font-display font-bold text-slate-900">{todayTeamActivitiesCount}</span>
-                  <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
+        {currentTab === 'APPROVAL' ? (
+          <div className="space-y-4">
+            {/* Urgent Task Card */}
+            {totalApprovalTasks > 0 ? (
+              <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center text-indigo-700 shrink-0">
+                  <ClipboardCheck className="w-5.5 h-5.5" />
                 </div>
-                <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat daftar activity bawahan &amp; filter per user / tanggal</p>
+                <div>
+                  <h3 className="font-display font-bold text-indigo-900 text-xs tracking-wide uppercase">TUGAS PERSETUJUAN ({totalApprovalTasks})</h3>
+                  <p className="text-xs text-indigo-700 font-medium mt-0.5">
+                    Ada {pendingBudgetReview} pengajuan anggaran baru dan {pendingReportReview} laporan operasional tim yang membutuhkan tinjauan Anda.
+                  </p>
+                </div>
               </div>
-              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
-                <CalendarCheck className="w-6 h-6" />
+            ) : (
+              <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
+                <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700 shrink-0">
+                  <CheckCircle2 className="w-5.5 h-5.5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-emerald-900 text-xs tracking-wide uppercase">SEMUA TINJAUAN BERES</h3>
+                  <p className="text-xs text-emerald-700 font-medium mt-0.5">
+                    Selamat! Anda telah memproses semua tugas persetujuan anggaran dan laporan tim.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* 2 Stats Cards (Approval & Review) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div 
+                onClick={() => handleCardClick('PENDING')}
+                className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md flex flex-col justify-between min-h-[140px] ${
+                  activeFilter === 'PENDING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">ALUR PERSETUJUAN</p>
+                  <h4 className="font-display font-black text-slate-800 text-xs mt-1">Approval Pengajuan Anggaran</h4>
+                </div>
+                <div>
+                  <div className="flex items-end justify-between mt-3">
+                    <span className="text-3xl font-display font-bold text-slate-900">{teamPendingAppr} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                    <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Persetujuan</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-2 font-medium">Menunggu persetujuan awal anggaran baru</p>
+                </div>
+              </div>
+
+              <div 
+                onClick={() => handleCardClick('REPORTING')}
+                className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md flex flex-col justify-between min-h-[140px] ${
+                  activeFilter === 'REPORTING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <div>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">ALUR REKONSILIASI</p>
+                  <h4 className="font-display font-black text-slate-800 text-xs mt-1">Review Penggunaan Anggaran</h4>
+                </div>
+                <div>
+                  <div className="flex items-end justify-between mt-3">
+                    <span className="text-3xl font-display font-bold text-slate-900">{teamUnderReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                    <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Review Laporan</span>
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-2 font-medium">Berisi UID yang telah ditransfer Admin dan dilaporkan penggunannya oleh User (termasuk Laporan Dana Talangan User)</p>
+                </div>
               </div>
             </div>
-          );
-        })()}
 
-        {renderBbmCard()}
+            {/* Kartu Activity User - MANAGER */}
+            {(() => {
+              const getTodayStr = () => {
+                const d = new Date();
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+              };
+              const todayStr = getTodayStr();
+
+              // Subordinates emails
+              const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === email.toLowerCase() || p.email.toLowerCase() === email.toLowerCase());
+              const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
+
+              const todayTeamActivitiesCount = activities.filter(act => 
+                subEmails.has(act.userEmail.toLowerCase()) && act.tanggal === todayStr
+              ).length;
+
+              return (
+                <div 
+                  onClick={onOpenActivities}
+                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+                  id="manager-activity-card"
+                >
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">ACTIVITY USER (TIM BAWAHAN)</p>
+                    <div className="flex items-baseline gap-1 mt-2">
+                      <span className="text-3xl font-display font-bold text-slate-900">{todayTeamActivitiesCount}</span>
+                      <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
+                    </div>
+                    <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat daftar activity bawahan &amp; filter per user / tanggal</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                    <CalendarCheck className="w-6 h-6" />
+                  </div>
+                </div>
+              );
+            })()}
+
+            {renderBbmCard()}
+          </div>
+        ) : (
+          renderUserDashboardView()
+        )}
       </div>
     );
   }
@@ -1139,7 +1227,20 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     // Tasks needing Admin action:
     // 1. Pending cash transfers
     // 2. Pending admin report reviews
-    const totalTasks = pendingTransfer + pendingAdminReportReview;
+    const totalApprovalTasks = pendingTransfer + pendingAdminReportReview;
+    const totalTasks = totalApprovalTasks;
+
+    // Active tasks for Finance's own submissions:
+    const myPersonalReqs = requests.filter(r => r.userEmail.toLowerCase() === email.toLowerCase() && r.status !== RequestStatus.CANCELLED);
+    const myPersonalReqIds = myPersonalReqs.map(r => r.id);
+    const myPersonalUsage = usageItems.filter(item => myPersonalReqIds.includes(item.requestId));
+    const myTaskReportNeeded = myPersonalReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING).length;
+    const myTaskCorrections = myPersonalReqs.filter(r => 
+      [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
+      myPersonalUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
+    ).length;
+    const myTaskRejected = myPersonalReqs.filter(r => r.status === RequestStatus.REJECTED).length;
+    const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
     const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
     const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
 
@@ -1260,7 +1361,56 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
     return (
       <div className="space-y-4">
-        {/* Urgent Task Card */}
+        {/* Dual Tab Switcher for FINANCE */}
+        <div className="bg-slate-100/90 p-1.5 rounded-2xl border border-slate-200/80 flex items-center gap-1.5 shadow-xs">
+          <button
+            type="button"
+            onClick={() => handleTabChange('APPROVAL')}
+            className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              currentTab === 'APPROVAL'
+                ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/60'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <ShieldCheck className={`w-4 h-4 ${currentTab === 'APPROVAL' ? 'text-indigo-600' : 'text-slate-400'}`} />
+            <span>APPROVAL</span>
+            {totalApprovalTasks > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                currentTab === 'APPROVAL'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'bg-rose-100 text-rose-700'
+              }`}>
+                {totalApprovalTasks}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleTabChange('SUBMISSION')}
+            className={`flex-1 py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              currentTab === 'SUBMISSION'
+                ? 'bg-white text-indigo-700 shadow-sm border border-slate-200/60'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <FileText className={`w-4 h-4 ${currentTab === 'SUBMISSION' ? 'text-indigo-600' : 'text-slate-400'}`} />
+            <span>PENGAJUAN</span>
+            {totalUserTasks > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                currentTab === 'SUBMISSION'
+                  ? 'bg-indigo-100 text-indigo-700'
+                  : 'bg-amber-100 text-amber-700'
+              }`}>
+                {totalUserTasks}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {currentTab === 'APPROVAL' ? (
+          <div className="space-y-4">
+            {/* Urgent Task Card */}
         {totalTasks > 0 ? (
           <div className="bg-red-50 border border-red-100 rounded-2xl p-4 flex items-start gap-3.5 shadow-sm">
             <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center text-red-700 shrink-0">
@@ -1485,8 +1635,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         </div>
       </div>
-    );
-  }
+    ) : (
+      renderUserDashboardView()
+    )}
+  </div>
+);
+}
 
   // Compute stats for ADMINISTRATOR role
   if (role === Role.ADMINISTRATOR) {

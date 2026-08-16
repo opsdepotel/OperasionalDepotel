@@ -48,7 +48,7 @@ const LAPORAN_HEADERS = [
 ];
 
 const USERS_HEADERS = [
-  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'SubDivisi', 'AksesBBM', 'Mobile', 'DeviceID'
+  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'SubDivisi', 'AksesBBM', 'Mobile', 'DeviceID', 'FotoProfile', 'FotoProfileFileId'
 ];
 
 const ACTIVITY_HEADERS = [
@@ -227,6 +227,9 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
     rawSubDiv = '';
   }
 
+  const rawFotoProfile = row.FotoProfile ?? row.fotoProfile ?? row.FotoProfileUrl ?? row.fotoProfileUrl ?? '';
+  const rawFotoProfileFileId = row.FotoProfileFileId ?? row.fotoProfileFileId ?? '';
+
   return {
     userId: String(row.UserID || row.userId || row.Email || ''),
     password: String(row.Password || row.password || ''),
@@ -238,7 +241,9 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
     subDivisi: rawSubDiv,
     aksesBBM: isAksesBBM,
     mobile: isMobile,
-    deviceId: deviceIdVal
+    deviceId: deviceIdVal,
+    fotoProfile: String(rawFotoProfile).trim(),
+    fotoProfileFileId: String(rawFotoProfileFileId).trim()
   };
 }
 
@@ -448,7 +453,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
       data: [
         { range: 'Pengajuan!A1:P1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
-        { range: 'Users!A1:K1', values: [USERS_HEADERS] },
+        { range: 'Users!A1:M1', values: [USERS_HEADERS] },
         { range: 'Activity!A1:S1', values: [ACTIVITY_HEADERS] },
         { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
         { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
@@ -513,8 +518,8 @@ const setMockData = <T>(key: string, data: T): void => {
 export const defaultUsers: UserProfile[] = [
   { userId: 'admin', password: 'admin123', nama: 'Administrator System', email: 'admin@company.com', role: Role.ADMINISTRATOR, managerEmail: '', divisi: 'HQ-ADMIN', aksesBBM: false },
   { userId: 'direktur', password: 'direktur123', nama: 'Margono (Direktur Utama)', email: 'margono@depotel.com', role: Role.DIREKTUR, managerEmail: '', divisi: 'HQ-EXECUTIVE', aksesBBM: false },
-  { userId: 'finance', password: 'finance123', nama: 'Finance Depotel', email: 'ops.depotel@gmail.com', role: Role.FINANCE, managerEmail: '', divisi: 'HQ-CENTRAL', aksesBBM: true },
-  { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: '', divisi: 'JKT-SOUTH-02', aksesBBM: false },
+  { userId: 'finance', password: 'finance123', nama: 'Finance Depotel', email: 'ops.depotel@gmail.com', role: Role.FINANCE, managerEmail: 'margono@depotel.com', divisi: 'HQ-CENTRAL', aksesBBM: true },
+  { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: 'margono@depotel.com', divisi: 'JKT-SOUTH-02', aksesBBM: false },
   { userId: 'staff', password: 'staff123', nama: 'Staff Lapangan', email: 'staff@company.com', role: Role.USER, managerEmail: 'manager@company.com', divisi: 'JKT-SOUTH-02', aksesBBM: true }
 ];
 
@@ -1528,13 +1533,15 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
     SubDivisi: profile.subDivisi || '',
     AksesBBM: profile.aksesBBM ? 'TRUE' : 'FALSE',
     Mobile: profile.mobile ? 'TRUE' : 'FALSE',
-    DeviceID: profile.deviceId || ''
+    DeviceID: profile.deviceId || '',
+    FotoProfile: profile.fotoProfile || '',
+    FotoProfileFileId: profile.fotoProfileFileId || ''
   });
 
   if (existingIdx !== -1) {
     // Row is at existingIdx + 2 (since header is row 1, and index is 0-based index of slice(1))
     const sheetRowIdx = existingIdx + 2;
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:K${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:M${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,

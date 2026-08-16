@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
+import { UserProfile, Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
 import { ArrowLeft, User, Search, CreditCard, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Eye, Calendar } from 'lucide-react';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 
@@ -682,7 +682,11 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
                   <div className="truncate max-w-[260px] sm:max-w-[360px]">
                     <span className="truncate block">Keterangan: <strong className="text-slate-700">{req.keterangan}</strong></span>
                     <span className="text-slate-400 text-[9px] font-mono mt-0.5 block">
-                      Disetujui Manager: <strong className="text-blue-600">{formatIDR(req.managerActionAmount)}</strong>
+                      {(() => {
+                        const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
+                        const supervisor = (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Direktur' : 'Manager';
+                        return `Disetujui ${supervisor}:`;
+                      })()} <strong className="text-blue-600">{formatIDR(req.managerActionAmount)}</strong>
                     </span>
                   </div>
 

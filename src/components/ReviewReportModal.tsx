@@ -82,6 +82,10 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   const currentItems = items.filter(item => item.requestId === request.id);
 
   // Check user BBM access
+  const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
+  const isRequesterManagerOrFinance = requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE;
+  const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
+
   const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
   const userForRequest = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
   const hasBbmAccess = !!userForRequest?.aksesBBM;
@@ -230,7 +234,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-slate-100">
         <div>
           <h2 className="font-display font-bold text-slate-800 text-sm">Review Laporan Penggunaan</h2>
-          <p className="text-[10px] text-indigo-600 font-semibold">Tingkat Review: {role === Role.MANAGER ? 'Manager' : 'Finance'}</p>
+          <p className="text-[10px] text-indigo-600 font-semibold">Tingkat Review: {role === Role.MANAGER ? supervisorTitle : 'Finance'}</p>
         </div>
         <button
           onClick={onClose}
@@ -271,7 +275,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
               {/* Display partner's status for context */}
               {role === Role.FINANCE && (
                 <div className="text-[10px] bg-slate-50 p-2 rounded-lg text-slate-600">
-                  <span>Status Persetujuan Manager: </span>
+                  <span>Status Persetujuan {supervisorTitle}: </span>
                   <span className={`font-bold ${item.statusManager === ItemStatus.APPROVED ? 'text-emerald-600' : 'text-red-600'}`}>
                     {item.statusManager === ItemStatus.APPROVED ? 'DISETUJUI' : 'REVISI'}
                   </span>
@@ -460,7 +464,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                     <ShieldCheck className="w-4.5 h-4.5" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-bold text-white">Verifikasi Item Dana Talangan (Manager)</h4>
+                    <h4 className="text-xs font-bold text-white">Verifikasi Item Dana Talangan ({supervisorTitle})</h4>
                     <p className="text-[10px] text-indigo-200">Seluruh item nota disetujui. Kolom ManagerActionAmount akan mencatat total nominal disetujui.</p>
                   </div>
                 </div>
@@ -469,7 +473,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                 </span>
               </div>
               <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50 flex items-center justify-between text-xs mt-1">
-                <span className="text-[10px] text-slate-400 font-semibold uppercase">Total Disetujui Manager [ManagerActionAmount]</span>
+                <span className="text-[10px] text-slate-400 font-semibold uppercase">Total Disetujui {supervisorTitle} [ManagerActionAmount]</span>
                 <span className="font-bold text-emerald-300 font-display text-sm">{formatIDR(totalManagerApproved)}</span>
               </div>
             </div>

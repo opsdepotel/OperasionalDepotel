@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { BudgetRequest, RequestStatus, SiteInfo, ItemReviewHistory, ItemStatus } from '../types';
+import { BudgetRequest, RequestStatus, SiteInfo, ItemReviewHistory, ItemStatus, UserProfile, Role } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import { ItemHistoryModal } from './ItemHistoryModal';
 import { Shield, Check, X, AlertCircle, Coins, MessageSquare, MapPin, ExternalLink, History } from 'lucide-react';
@@ -12,6 +12,7 @@ import { Shield, Check, X, AlertCircle, Coins, MessageSquare, MapPin, ExternalLi
 interface ReviewBudgetModalProps {
   request: BudgetRequest;
   requesterName?: string;
+  profiles?: UserProfile[];
   sites?: SiteInfo[];
   histories?: ItemReviewHistory[];
   onApprove: (approvedAmount: number, comment: string) => Promise<void>;
@@ -22,12 +23,17 @@ interface ReviewBudgetModalProps {
 export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
   request,
   requesterName,
+  profiles = [],
   sites = [],
   histories = [],
   onApprove,
   onReject,
   onClose
 }) => {
+  const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
+  const isRequesterManagerOrFinance = requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE;
+  const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
+
   const [approvedAmount, setApprovedAmount] = useState(String(request.jumlahPengajuan));
   const [comment, setComment] = useState('');
   const [action, setAction] = useState<'APPROVE' | 'REJECT' | null>(null);
@@ -114,7 +120,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
     setError(null);
 
     if (!comment.trim()) {
-      setError('Catatan / komentar Manager wajib diisi.');
+      setError(`Catatan / komentar ${supervisorTitle} wajib diisi.`);
       return;
     }
 
@@ -349,7 +355,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
 
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Catatan / Komentar Manager <span className="text-red-500">*</span> (Wajib)
+              Catatan / Komentar {supervisorTitle} <span className="text-red-500">*</span> (Wajib)
             </label>
             <div className="relative">
               <input

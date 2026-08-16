@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { BudgetRequest, RequestStatus, ItemReviewHistory, ItemStatus } from '../types';
+import { BudgetRequest, RequestStatus, ItemReviewHistory, ItemStatus, UserProfile, Role } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import { ItemHistoryModal } from './ItemHistoryModal';
 import { 
@@ -23,6 +23,7 @@ import { uploadReceiptFile } from '../lib/googleApi';
 interface TransferModalProps {
   request: BudgetRequest;
   requesterName?: string;
+  profiles?: UserProfile[];
   onTransfer: (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string) => Promise<void>;
   onReject?: (reason: string) => Promise<void>;
   histories?: ItemReviewHistory[];
@@ -36,6 +37,7 @@ interface TransferModalProps {
 export const TransferModal: React.FC<TransferModalProps> = ({
   request,
   requesterName,
+  profiles = [],
   onTransfer,
   onReject,
   histories = [],
@@ -45,6 +47,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   onAuthError,
   approvedUsageAmount = 0
 }) => {
+  const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
+  const isRequesterManagerOrFinance = requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE;
+
   const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
   const isFinalTalanganTransfer = isTalangan && request.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
 
@@ -212,7 +217,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           </div>
           <div>
             <span className="text-[10px] text-slate-400 block font-semibold">
-              {isFinalTalanganTransfer ? 'Total Reimbursement' : 'Disetujui Manager'}
+              {isFinalTalanganTransfer ? 'Total Reimbursement' : (isRequesterManagerOrFinance ? 'Disetujui Direktur' : 'Disetujui Manager')}
             </span>
             <span className="font-bold text-emerald-600">
               {formatIDR(isFinalTalanganTransfer ? approvedUsageAmount : request.managerActionAmount)}
@@ -221,7 +226,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         </div>
         {request.managerComment && (
           <div className="pt-2 border-t border-slate-200">
-            <span className="text-[10px] text-slate-400 block font-semibold">Catatan Manager</span>
+            <span className="text-[10px] text-slate-400 block font-semibold">
+              {isRequesterManagerOrFinance ? 'Catatan Direktur' : 'Catatan Manager'}
+            </span>
             <p className="text-slate-700 italic">"{request.managerComment}"</p>
           </div>
         )}

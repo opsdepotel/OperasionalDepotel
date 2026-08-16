@@ -114,6 +114,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
   // Check if the user associated with this UID request has BBM Duren Sawit access and Mobile mandatory setting
   const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
+  const isRequesterManagerOrFinance = requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE;
   const hasBbmAccess = !!requesterProfile?.aksesBBM;
   const isMobileUser = requesterProfile?.mobile === true ||
     String(requesterProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
@@ -631,7 +632,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2 text-xs shadow-sm">
           {request.managerComment && (
             <div className="flex items-start gap-1.5 text-slate-700">
-              <span className="font-bold text-slate-500 text-[10px] uppercase shrink-0">Catatan Manager:</span>
+              <span className="font-bold text-slate-500 text-[10px] uppercase shrink-0">
+                {isRequesterManagerOrFinance ? 'Catatan Direktur:' : 'Catatan Manager:'}
+              </span>
               <span className="italic text-slate-800">{request.managerComment}</span>
             </div>
           )}
@@ -724,7 +727,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       <div className="grid grid-cols-2 gap-2 text-[10px]">
                         {/* Status Review Manager */}
                         <div className="bg-white p-2 rounded-lg border border-slate-150 flex flex-col justify-between">
-                          <span className="text-[9px] font-bold text-slate-500 block mb-1">Review Manager</span>
+                          <span className="text-[9px] font-bold text-slate-500 block mb-1">
+                            Review {isRequesterManagerOrFinance ? 'Direktur' : 'Manager'}
+                          </span>
                           <div>
                             <span className={`inline-flex items-center gap-1 font-bold px-2 py-0.5 rounded-md text-[9px] ${
                               item.statusManager === ItemStatus.APPROVED
@@ -805,13 +810,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.CLOSED && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 space-y-2 mt-2">
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">
-                        Review Keputusan ({role === Role.MANAGER ? 'Manager' : 'Finance'})
+                        Review Keputusan ({role === Role.MANAGER ? (isRequesterManagerOrFinance ? 'Direktur' : 'Manager') : 'Finance'})
                       </span>
                       
                       {/* If role is Finance, show Manager's decision for context */}
                       {role === Role.FINANCE && (
                         <div className="text-[10px] bg-white border border-slate-100 p-2 rounded-xl text-slate-600 mb-1.5">
-                          <span>Status Persetujuan Manager: </span>
+                          <span>Status Persetujuan {isRequesterManagerOrFinance ? 'Direktur' : 'Manager'}: </span>
                           <span className={`font-bold ${item.statusManager === ItemStatus.APPROVED ? 'text-emerald-600' : 'text-red-600'}`}>
                             {item.statusManager === ItemStatus.APPROVED ? 'DISETUJUI' : 'REVISI'}
                           </span>
@@ -822,7 +827,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       {(role === Role.MANAGER && item.statusManager === ItemStatus.APPROVED) || (role === Role.FINANCE && item.statusAdmin === ItemStatus.APPROVED) ? (
                         <div className="text-center py-2 bg-emerald-50 border border-emerald-100 rounded-xl text-emerald-700 font-bold text-xs flex items-center justify-center gap-2">
                           <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                          <span>{role === Role.MANAGER ? 'Telah Disetujui Manager' : 'Telah Disetujui Finance'}</span>
+                          <span>{role === Role.MANAGER ? `Telah Disetujui ${isRequesterManagerOrFinance ? 'Direktur' : 'Manager'}` : 'Telah Disetujui Finance'}</span>
                         </div>
                       ) : (
                         <>

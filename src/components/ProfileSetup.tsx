@@ -194,17 +194,17 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
       return;
     }
 
-    if (role === Role.USER) {
-      if (!managerEmail.trim()) {
+    if (role === Role.USER || role === Role.MANAGER || role === Role.FINANCE) {
+      if (role === Role.USER && !managerEmail.trim()) {
         setError('Email Manager wajib diisi untuk role Staff/User.');
         return;
       }
-      if (!managerEmail.includes('@')) {
-        setError('Format Email Manager tidak valid.');
+      if (managerEmail.trim() && !managerEmail.includes('@')) {
+        setError('Format Email Approver tidak valid.');
         return;
       }
-      if (managerEmail.toLowerCase() === email.toLowerCase()) {
-        setError('Email Manager tidak boleh sama dengan email pengguna itu sendiri.');
+      if (managerEmail.trim() && managerEmail.toLowerCase() === email.toLowerCase()) {
+        setError('Email Approver tidak boleh sama dengan email pengguna itu sendiri.');
         return;
       }
     }
@@ -217,7 +217,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
         nama: nama.trim(),
         email: email.trim(),
         role,
-        managerEmail: role === Role.USER ? managerEmail.trim() : '',
+        managerEmail: (role === Role.USER || role === Role.MANAGER || role === Role.FINANCE) ? managerEmail.trim() : '',
         divisi: divisi.trim().toUpperCase(),
         subDivisi: subDivisi.trim().toUpperCase(),
         aksesBBM,
@@ -437,21 +437,21 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
               </div>
             </div>
 
-            {/* Email Manager (Only for Staff/User) */}
-            {role === Role.USER && (
+            {/* Email Manager / Direktur (For Staff/User, Manager, Finance) */}
+            {(role === Role.USER || role === Role.MANAGER || role === Role.FINANCE) && (
               <div className="md:col-span-2">
                 <label className="block text-xs font-semibold text-slate-500 mb-1">
-                  Email Manager Atasan <span className="text-red-500">*</span>
+                  {role === Role.USER ? 'Email Manager Atasan' : 'Email Direktur (Approver)'} {role === Role.USER && <span className="text-red-500">*</span>}
                 </label>
                 <div className="relative">
                   <input
                     type="email"
                     value={managerEmail}
                     onChange={(e) => setManagerEmail(e.target.value)}
-                    placeholder="Pilih atau ketik email manager..."
+                    placeholder={role === Role.USER ? "Pilih atau ketik email manager..." : "Pilih atau ketik email direktur..."}
                     list="manager-options"
                     className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                    required
+                    required={role === Role.USER}
                   />
                   <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                   <datalist id="manager-options">
@@ -461,7 +461,9 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   </datalist>
                 </div>
                 <p className="text-[10px] text-slate-400 mt-1">
-                  Pengajuan anggaran dari user ini akan diteruskan ke email Manager di atas untuk diapprove.
+                  {role === Role.USER
+                    ? 'Pengajuan anggaran dari user ini akan diteruskan ke email Manager di atas untuk diapprove.'
+                    : 'Pengajuan anggaran dan review laporan Manager/Finance akan diteruskan ke email Direktur di atas untuk diapprove.'}
                 </p>
               </div>
             )}
@@ -669,23 +671,38 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                   key={p.userId || p.email}
                   className="p-3 border border-slate-150 rounded-xl hover:border-slate-300 hover:bg-slate-50/40 transition-all flex items-start justify-between gap-3"
                 >
-                  <div className="space-y-1 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-xs text-slate-800">{p.nama || p.userId || 'No ID'}</span>
-                      <span className="text-[10px] text-slate-400">({p.userId})</span>
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                        p.role === Role.ADMINISTRATOR
-                          ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                          : p.role === Role.FINANCE
-                          ? 'bg-red-50 text-red-600 border border-red-100'
-                          : p.role === Role.MANAGER
-                          ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                          : p.role === Role.DIREKTUR
-                          ? 'bg-purple-50 text-purple-600 border border-purple-100'
-                          : 'bg-indigo-50 text-indigo-600 border border-indigo-100'
-                      }`}>
-                        {p.role}
-                      </span>
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    {p.fotoProfile ? (
+                      <img
+                        src={p.fotoProfile}
+                        alt={p.nama || 'User'}
+                        className="w-9 h-9 rounded-xl object-cover border border-slate-200 shrink-0"
+                        referrerPolicy="no-referrer"
+                        onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                      />
+                    ) : (
+                      <div className="w-9 h-9 rounded-xl bg-indigo-50 border border-indigo-150 text-indigo-600 font-bold text-xs flex items-center justify-center shrink-0">
+                        {p.nama ? p.nama.charAt(0).toUpperCase() : 'U'}
+                      </div>
+                    )}
+                    <div className="space-y-1 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-xs text-slate-800">{p.nama || p.userId || 'No ID'}</span>
+                        <span className="text-[10px] text-slate-400">({p.userId})</span>
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                          p.role === Role.ADMINISTRATOR
+                            ? 'bg-blue-50 text-blue-700 border border-blue-200'
+                            : p.role === Role.FINANCE
+                            ? 'bg-red-50 text-red-600 border border-red-100'
+                            : p.role === Role.MANAGER
+                            ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                            : p.role === Role.DIREKTUR
+                            ? 'bg-purple-50 text-purple-600 border border-purple-100'
+                            : 'bg-indigo-50 text-indigo-600 border border-indigo-100'
+                        }`}>
+                          {p.role}
+                        </span>
+                      </div>
                       {p.divisi && (
                         <span className="text-[9px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200 uppercase font-mono">
                           {formatDivisiSubDivisi(p.divisi, p.subDivisi)}

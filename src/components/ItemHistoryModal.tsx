@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UsageReportItem, ItemReviewHistory, Role } from '../types';
 import {
@@ -26,10 +27,53 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
 }) => {
   useBackHandler(true, onClose, 'itemHistoryModal');
 
-  // Filter histories for this specific item or request
+  const [previewDoc, setPreviewDoc] = useState<{ url: string; fileId?: string; title: string } | null>(null);
+  useBackHandler(!!previewDoc, () => setPreviewDoc(null), 'itemHistory_previewDoc');
+
+  // Helper to robustly parse various date formats into milliseconds
+  const parseTimestampToMs = (tsStr?: string): number => {
+    if (!tsStr) return 0;
+
+    // 1. If standard ISO or valid date string
+    const directDate = new Date(tsStr).getTime();
+    if (!isNaN(directDate)) return directDate;
+
+    // 2. Handle YYYY-MM-DD HH:mm:ss
+    if (/^\d{4}-\d{2}-\d{2}/.test(tsStr)) {
+      const formatted = tsStr.replace(' ', 'T');
+      const d = new Date(formatted).getTime();
+      if (!isNaN(d)) return d;
+    }
+
+    // 3. Handle DD/MM/YYYY or D/M/YYYY, HH.mm.ss or HH:mm:ss (id-ID locale string)
+    const match = tsStr.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[,\s]+(\d{1,2})[\.:](\d{1,2})(?:[\.:](\d{1,2}))?)?/);
+    if (match) {
+      const [, day, month, year, hour = '0', min = '0', sec = '0'] = match;
+      const d = new Date(
+        parseInt(year, 10),
+        parseInt(month, 10) - 1,
+        parseInt(day, 10),
+        parseInt(hour, 10),
+        parseInt(min, 10),
+        parseInt(sec, 10)
+      ).getTime();
+      if (!isNaN(d)) return d;
+    }
+
+    return 0;
+  };
+
+  // Filter histories for this specific item or request and sort by newest timestamp first
   const itemHistories = histories
     .filter(h => h.itemUid === item.id || h.requestUid === item.id)
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); // Newest first
+    .sort((a, b) => {
+      const timeA = parseTimestampToMs(a.timestamp);
+      const timeB = parseTimestampToMs(b.timestamp);
+      if (timeB !== timeA) {
+        return timeB - timeA; // Newest first
+      }
+      return (b.id || '').localeCompare(a.id || '');
+    });
 
   const formatIDR = (num: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -101,20 +145,25 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in">
-      <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-scale-up">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="bg-white rounded-2xl max-w-xl w-full max-h-[90vh] my-auto flex flex-col shadow-2xl border border-slate-200 overflow-hidden animate-scale-up">
         {/* Modal Header */}
-        <div className="p-4 bg-slate-900 text-white flex items-center justify-between shrink-0">
+        <div className="p-4 bg-gradient-to-r from-indigo-700 via-indigo-800 to-indigo-900 text-white flex items-center justify-between shrink-0 shadow-sm border-b border-indigo-600/30">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/30">
+            <div className="p-2 bg-white/15 text-white rounded-xl border border-white/20 shadow-xs">
               <History className="w-5 h-5" />
             </div>
             <div>
               <h3 className="font-bold text-sm text-white flex items-center gap-2">
                 Riwayat Approval & Revisi Item
               </h3>
-              <p className="text-[11px] text-slate-300 font-mono mt-0.5">
+              <p className="text-[11px] text-indigo-100 font-mono mt-0.5">
                 ID Item: {item.id} | Request: {item.requestId}
               </p>
             </div>
@@ -122,7 +171,7 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
 
           <button
             onClick={onClose}
-            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl transition-all cursor-pointer"
+            className="p-1.5 hover:bg-white/15 text-indigo-100 hover:text-white rounded-xl transition-all cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
@@ -143,14 +192,12 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
             </span>
             {item.buktiUrl && (
               <button
+                type="button"
                 onClick={() => {
-                  if (onPreviewDocument) {
-                    onPreviewDocument({ url: item.buktiUrl, fileId: item.buktiFileId, title: `Nota: ${item.keterangan}` });
-                  } else {
-                    window.open(item.buktiUrl, '_blank');
-                  }
+                  const doc = { url: item.buktiUrl, fileId: item.buktiFileId, title: `Nota: ${item.keterangan || 'Terkini'}` };
+                  setPreviewDoc(doc);
                 }}
-                className="text-indigo-600 hover:underline flex items-center gap-1 font-semibold"
+                className="text-indigo-600 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
               >
                 <FileText className="w-3 h-3" />
                 <span>Lihat Nota Terkini</span>
@@ -185,24 +232,22 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
                   {/* Card item history */}
                   <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs hover:border-slate-300 transition-all space-y-2">
                     {/* Header line */}
-                    <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {getActionBadge(log)}
-                          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider bg-slate-100 px-1.5 py-0.5 rounded">
-                            {log.actorRole}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1 text-xs font-bold text-slate-800 mt-1">
-                          <User className="w-3.5 h-3.5 text-slate-400" />
-                          <span>{log.actorNama || log.actorEmail}</span>
-                          <span className="text-[10px] text-slate-400 font-normal">({log.actorEmail})</span>
-                        </div>
+                    <div className="border-b border-slate-100 pb-2.5 space-y-2">
+                      {/* ActionType */}
+                      <div>
+                        {getActionBadge(log)}
                       </div>
 
-                      <div className="flex items-center gap-1 text-[10px] text-slate-400 shrink-0 font-mono">
-                        <Clock className="w-3 h-3 text-slate-400" />
-                        <span>{log.timestamp}</span>
+                      {/* Timestamp & ActorNama (Sejajar Vertical, Rata Kiri) */}
+                      <div className="flex flex-col items-start gap-1">
+                        <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
+                          <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>{log.timestamp}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                          <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>{log.actorNama || log.actorEmail}</span>
+                        </div>
                       </div>
                     </div>
 
@@ -248,11 +293,8 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              if (onPreviewDocument) {
-                                onPreviewDocument({ url: log.buktiUrl!, fileId: log.buktiFileId, title: `Nota (Snapshot): ${log.keterangan}` });
-                              } else {
-                                window.open(log.buktiUrl, '_blank');
-                              }
+                              const doc = { url: log.buktiUrl!, fileId: log.buktiFileId, title: `Nota (Snapshot): ${log.keterangan || 'Bukti'}` };
+                              setPreviewDoc(doc);
                             }}
                             className="text-indigo-600 hover:text-indigo-800 font-bold text-[10px] flex items-center gap-1 bg-white px-2 py-0.5 rounded border border-slate-200 shadow-2xs transition-all cursor-pointer"
                           >
@@ -279,6 +321,95 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+
+      {/* Internal Nota Preview Popup Modal (Layered on top of ItemHistoryModal) */}
+      {previewDoc && createPortal(
+        <div
+          className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setPreviewDoc(null);
+          }}
+        >
+          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-widest">PREVIEW NOTA / ATTACHMENT</h3>
+                <h4 className="text-sm font-bold text-slate-800 mt-0.5">{previewDoc.title}</h4>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewDoc(null)}
+                className="w-8 h-8 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 flex items-center justify-center transition-all cursor-pointer border border-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Document/Image display area */}
+            <div className="flex-1 bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden flex items-center justify-center min-h-[350px] relative p-2">
+              {previewDoc.fileId ? (
+                <img
+                  src={`https://drive.google.com/thumbnail?sz=w1000&id=${previewDoc.fileId}`}
+                  alt="Pratinjau Nota"
+                  className="max-w-full max-h-[55vh] rounded-xl object-contain shadow-sm"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    const fallback = document.getElementById('history-preview-fallback');
+                    if (fallback) fallback.classList.remove('hidden');
+                  }}
+                />
+              ) : previewDoc.url ? (
+                <img
+                  src={previewDoc.url}
+                  alt="Pratinjau Nota"
+                  className="max-w-full max-h-[55vh] rounded-xl object-contain shadow-sm"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    const fallback = document.getElementById('history-preview-fallback');
+                    if (fallback) fallback.classList.remove('hidden');
+                  }}
+                />
+              ) : null}
+
+              {/* Fallback block */}
+              <div
+                id="history-preview-fallback"
+                className={`flex flex-col items-center justify-center text-center p-6 text-slate-500 space-y-3 ${previewDoc.fileId || previewDoc.url ? 'hidden absolute inset-0 bg-slate-50 flex' : ''}`}
+              >
+                <FileText className="w-12 h-12 text-slate-300" />
+                <p className="text-xs font-bold text-slate-700">Dokumen Nota Terbuka</p>
+                <p className="text-[10px] text-slate-400 max-w-[280px]">Pratinjau langsung tidak dapat ditampilkan. Silakan klik tombol di bawah untuk membuka dokumen asli.</p>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="pt-3 border-t border-slate-100 flex gap-3">
+              <button
+                type="button"
+                onClick={() => setPreviewDoc(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl text-xs transition-all cursor-pointer text-center"
+              >
+                Tutup Preview
+              </button>
+              {previewDoc.url && (
+                <a
+                  href={previewDoc.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all shadow-md shadow-indigo-100 text-center"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span>Buka Dokumen Asli</span>
+                </a>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </div>,
+    document.body
   );
 };

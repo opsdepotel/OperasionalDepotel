@@ -309,7 +309,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         <div className="bg-blue-50/50 border border-blue-100 text-blue-700 rounded-xl p-3 text-xs">
           <p className="font-semibold">Reviewer Persetujuan Laporan:</p>
           <p className="font-medium text-[10px] text-slate-500 mt-1">
-            Laporan/Pengajuan ini otomatis dialokasikan ke manager Anda: <span className="font-bold text-blue-600">{managerEmail}</span>
+            Laporan/Pengajuan ini otomatis dialokasikan ke atasan langsung Anda: <span className="font-bold text-blue-600">{managerEmail}</span>
           </p>
         </div>
 

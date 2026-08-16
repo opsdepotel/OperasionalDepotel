@@ -78,6 +78,8 @@ export interface UserProfile {
   aksesBBM?: boolean;
   mobile?: boolean;
   deviceId?: string;
+  fotoProfile?: string;
+  fotoProfileFileId?: string;
 }
 
 export interface SiteInfo {
