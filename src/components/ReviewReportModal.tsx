@@ -126,6 +126,12 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
     setDecisions(initialDecisions);
   }, [items, request, role]);
 
+  // Check if at least 1 item has a decision (APPROVED or REJECTED)
+  const hasAtLeastOneDecision = currentItems.length > 0 && currentItems.some(item => {
+    const decStatus = decisions[item.id]?.status;
+    return decStatus === ItemStatus.APPROVED || decStatus === ItemStatus.REJECTED;
+  });
+
   const formatIDR = (num: any) => {
     const val = parseNumericValue(num);
     return new Intl.NumberFormat('id-ID', {
@@ -566,12 +572,14 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
 
           <button
             onClick={handleSubmit}
-            disabled={isSubmitting}
-            className={`w-full py-2.5 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${
-              role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
-                ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
-                : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100'
-            } disabled:bg-slate-300`}
+            disabled={isSubmitting || !hasAtLeastOneDecision}
+            className={`w-full py-2.5 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all ${
+              !hasAtLeastOneDecision
+                ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
+                : role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
+                ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200 cursor-pointer'
+                : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-100 cursor-pointer'
+            } disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:shadow-none`}
           >
             {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) ? (
               <>
@@ -587,7 +595,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
             ) : (
               <>
                 <Send className="w-4 h-4" />
-                <span>{isSubmitting ? 'Mengirim Keputusan...' : 'Kirim Seluruh Keputusan Review'}</span>
+                <span>{isSubmitting ? 'Menyimpan Keputusan...' : 'Simpan Keputusan Review'}</span>
               </>
             )}
           </button>
