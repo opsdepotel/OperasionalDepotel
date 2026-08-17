@@ -2779,7 +2779,7 @@ export default function App() {
                       )}
 
                       {/* Action buttons for USER role and MANAGER/FINANCE (PENGAJUAN / PENDING mode) */}
-                      {(activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && (dashboardTab === 'SUBMISSION' || statusFilter === 'PENDING' || statusFilter === RequestStatus.PENDING_APPROVAL))) && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && (
+                      {(activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && (dashboardTab === 'SUBMISSION' || statusFilter === 'PENDING' || statusFilter === RequestStatus.PENDING_APPROVAL))) && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && statusFilter !== 'TRANSFERRED' && statusFilter !== RequestStatus.TRANSFERRED && (
                         <div className="flex gap-2 pt-1">
                           <button
                             onClick={() => {
