@@ -10,6 +10,7 @@ import { parseNumericValue } from '../lib/googleApi';
 import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles } from 'lucide-react';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture } from '../lib/aiRecapture';
+import { ZoomableImage } from './ZoomableImage';
 
 interface BbmListModalProps {
   isOpen: boolean;
@@ -725,12 +726,12 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-2 flex items-center justify-center">
-              <img
+            <div className="p-2 flex flex-col items-center justify-center">
+              <ZoomableImage
                 src={selectedPhotoUrl}
                 alt="Foto Bukti Kegiatan"
-                className="max-h-[75vh] w-auto object-contain rounded-xl mx-auto shadow-md"
-                referrerPolicy="no-referrer"
+                darkTheme={true}
+                maxHeightClass="max-h-[65vh]"
               />
             </div>
           </div>

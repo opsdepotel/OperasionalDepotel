@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile, ItemReviewHistory } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
+import { ZoomableImage } from './ZoomableImage';
 import { parseNumericValue } from '../lib/googleApi';
 import {
   Shield, ShieldCheck, Check, X, AlertCircle, Info, ExternalLink,
@@ -777,7 +778,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
             </div>
 
             {/* Content Preview Foto */}
-            <div className="flex-1 overflow-hidden rounded-2xl bg-slate-900 flex items-center justify-center relative min-h-[280px] max-h-[60vh] border border-slate-200 p-2">
+            <div className="flex-1 overflow-hidden rounded-2xl bg-slate-900 flex flex-col items-center justify-center relative min-h-[280px] max-h-[60vh] border border-slate-200 p-2">
               {(() => {
                 let fileId = previewActivityPhoto.fileId?.trim() || '';
                 if (!fileId && previewActivityPhoto.url) {
@@ -796,11 +797,11 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                 if (!displaySrc) return null;
 
                 return (
-                  <img
+                  <ZoomableImage
                     src={displaySrc}
                     alt={previewActivityPhoto.title}
-                    className="max-w-full max-h-[55vh] object-contain rounded-xl"
-                    referrerPolicy="no-referrer"
+                    darkTheme={true}
+                    maxHeightClass="max-h-[50vh]"
                     onError={(e) => {
                       const target = e.target as HTMLElement;
                       target.style.display = 'none';

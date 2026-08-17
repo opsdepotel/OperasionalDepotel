@@ -7,6 +7,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile, ItemReviewHistory } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
+import { ZoomableImage } from './ZoomableImage';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
@@ -1363,13 +1364,12 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             </div>
 
             {/* Inline Preview Window */}
-            <div className="flex-1 bg-slate-100 rounded-2xl border border-slate-200 overflow-hidden flex items-center justify-center min-h-[300px] relative p-1">
+            <div className="flex-1 bg-slate-100 rounded-2xl border border-slate-200 overflow-hidden flex flex-col items-center justify-center min-h-[300px] relative p-1">
               {previewItem.buktiFileId ? (
-                <img
+                <ZoomableImage
                   src={`https://drive.google.com/thumbnail?sz=w1000&id=${previewItem.buktiFileId}`}
                   alt="Bukti Nota"
-                  className="max-w-full max-h-[50vh] rounded-xl object-contain shadow-sm"
-                  referrerPolicy="no-referrer"
+                  maxHeightClass="max-h-[45vh]"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
                     const fallback = document.getElementById('preview-fallback');
@@ -1444,13 +1444,12 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             </div>
 
             {/* Inline Preview Window */}
-            <div className="flex-1 bg-slate-100 rounded-2xl border border-slate-200 overflow-hidden flex items-center justify-center min-h-[300px] relative p-1">
+            <div className="flex-1 bg-slate-100 rounded-2xl border border-slate-200 overflow-hidden flex flex-col items-center justify-center min-h-[300px] relative p-1">
               {request.buktiTransferFileId ? (
-                <img
+                <ZoomableImage
                   src={`https://drive.google.com/thumbnail?sz=w1000&id=${request.buktiTransferFileId}`}
                   alt="Bukti Transfer / Penyesuaian"
-                  className="max-w-full max-h-[50vh] rounded-xl object-contain shadow-sm"
-                  referrerPolicy="no-referrer"
+                  maxHeightClass="max-h-[45vh]"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
                     const fallback = document.getElementById('request-preview-fallback');
@@ -1668,7 +1667,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             </div>
 
             {/* Content Preview Foto */}
-            <div className="flex-1 overflow-hidden rounded-2xl bg-slate-900 flex items-center justify-center relative min-h-[280px] max-h-[60vh] border border-slate-200 p-2">
+            <div className="flex-1 overflow-hidden rounded-2xl bg-slate-900 flex flex-col items-center justify-center relative min-h-[280px] max-h-[60vh] border border-slate-200 p-2">
               {(() => {
                 let fileId = previewActivityPhoto.fileId?.trim() || '';
                 if (!fileId && previewActivityPhoto.url) {
@@ -1687,11 +1686,11 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 if (!displaySrc) return null;
 
                 return (
-                  <img
+                  <ZoomableImage
                     src={displaySrc}
                     alt={previewActivityPhoto.title}
-                    className="max-w-full max-h-[55vh] object-contain rounded-xl"
-                    referrerPolicy="no-referrer"
+                    darkTheme={true}
+                    maxHeightClass="max-h-[50vh]"
                     onError={(e) => {
                       const target = e.target as HTMLElement;
                       target.style.display = 'none';

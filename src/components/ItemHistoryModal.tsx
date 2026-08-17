@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UsageReportItem, ItemReviewHistory, Role } from '../types';
+import { ZoomableImage } from './ZoomableImage';
 import {
   X, History, CheckCircle2, AlertTriangle, Edit3, PlusCircle,
   FileText, Calendar, Coins, User, ArrowLeft, ExternalLink, Clock, MessageSquare, ShieldCheck
@@ -347,13 +348,12 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
             </div>
 
             {/* Document/Image display area */}
-            <div className="flex-1 bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden flex items-center justify-center min-h-[350px] relative p-2">
+            <div className="flex-1 bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden flex flex-col items-center justify-center min-h-[350px] relative p-2">
               {previewDoc.fileId ? (
-                <img
+                <ZoomableImage
                   src={`https://drive.google.com/thumbnail?sz=w1000&id=${previewDoc.fileId}`}
                   alt="Pratinjau Nota"
-                  className="max-w-full max-h-[55vh] rounded-xl object-contain shadow-sm"
-                  referrerPolicy="no-referrer"
+                  maxHeightClass="max-h-[50vh]"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
                     const fallback = document.getElementById('history-preview-fallback');
@@ -361,10 +361,10 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
                   }}
                 />
               ) : previewDoc.url ? (
-                <img
+                <ZoomableImage
                   src={previewDoc.url}
                   alt="Pratinjau Nota"
-                  className="max-w-full max-h-[55vh] rounded-xl object-contain shadow-sm"
+                  maxHeightClass="max-h-[50vh]"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
                     const fallback = document.getElementById('history-preview-fallback');

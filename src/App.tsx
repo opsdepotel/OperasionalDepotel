@@ -43,6 +43,7 @@ import { Header } from './components/Header';
 import { ProfileSetup } from './components/ProfileSetup';
 import { ProfileSettings } from './components/ProfileSettings';
 import { DashboardStats } from './components/DashboardStats';
+import { ZoomableImage } from './components/ZoomableImage';
 import { BudgetRequestForm } from './components/BudgetRequestForm';
 import { UsageReportForm } from './components/UsageReportForm';
 import { ReviewBudgetModal } from './components/ReviewBudgetModal';
@@ -3385,13 +3386,12 @@ export default function App() {
             </div>
 
             {/* Document/Image display area */}
-            <div className="flex-1 bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden flex items-center justify-center min-h-[350px] relative p-1.5">
+            <div className="flex-1 bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden flex flex-col items-center justify-center min-h-[350px] relative p-1.5">
               {previewDocument.fileId ? (
-                <img
+                <ZoomableImage
                   src={`https://drive.google.com/thumbnail?sz=w1000&id=${previewDocument.fileId}`}
                   alt="Pratinjau Dokumen"
-                  className="max-w-full max-h-[55vh] rounded-xl object-contain shadow-sm"
-                  referrerPolicy="no-referrer"
+                  maxHeightClass="max-h-[50vh]"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
                     const fallback = document.getElementById('app-preview-fallback');
@@ -3399,10 +3399,10 @@ export default function App() {
                   }}
                 />
               ) : previewDocument.url ? (
-                <img
+                <ZoomableImage
                   src={previewDocument.url}
                   alt="Pratinjau Dokumen"
-                  className="max-w-full max-h-[55vh] rounded-xl object-contain shadow-sm"
+                  maxHeightClass="max-h-[50vh]"
                   onError={(e) => {
                     e.currentTarget.style.display = 'none';
                     const fallback = document.getElementById('app-preview-fallback');

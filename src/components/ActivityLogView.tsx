@@ -824,36 +824,93 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     });
 
   const parseActivityTime = (act: UserActivity): number => {
-    if (act.createdAt) {
-      const parsedIso = Date.parse(act.createdAt);
+    const candidates = [act.timestamp, act.createdAt].filter(
+      (s): s is string => !!s && typeof s === 'string' && s.trim().length > 0
+    );
+
+    for (const rawStr of candidates) {
+      const s = rawStr.trim();
+
+      // 1. If raw Unix timestamp number/string
+      if (/^\d{10,13}$/.test(s)) {
+        const num = Number(s);
+        if (!isNaN(num)) return num > 1e11 ? num : num * 1000;
+      }
+
+      // 2. Standardize time delimiters from dot to colon if present (e.g. 07.31.33 or 07.31)
+      const normalized = s.replace(/([T, ]\d{1,2})\.(\d{2})(?:\.(\d{2}))?/, (_, p1, p2, p3) => {
+        return p3 ? `${p1}:${p2}:${p3}` : `${p1}:${p2}`;
+      });
+
+      // Try native Date.parse on normalized string
+      const parsedIso = Date.parse(normalized);
       if (!isNaN(parsedIso)) return parsedIso;
 
-      const parts = act.createdAt.split(/[, ]+/);
-      if (parts.length >= 2) {
+      // 3. Fallback manual parsing for various formats
+      const parts = normalized.split(/[, ]+/);
+      if (parts.length >= 1) {
         const datePart = parts[0];
-        const timePart = parts[1];
-        const dParts = datePart.split('/');
-        if (dParts.length === 3) {
-          const day = parseInt(dParts[0], 10);
-          const month = parseInt(dParts[1], 10) - 1;
-          const year = parseInt(dParts[2], 10);
-          const tParts = timePart.split(':');
-          const hh = parseInt(tParts[0] || '0', 10);
-          const mm = parseInt(tParts[1] || '0', 10);
-          const ss = parseInt(tParts[2] || '0', 10);
+        const timePart = parts[1] || '00:00:00';
+
+        let day = 0, month = 0, year = 0;
+
+        if (datePart.includes('/')) {
+          const dParts = datePart.split('/');
+          if (dParts.length === 3) {
+            day = parseInt(dParts[0], 10);
+            month = parseInt(dParts[1], 10) - 1;
+            year = parseInt(dParts[2], 10);
+          }
+        } else if (datePart.includes('-')) {
+          const dParts = datePart.split('-');
+          if (dParts.length === 3) {
+            if (dParts[0].length === 4) {
+              year = parseInt(dParts[0], 10);
+              month = parseInt(dParts[1], 10) - 1;
+              day = parseInt(dParts[2], 10);
+            } else {
+              day = parseInt(dParts[0], 10);
+              month = parseInt(dParts[1], 10) - 1;
+              year = parseInt(dParts[2], 10);
+            }
+          }
+        }
+
+        const tParts = timePart.replace(/\./g, ':').split(':');
+        const hh = parseInt(tParts[0] || '0', 10);
+        const mm = parseInt(tParts[1] || '0', 10);
+        const ss = parseInt(tParts[2] || '0', 10);
+
+        if (year > 0 && day > 0 && !isNaN(month)) {
           const t = new Date(year, month, day, hh, mm, ss).getTime();
           if (!isNaN(t)) return t;
         }
       }
     }
-    if (act.timestamp) {
-      const parsedIso = Date.parse(act.timestamp);
-      if (!isNaN(parsedIso)) return parsedIso;
-    }
+
+    // Fallback using act.tanggal + time from act.createdAt/timestamp if available
     if (act.tanggal) {
-      const parsedIso = Date.parse(act.tanggal);
-      if (!isNaN(parsedIso)) return parsedIso;
+      const dateStr = act.tanggal.trim();
+      let hh = 0, mm = 0, ss = 0;
+
+      const timeSource = act.createdAt || act.timestamp || '';
+      const timeMatch = timeSource.match(/(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?/);
+      if (timeMatch) {
+        hh = parseInt(timeMatch[1], 10);
+        mm = parseInt(timeMatch[2], 10);
+        ss = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+      }
+
+      const dParts = dateStr.split('-');
+      if (dParts.length === 3 && dParts[0].length === 4) {
+        const year = parseInt(dParts[0], 10);
+        const month = parseInt(dParts[1], 10) - 1;
+        const day = parseInt(dParts[2], 10);
+        const t = new Date(year, month, day, hh, mm, ss).getTime();
+        if (!isNaN(t)) return t;
+      }
     }
+
     return 0;
   };
 

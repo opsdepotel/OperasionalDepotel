@@ -7,6 +7,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { UserProfile, BudgetRequest, UsageReportItem, UserActivity, ItemReviewHistory, Role, RequestStatus, ItemStatus } from '../types';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { DashboardStats } from './DashboardStats';
+import { ZoomableImage } from './ZoomableImage';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 import { X, Search, User, Smartphone, Fuel, Eye, LayoutDashboard, Filter, UserCheck, FileText, CheckCircle2, AlertTriangle, Clock, MapPin, Camera, ExternalLink, ShieldCheck, Lock, History, Coins, ArrowLeft, Image as ImageIcon } from 'lucide-react';
 
@@ -832,12 +833,11 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="max-h-[70vh] overflow-auto flex items-center justify-center bg-slate-100 rounded-2xl p-2">
-                <img
+              <div className="max-h-[70vh] overflow-hidden flex flex-col items-center justify-center bg-slate-100 rounded-2xl p-2">
+                <ZoomableImage
                   src={previewPhoto.url}
                   alt="Bukti Nota"
-                  className="max-h-[60vh] max-w-full object-contain rounded-xl"
-                  referrerPolicy="no-referrer"
+                  maxHeightClass="max-h-[55vh]"
                 />
               </div>
               <div className="flex items-center justify-between pt-1 text-xs">
