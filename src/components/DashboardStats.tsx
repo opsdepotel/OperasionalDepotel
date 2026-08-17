@@ -596,8 +596,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       r.status === RequestStatus.PARTIALLY_APPROVED || 
       r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
     ).length;
+    const notReportedCount = myReqs.filter(r => r.status === RequestStatus.TRANSFERRED).length;
     const reportingCount = myReqs.filter(r => 
-      r.status === RequestStatus.TRANSFERRED || 
       r.status === RequestStatus.REPORTING ||
       r.status === RequestStatus.REVIEW_MANAGER ||
       r.status === RequestStatus.REVIEW_ADMIN
@@ -673,6 +673,22 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
 
           <div 
+            onClick={() => handleCardClick('TRANSFERRED')}
+            className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-cyan-300 hover:shadow-md ${
+              activeFilter === 'TRANSFERRED' ? 'border-cyan-500 bg-cyan-50/20 ring-2 ring-cyan-500/20' : 'bg-white border-slate-200'
+            }`}
+          >
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">BELUM DILAPORKAN</p>
+              <div className="flex items-end justify-between mt-2">
+                <span className="text-3xl font-display font-bold text-slate-900">{notReportedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                <span className="text-[9px] font-bold text-cyan-700 bg-cyan-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-cyan-200/60">Siap Lapor</span>
+              </div>
+            </div>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium">Telah ditransfer, belum ada laporan</p>
+          </div>
+
+          <div 
             onClick={() => handleCardClick('REPORTING')}
             className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'REPORTING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -698,7 +714,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <span>{rejectedItemsInReportingCount} item review perlu perbaikan</span>
               </p>
             ) : (
-              <p className="text-[9px] text-slate-400 mt-2 font-medium">Proses Laporan Operasional</p>
+              <p className="text-[9px] text-slate-400 mt-2 font-medium">Sedang dalam proses laporan / review</p>
             )}
           </div>
 
@@ -720,7 +736,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
           <div 
             onClick={() => handleCardClick('REJECTED')}
-            className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-rose-300 hover:shadow-md col-span-2 sm:col-span-1 ${
+            className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-rose-300 hover:shadow-md ${
               activeFilter === 'REJECTED' ? 'border-rose-500 bg-rose-50/20 ring-2 ring-rose-500/20' : 'bg-white border-slate-200'
             }`}
           >

@@ -1831,16 +1831,11 @@ export default function App() {
             r.status !== RequestStatus.PARTIALLY_APPROVED && 
             r.status !== RequestStatus.PENDING_TALANGAN_TRANSFER) return false;
       } else if (statusFilter === 'TRANSFERRED') {
-        if (activeRole === Role.MANAGER) {
-          if (r.status !== RequestStatus.TRANSFERRED && r.status !== RequestStatus.REPORTING) return false;
-        } else {
-          if (r.status !== RequestStatus.TRANSFERRED) return false;
-        }
+        if (r.status !== RequestStatus.TRANSFERRED) return false;
       } else if (statusFilter === 'REPORTING') {
-        // For USER or SUBMISSION tab, "Proses Laporan" displays all reporting requests
+        // For USER or SUBMISSION tab, "Proses Laporan" displays requests currently in reporting / review process
         if (activeRole === Role.USER || dashboardTab === 'SUBMISSION') {
-          if (r.status !== RequestStatus.TRANSFERRED &&
-              r.status !== RequestStatus.REPORTING &&
+          if (r.status !== RequestStatus.REPORTING &&
               r.status !== RequestStatus.REVIEW_MANAGER &&
               r.status !== RequestStatus.REVIEW_ADMIN) return false;
         } else if (activeRole === Role.MANAGER) {
@@ -2654,6 +2649,7 @@ export default function App() {
                         Daftar Pengajuan: <span className="text-indigo-600 font-bold">
                           {statusFilter === 'DIREKTUR_APPROVAL' ? 'Alur Persetujuan Direktur (Tinjau Anggaran)' :
                            statusFilter === 'DIREKTUR_RECONCILIATION' ? 'Alur Rekonsiliasi Direktur (Review Penggunaan Anggaran)' :
+                           statusFilter === 'TRANSFERRED' ? 'Belum Dilaporkan (Telah Ditransfer)' :
                            statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Pengisian & Review Laporan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.MANAGER ? 'Review Penggunaan Anggaran (Termasuk Dana Talangan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.FINANCE ? 'Review Finansial' :
