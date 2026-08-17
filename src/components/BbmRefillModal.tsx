@@ -243,7 +243,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[60] flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 my-8 animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 my-auto animate-in fade-in zoom-in-95 duration-150">
         
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100">

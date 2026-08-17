@@ -1547,11 +1547,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       {/* Pop Up Photo Modal */}
       {selectedPhotoUrl && (
         <div 
-          className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[999] flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+          className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[999] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in"
           onClick={resetPhotoModal}
         >
           <div 
-            className="relative max-w-2xl w-full bg-slate-900 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] border border-slate-800 animate-scale-up"
+            className="relative max-w-2xl w-full bg-slate-900 rounded-3xl overflow-hidden shadow-2xl flex flex-col max-h-[92vh] border border-slate-800 animate-scale-up my-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}

@@ -606,8 +606,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 
       {/* POPUP MODAL: WARNING JIKA ITEM DANA TALANGAN BELUM DITAMBAHKAN */}
       {showItemPromptModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl border border-slate-100 p-6 flex flex-col items-center text-center animate-scale-up space-y-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white w-full max-w-sm rounded-3xl shadow-2xl border border-slate-100 p-6 flex flex-col items-center text-center animate-scale-up space-y-4 my-auto">
             <div className="w-14 h-14 rounded-2xl bg-amber-100 border border-amber-200 text-amber-600 flex items-center justify-center">
               <AlertTriangle className="w-7 h-7" />
             </div>

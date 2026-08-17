@@ -2535,8 +2535,8 @@ export default function App() {
                   const selisih = approvedUsage - totalTransfer;
 
                   return (
-                    <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in">
-                      <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up">
+                    <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
+                      <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up my-auto">
                         <div className="flex items-center gap-3">
                           <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">
                             <ShieldCheck className="w-6 h-6" />
@@ -2598,8 +2598,8 @@ export default function App() {
                 })()}
 
                 {cancelConfirmReq && (
-                  <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in">
-                    <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up">
+                  <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
+                    <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up my-auto">
                       <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600">
                         <XCircle className="w-6 h-6" />
                       </div>
@@ -3364,8 +3364,8 @@ export default function App() {
 
       {/* Document/Photo Preview Popup Modal */}
       {previewDocument && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
@@ -3500,11 +3500,11 @@ export default function App() {
       {/* Modal Popup Preview Logo DIOMS */}
       {isDiomsLogoModalOpen && (
         <div 
-          className="fixed inset-0 z-50 bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-4 animate-in fade-in duration-200"
+          className="fixed inset-0 z-50 bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200"
           onClick={() => setIsDiomsLogoModalOpen(false)}
         >
           <div 
-            className="relative bg-white rounded-2xl p-4 md:p-6 max-w-3xl w-full max-h-[90vh] flex flex-col items-center justify-center shadow-2xl overflow-hidden"
+            className="relative bg-white rounded-2xl p-4 md:p-6 max-w-3xl w-full max-h-[90vh] flex flex-col items-center justify-center shadow-2xl overflow-hidden my-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <button

@@ -760,8 +760,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
 
       {/* Modal Popup Foto Aktivitas User */}
       {previewActivityPhoto && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[999] flex items-center justify-center p-4 animate-fade-in">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[999] flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
@@ -857,8 +857,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         });
 
         return (
-          <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] z-[70] flex items-center justify-center p-4 animate-fade-in">
-            <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4">
+          <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] z-[70] flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+            <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4 my-auto">
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2.5">

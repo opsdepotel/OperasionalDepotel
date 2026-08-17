@@ -709,11 +709,11 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
       {/* Expanded Image Viewer Modal */}
       {selectedPhotoUrl && (
         <div 
-          className="fixed inset-0 z-[100] bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-4 animate-fade-in"
+          className="fixed inset-0 z-[100] bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-4 overflow-y-auto animate-fade-in"
           onClick={() => setSelectedPhotoUrl(null)}
         >
           <div 
-            className="relative bg-slate-900 rounded-2xl max-w-2xl max-h-[85vh] overflow-hidden p-2 shadow-2xl border border-slate-800"
+            className="relative bg-slate-900 rounded-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden p-2 shadow-2xl border border-slate-800 my-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-2 pb-3 border-b border-slate-800">
@@ -741,11 +741,11 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
       {/* User Activity List Popup Modal */}
       {selectedUserActivityModal && (
         <div 
-          className="fixed inset-0 z-70 bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+          className="fixed inset-0 z-70 bg-slate-900/15 backdrop-blur-[2px] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in"
           onClick={() => setSelectedUserActivityModal(null)}
         >
           <div 
-            className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[85vh] animate-scale-up"
+            className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col max-h-[85vh] animate-scale-up my-auto"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}

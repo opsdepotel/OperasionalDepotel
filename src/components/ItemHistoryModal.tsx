@@ -326,12 +326,12 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
       {/* Internal Nota Preview Popup Modal (Layered on top of ItemHistoryModal) */}
       {previewDoc && createPortal(
         <div
-          className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 animate-fade-in"
+          className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in"
           onClick={(e) => {
             if (e.target === e.currentTarget) setPreviewDoc(null);
           }}
         >
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
+          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>

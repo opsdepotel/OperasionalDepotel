@@ -1239,11 +1239,21 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   // Finance stats
   if (role === Role.FINANCE) {
     // Admin reviews ALL requests and manages ALL transfers
-    const pendingTransfer = requests.filter(r => 
+    const pendingTransferReqs = requests.filter(r => 
       r.status === RequestStatus.APPROVED || 
       r.status === RequestStatus.PARTIALLY_APPROVED || 
       r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-    ).length;
+    );
+    const pendingTransfer = pendingTransferReqs.length;
+    const pendingTransferAmount = pendingTransferReqs.reduce((sum, r) => {
+      if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
+        const reqItems = usageItems.filter(i => i.requestId === r.id && i.statusManager === ItemStatus.APPROVED);
+        const approvedUsage = reqItems.reduce((iSum, item) => iSum + (item.nominal || 0), 0);
+        return sum + (approvedUsage || r.managerActionAmount || r.jumlahPengajuan || 0);
+      }
+      const amt = r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0);
+      return sum + amt;
+    }, 0);
     const pendingAdminReportReview = requests.filter(r => {
       if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
       const reqItems = usageItems.filter(i => i.requestId === r.id);
@@ -1475,7 +1485,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           >
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">BELUM DITRANSFER</p>
             <div className="flex items-end justify-between mt-2">
-              <span className="text-3xl font-display font-bold text-slate-900">{pendingTransfer} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <div>
+                <span className="text-3xl font-display font-bold text-slate-900">{pendingTransfer} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+                <p className="text-xs font-bold text-amber-700 mt-1">{formatIDR(pendingTransferAmount)}</p>
+              </div>
               <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Pencairan</span>
             </div>
           </div>

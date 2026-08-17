@@ -821,8 +821,8 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
 
         {/* Preview Photo Modal Overlay */}
         {previewPhoto && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-xs">
-            <div className="bg-white rounded-3xl p-4 max-w-xl w-full space-y-3 shadow-2xl border border-slate-200">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
+            <div className="bg-white rounded-3xl p-4 max-w-xl w-full space-y-3 shadow-2xl border border-slate-200 my-auto">
               <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                 <h4 className="text-xs font-bold text-slate-800 truncate">{previewPhoto.title}</h4>
                 <button
