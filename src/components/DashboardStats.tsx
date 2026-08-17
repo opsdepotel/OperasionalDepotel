@@ -1166,7 +1166,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                     <span className="text-3xl font-display font-bold text-slate-900">{teamUnderReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
                     <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Review Laporan</span>
                   </div>
-                  <p className="text-[9px] text-slate-400 mt-2 font-medium">Berisi UID yang telah ditransfer Admin dan dilaporkan penggunannya oleh User (termasuk Laporan Dana Talangan User)</p>
+                  <p className="text-[9px] text-slate-400 mt-2 font-medium">Berisi UID yang telah ditransfer Finance dan dilaporkan penggunannya oleh User (termasuk Laporan Dana Talangan User)</p>
                 </div>
               </div>
             </div>
