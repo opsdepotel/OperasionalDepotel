@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
@@ -130,6 +130,57 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [isPhotoLoading, setIsPhotoLoading] = useState(false);
   const [photoError, setPhotoError] = useState(false);
   const [fallbackAttempted, setFallbackAttempted] = useState(false);
+  const [zoomScale, setZoomScale] = useState<number>(1);
+  const [panOffset, setPanOffset] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const handleResetZoomPan = () => {
+    setZoomScale(1);
+    setPanOffset({ x: 0, y: 0 });
+    setIsDragging(false);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (zoomScale <= 1) return;
+    e.preventDefault();
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || zoomScale <= 1) return;
+    e.preventDefault();
+    setPanOffset({
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (zoomScale <= 1 || e.touches.length !== 1) return;
+    setIsDragging(true);
+    setDragStart({
+      x: e.touches[0].clientX - panOffset.x,
+      y: e.touches[0].clientY - panOffset.y
+    });
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isDragging || zoomScale <= 1 || e.touches.length !== 1) return;
+    setPanOffset({
+      x: e.touches[0].clientX - dragStart.x,
+      y: e.touches[0].clientY - dragStart.y
+    });
+  };
+
+  const handleTouchEnd = () => {
+    setIsDragging(false);
+  };
 
   // AI Screen Recapture State
   const [aiRecaptureResults, setAiRecaptureResults] = useState<Record<string, AiRecaptureResult>>({});
@@ -249,6 +300,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     setIsPhotoLoading(false);
     setPhotoError(false);
     setFallbackAttempted(false);
+    handleResetZoomPan();
   };
 
   useBackHandler(showAddForm, () => setShowAddForm(false), 'activity_addForm');
@@ -1446,8 +1498,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-950">
-              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between gap-2.5 bg-slate-950">
+              <div className="flex items-center gap-2.5 min-w-0 pr-1">
                 <div className="w-8 h-8 rounded-xl bg-indigo-950/80 border border-indigo-800/50 flex items-center justify-center shrink-0">
                   <Camera className="w-4 h-4 text-indigo-400" />
                 </div>
@@ -1456,6 +1508,56 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                   <p className="text-xs font-bold text-white truncate mt-0.5">{selectedPhotoTitle || 'Foto Lapangan'}</p>
                 </div>
               </div>
+
+              {/* Zoom Controls */}
+              {!photoError && (
+                <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setZoomScale(prev => {
+                      const next = Math.max(0.5, Math.round((prev - 0.25) * 100) / 100);
+                      if (next <= 1) setPanOffset({ x: 0, y: 0 });
+                      return next;
+                    })}
+                    disabled={zoomScale <= 0.5}
+                    className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded-lg transition-all cursor-pointer"
+                    title="Kecilkan (Zoom Out)"
+                  >
+                    <ZoomOut className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResetZoomPan}
+                    className="px-2 py-1 text-[11px] font-bold text-indigo-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all cursor-pointer min-w-[46px] text-center"
+                    title="Reset Ukuran (100%)"
+                  >
+                    {Math.round(zoomScale * 100)}%
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setZoomScale(prev => Math.min(3.5, Math.round((prev + 0.25) * 100) / 100))}
+                    disabled={zoomScale >= 3.5}
+                    className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded-lg transition-all cursor-pointer"
+                    title="Perbesar (Zoom In)"
+                  >
+                    <ZoomIn className="w-4 h-4" />
+                  </button>
+
+                  {(zoomScale !== 1 || panOffset.x !== 0 || panOffset.y !== 0) && (
+                    <button
+                      type="button"
+                      onClick={handleResetZoomPan}
+                      className="p-1.5 text-amber-400 hover:text-amber-300 hover:bg-slate-800 rounded-lg transition-all cursor-pointer"
+                      title="Reset Zoom & Posisi Foto"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
+
               <button 
                 onClick={resetPhotoModal}
                 className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-xl transition-all cursor-pointer shrink-0"
@@ -1466,7 +1568,16 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             </div>
 
             {/* Main Image Container */}
-            <div className="bg-slate-950 flex flex-col items-center justify-center p-3 sm:p-4 relative min-h-[300px] max-h-[70vh] overflow-auto">
+            <div 
+              className="bg-slate-950 flex flex-col items-center justify-center p-3 sm:p-4 relative min-h-[300px] max-h-[70vh] overflow-hidden select-none touch-none"
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
+            >
               {isPhotoLoading && !photoError && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 z-20 gap-2.5">
                   <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
@@ -1475,22 +1586,40 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               )}
 
               {!photoError ? (
-                <img 
-                  src={selectedPhotoUrl} 
-                  alt="Bukti Foto Lapangan" 
-                  className={`max-w-full max-h-[65vh] w-auto h-auto object-contain rounded-2xl shadow-lg transition-opacity duration-300 ${isPhotoLoading ? 'opacity-0' : 'opacity-100'}`}
-                  referrerPolicy="no-referrer"
-                  onLoad={() => setIsPhotoLoading(false)}
-                  onError={() => {
-                    setIsPhotoLoading(false);
-                    if (selectedPhotoFileId && !fallbackAttempted) {
-                      setFallbackAttempted(true);
-                      setSelectedPhotoUrl(`https://lh3.googleusercontent.com/d/${selectedPhotoFileId}`);
-                    } else {
-                      setPhotoError(true);
-                    }
-                  }}
-                />
+                <div className="w-full flex justify-center items-center overflow-visible p-2 min-h-[250px] relative">
+                  <img 
+                    src={selectedPhotoUrl || ''} 
+                    alt="Bukti Foto Lapangan"
+                    title={zoomScale > 1 ? "Klik & geser untuk menggeser foto sampai batas tepi. Klik ganda untuk reset." : "Klik ganda (2x) untuk Zoom In / Out"}
+                    onDragStart={(e) => e.preventDefault()}
+                    style={{
+                      transform: `translate3d(${panOffset.x}px, ${panOffset.y}px, 0) scale(${zoomScale})`,
+                      transformOrigin: 'center center',
+                      transition: isDragging ? 'none' : 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)'
+                    }}
+                    onDoubleClick={() => {
+                      if (zoomScale === 1) {
+                        setZoomScale(2);
+                      } else {
+                        handleResetZoomPan();
+                      }
+                    }}
+                    className={`max-w-full max-h-[65vh] w-auto h-auto object-contain rounded-2xl shadow-lg transition-opacity duration-300 ${
+                      zoomScale > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'
+                    } ${isPhotoLoading ? 'opacity-0' : 'opacity-100'}`}
+                    referrerPolicy="no-referrer"
+                    onLoad={() => setIsPhotoLoading(false)}
+                    onError={() => {
+                      setIsPhotoLoading(false);
+                      if (selectedPhotoFileId && !fallbackAttempted) {
+                        setFallbackAttempted(true);
+                        setSelectedPhotoUrl(`https://lh3.googleusercontent.com/d/${selectedPhotoFileId}`);
+                      } else {
+                        setPhotoError(true);
+                      }
+                    }}
+                  />
+                </div>
               ) : (
                 <div className="flex flex-col items-center justify-center text-center p-6 space-y-3 bg-slate-900/60 rounded-2xl border border-slate-800 my-auto">
                   <AlertCircle className="w-12 h-12 text-amber-400 shrink-0" />
@@ -1518,10 +1647,6 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             {/* Footer */}
             <div className="p-3.5 bg-slate-950 flex items-center justify-between border-t border-slate-800 gap-2 flex-wrap">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 font-medium truncate hidden sm:inline">
-                  {selectedPhotoFileId ? `Drive ID: ${selectedPhotoFileId}` : 'Dokumen Foto Terverifikasi'}
-                </span>
-
                 {/* Administrator AI Screen Recapture Trigger Button from Photo Modal */}
                 {currentRole === Role.ADMINISTRATOR && selectedPhotoActivity && (
                   <button
