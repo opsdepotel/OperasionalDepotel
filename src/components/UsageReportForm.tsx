@@ -256,7 +256,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   };
 
   // Modal & Preview States
-  const [isFormOpen, setIsFormOpen] = useState(() => role === Role.USER && currentItems.length === 0);
+  const [isFormOpen, setIsFormOpen] = useState(() => [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && currentItems.length === 0);
   const [showCameraStream, setShowCameraStream] = useState(false);
   const [previewItem, setPreviewItem] = useState<UsageReportItem | null>(null);
   const [previewRequestProof, setPreviewRequestProof] = useState(false);
@@ -728,8 +728,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                   </div>
 
-                  {/* Status Review Breakdown (Manager & Finance) - For User view OR when request is CLOSED */}
-                  {(role === Role.USER || request.status === RequestStatus.CLOSED) && (
+                  {/* Status Review Breakdown (Manager & Finance) */}
+                  {(role === Role.USER || request.status === RequestStatus.CLOSED || [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.PENDING_APPROVAL].includes(request.status)) && (
                     <div className="bg-slate-50/80 rounded-xl p-2 border border-slate-100 mt-2">
                       <div className="grid grid-cols-2 gap-2 text-[10px]">
                         {/* Status Review Manager */}
@@ -939,8 +939,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       </button>
                     </div>
 
-                     {/* Show delete or edit options ONLY for Role.USER, and only if the item has not been approved by either Manager or Admin (isLocked) */}
-                    {role === Role.USER && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+                     {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) */}
+                    {!isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
                       <div className="flex items-center gap-2">
                         {isRejected && (
                           <button
@@ -979,8 +979,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         )}
       </div>
 
-      {/* Trigger Button to Open Input Form Modal ONLY for Role.USER */}
-      {role === Role.USER && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+      {/* Trigger Button to Open Input Form Modal */}
+      {[RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
         !hasRejectedItems ? (
           <button
             onClick={() => {

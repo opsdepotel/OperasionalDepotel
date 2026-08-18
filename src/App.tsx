@@ -1839,10 +1839,10 @@ export default function App() {
               r.status !== RequestStatus.REVIEW_MANAGER &&
               r.status !== RequestStatus.REVIEW_ADMIN) return false;
         } else if (activeRole === Role.MANAGER) {
-          if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
-          const reqItems = usageItems.filter(i => i.requestId === r.id);
-          if (reqItems.length === 0) return false;
-          if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING)) return false;
+          if (r.status !== RequestStatus.REPORTING &&
+              r.status !== RequestStatus.REVIEW_MANAGER &&
+              r.status !== RequestStatus.REVIEW_ADMIN &&
+              !(r.status === RequestStatus.TRANSFERRED && usageItems.some(i => i.requestId === r.id))) return false;
         } else if (activeRole === Role.FINANCE) {
           if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
@@ -2650,8 +2650,7 @@ export default function App() {
                           {statusFilter === 'DIREKTUR_APPROVAL' ? 'Alur Persetujuan Direktur (Tinjau Anggaran)' :
                            statusFilter === 'DIREKTUR_RECONCILIATION' ? 'Alur Rekonsiliasi Direktur (Review Penggunaan Anggaran)' :
                            statusFilter === 'TRANSFERRED' ? 'Belum Dilaporkan (Telah Ditransfer)' :
-                           statusFilter === 'REPORTING' && activeRole === Role.USER ? 'Proses Laporan (Pengisian & Review Laporan)' :
-                           statusFilter === 'REPORTING' && activeRole === Role.MANAGER ? 'Review Penggunaan Anggaran (Termasuk Dana Talangan)' :
+                           statusFilter === 'REPORTING' && (activeRole === Role.USER || activeRole === Role.MANAGER) ? 'Proses Laporan (Pengisian & Review Laporan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.FINANCE ? 'Review Finansial' :
                            statusFilter === 'REPORTING' && activeRole === Role.DIREKTUR ? 'Proses Laporan Operasional' :
                            statusFilter === 'CLOSED' ? 'Arsip / UID Selesai (Closed)' :
@@ -3218,17 +3217,20 @@ export default function App() {
                                         </div>
                                       )}
 
-                                      {([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED].includes(req.status) && usageItems.some(i => i.requestId === req.id)) && (
+                                      {([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED].includes(req.status)) && (
                                         <button
                                           type="button"
-                                          onClick={() => setReviewReportReq(req)}
+                                          onClick={() => {
+                                            setSelectedRequest(req);
+                                            setActiveView('report-usage');
+                                          }}
                                           className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
                                         >
-                                          {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? 'Tinjau Item Talangan' : 'Tinjau Laporan Nota'}
+                                          Lihat Laporan
                                         </button>
                                       )}
 
-                                      {req.status !== RequestStatus.PENDING_APPROVAL && !([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED].includes(req.status) && usageItems.some(i => i.requestId === req.id)) && (
+                                      {req.status !== RequestStatus.PENDING_APPROVAL && ![RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED].includes(req.status) && (
                                         <button
                                           type="button"
                                           onClick={() => {
