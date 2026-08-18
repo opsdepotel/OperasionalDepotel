@@ -1820,10 +1820,10 @@ export default function App() {
       if (statusFilter === 'DIREKTUR_APPROVAL') {
         if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
       } else if (statusFilter === 'DIREKTUR_RECONCILIATION') {
-        if (![RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
+        if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER].includes(r.status)) return false;
         const reqItems = usageItems.filter(i => i.requestId === r.id);
         if (reqItems.length === 0) return false;
-        if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING || i.statusAdmin === ItemStatus.PENDING)) return false;
+        if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING)) return false;
       } else if (statusFilter === 'PENDING') {
         if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
       } else if (statusFilter === 'APPROVED') {
@@ -1847,6 +1847,7 @@ export default function App() {
           if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
           if (reqItems.length === 0) return false;
+          if (reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED)) return false;
           const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
           if (!managerApproved) return false;
         } else if (activeRole === Role.DIREKTUR) {
@@ -3224,13 +3225,33 @@ export default function App() {
                                             setSelectedRequest(req);
                                             setActiveView('report-usage');
                                           }}
-                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                          className={`px-3 py-1.5 font-bold rounded-xl transition-all cursor-pointer shadow-sm ${
+                                            hasRejectedItems
+                                              ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-200'
+                                              : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                          }`}
                                         >
-                                          Lihat Laporan
+                                          {hasRejectedItems ? 'Perbaiki Laporan' : 'Lihat Laporan'}
                                         </button>
                                       )}
 
-                                      {req.status !== RequestStatus.PENDING_APPROVAL && ![RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED].includes(req.status) && (
+                                      {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setExpandedReportReqIds(prev => ({
+                                              ...prev,
+                                              [req.id]: !prev[req.id]
+                                            }));
+                                          }}
+                                          className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                                        >
+                                          <ClipboardList className="w-3.5 h-3.5 text-indigo-500" />
+                                          <span>{expandedReportReqIds[req.id] ? 'Sembunyikan Item Laporan' : 'Lihat Item Laporan'}</span>
+                                        </button>
+                                      )}
+
+                                      {req.status === RequestStatus.CLOSED && (
                                         <button
                                           type="button"
                                           onClick={() => {
@@ -3322,7 +3343,7 @@ export default function App() {
                                         </button>
                                       )}
 
-                                      {req.status !== RequestStatus.APPROVED && req.status !== RequestStatus.PARTIALLY_APPROVED && req.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && req.status !== RequestStatus.REVIEW_ADMIN && req.status !== RequestStatus.REPORTING && (
+                                      {req.status === RequestStatus.CLOSED && (
                                         <button
                                           onClick={() => {
                                             setSelectedRequest(req);

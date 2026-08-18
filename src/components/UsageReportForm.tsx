@@ -813,8 +813,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                   )}
 
-                  {/* Decision Buttons for Manager and Finance (When NOT CLOSED) */}
-                  {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.CLOSED && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                  {/* Decision Buttons for Manager and Finance (When NOT CLOSED and NOT self-proposal for Manager) */}
+                  {((role === Role.MANAGER && !isRequesterManagerOrFinance) || role === Role.FINANCE) && request.status !== RequestStatus.CLOSED && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 space-y-2 mt-2">
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">
                         Review Keputusan ({role === Role.MANAGER ? (isRequesterManagerOrFinance ? 'Direktur' : 'Manager') : 'Finance'})

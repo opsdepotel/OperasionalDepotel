@@ -697,11 +697,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <div>
               <div className="flex items-center justify-between">
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PROSES LAPORAN</p>
-                {rejectedItemsInReportingCount > 0 && (
-                  <span className="text-[9px] font-extrabold text-rose-600 bg-rose-100 border border-rose-200 px-2 py-0.5 rounded-full animate-pulse">
-                    {rejectedItemsInReportingCount} Perlu Perbaikan
-                  </span>
-                )}
               </div>
               <div className="flex items-end justify-between mt-2">
                 <span className="text-3xl font-display font-bold text-slate-900">{reportingCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
@@ -1258,6 +1253,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
       const reqItems = usageItems.filter(i => i.requestId === r.id);
       if (reqItems.length === 0) return false;
+      if (reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED)) return false;
       const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
       return managerApproved;
     }).length;
@@ -2521,10 +2517,10 @@ User Agent: ${navigator.userAgent}`;
       r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
     ).length;
     const pendingReportReview = direkturDirectReqs.filter(r => {
-      if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
+      if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER].includes(r.status)) return false;
       const reqItems = usageItems.filter(item => item.requestId === r.id);
       if (reqItems.length === 0) return false;
-      return reqItems.some(i => i.statusManager === ItemStatus.PENDING || i.statusAdmin === ItemStatus.PENDING);
+      return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
     }).length;
     const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
 
