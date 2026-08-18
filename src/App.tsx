@@ -198,7 +198,37 @@ export default function App() {
   // Search/Filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [dashboardTab, setDashboardTab] = useState<'APPROVAL' | 'SUBMISSION'>('APPROVAL');
+  const [dashboardTab, setDashboardTab] = useState<'APPROVAL' | 'SUBMISSION'>(() => {
+    try {
+      const saved = localStorage.getItem('applet_last_dashboard_tab');
+      if (saved === 'APPROVAL' || saved === 'SUBMISSION') return saved;
+    } catch (e) {
+      // ignore
+    }
+    return 'APPROVAL';
+  });
+
+  // Restore dashboardTab when activeRole changes
+  useEffect(() => {
+    try {
+      const savedForRole = localStorage.getItem(`applet_last_dashboard_tab_${activeRole}`);
+      if (savedForRole === 'APPROVAL' || savedForRole === 'SUBMISSION') {
+        setDashboardTab(savedForRole as 'APPROVAL' | 'SUBMISSION');
+      }
+    } catch (e) {
+      // ignore
+    }
+  }, [activeRole]);
+
+  const handleSelectDashboardTab = (tab: 'APPROVAL' | 'SUBMISSION') => {
+    setDashboardTab(tab);
+    try {
+      localStorage.setItem('applet_last_dashboard_tab', tab);
+      localStorage.setItem(`applet_last_dashboard_tab_${activeRole}`, tab);
+    } catch (e) {
+      // ignore
+    }
+  };
   const [initialIsTalangan, setInitialIsTalangan] = useState(false);
   const [expandedReportReqIds, setExpandedReportReqIds] = useState<Record<string, boolean>>({});
 
@@ -1839,10 +1869,12 @@ export default function App() {
               r.status !== RequestStatus.REVIEW_MANAGER &&
               r.status !== RequestStatus.REVIEW_ADMIN) return false;
         } else if (activeRole === Role.MANAGER) {
-          if (r.status !== RequestStatus.REPORTING &&
-              r.status !== RequestStatus.REVIEW_MANAGER &&
-              r.status !== RequestStatus.REVIEW_ADMIN &&
-              !(r.status === RequestStatus.TRANSFERRED && usageItems.some(i => i.requestId === r.id))) return false;
+          const reqItems = usageItems.filter(i => i.requestId === r.id);
+          if (reqItems.length === 0) return false;
+          const hasRejectedItem = reqItems.some(i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED);
+          if (r.status === RequestStatus.REVIEW_MANAGER) return true;
+          if (r.status === RequestStatus.REPORTING && !hasRejectedItem) return true;
+          return false;
         } else if (activeRole === Role.FINANCE) {
           if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
@@ -2452,7 +2484,7 @@ export default function App() {
                   onOpenBbmListModal={() => setIsBbmListModalOpen(true)}
                   histories={itemReviewHistories}
                   activeTab={dashboardTab}
-                  onSelectTab={setDashboardTab}
+                  onSelectTab={handleSelectDashboardTab}
                 />
               </>
             ) : (
@@ -2651,11 +2683,11 @@ export default function App() {
                           {statusFilter === 'DIREKTUR_APPROVAL' ? 'Alur Persetujuan Direktur (Tinjau Anggaran)' :
                            statusFilter === 'DIREKTUR_RECONCILIATION' ? 'Alur Rekonsiliasi Direktur (Review Penggunaan Anggaran)' :
                            statusFilter === 'TRANSFERRED' ? 'Belum Dilaporkan (Telah Ditransfer)' :
-                           statusFilter === 'REPORTING' && (activeRole === Role.USER || activeRole === Role.MANAGER) ? 'Proses Laporan (Pengisian & Review Laporan)' :
+                           statusFilter === 'REPORTING' && (activeRole === Role.USER || activeRole === Role.MANAGER || (activeRole === Role.FINANCE && dashboardTab === 'SUBMISSION')) ? 'Proses Laporan (Pengisian & Review Laporan)' :
                            statusFilter === 'REPORTING' && activeRole === Role.FINANCE ? 'Review Finansial' :
                            statusFilter === 'REPORTING' && activeRole === Role.DIREKTUR ? 'Proses Laporan Operasional' :
                            statusFilter === 'CLOSED' ? 'Arsip / UID Selesai (Closed)' :
-                           statusFilter === 'REJECTED' && activeRole === Role.FINANCE ? 'Pengajuan Rejected (Revisi Finance)' :
+                           statusFilter === 'REJECTED' && activeRole === Role.FINANCE && dashboardTab !== 'SUBMISSION' ? 'Pengajuan Rejected (Revisi Finance)' :
                            getStatusLabel(statusFilter as RequestStatus, filteredRequests[0]?.userEmail || userProfile?.email) || statusFilter}
                         </span>
                       </h3>
@@ -3040,7 +3072,11 @@ export default function App() {
                                       className="px-2.5 py-1 bg-white hover:bg-amber-100 text-amber-900 font-bold rounded-lg text-[10px] transition-all flex items-center gap-1 cursor-pointer border border-amber-300 shrink-0 shadow-xs"
                                     >
                                       <History className="w-3.5 h-3.5 text-indigo-600" />
-                                      <span>Riwayat ({itemReviewHistories.filter(h => h.requestUid === req.id || h.itemUid === req.id).length})</span>
+                                      <span>Riwayat ({(() => {
+                                        const loggedCount = itemReviewHistories.filter(h => h.requestUid === req.id || h.itemUid === req.id).length;
+                                        if (loggedCount > 0) return loggedCount;
+                                        return req.status === RequestStatus.APPROVED ? 2 : 1;
+                                      })()})</span>
                                     </button>
                                   </div>
                                 </div>
@@ -3111,7 +3147,11 @@ export default function App() {
                                       title="Lihat Riwayat Approval & Revisi Pengajuan"
                                     >
                                       <History className="w-3 h-3 text-indigo-600" />
-                                      <span>Riwayat ({itemReviewHistories.filter(h => h.requestUid === req.id || h.itemUid === req.id).length})</span>
+                                      <span>Riwayat ({(() => {
+                                        const loggedCount = itemReviewHistories.filter(h => h.requestUid === req.id || h.itemUid === req.id).length;
+                                        if (loggedCount > 0) return loggedCount;
+                                        return req.status === RequestStatus.APPROVED ? 2 : 1;
+                                      })()})</span>
                                     </button>
                                   )}
                                 </div>
@@ -3303,17 +3343,24 @@ export default function App() {
 
                                       {/* View Only mode for Ringkasan Eksekutif Direktur cards and all other filters */}
                                       {statusFilter !== 'DIREKTUR_APPROVAL' && statusFilter !== 'DIREKTUR_RECONCILIATION' && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setSelectedRequest(req);
-                                            setActiveView('report-usage');
-                                          }}
-                                          className="px-3 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs shadow-xs"
-                                        >
-                                          <Eye className="w-3.5 h-3.5 text-slate-500" />
-                                          <span>Rincian Laporan</span>
-                                        </button>
+                                        <>
+                                          {/* Do not show Rincian Laporan for OP prefix pending transfer OR status TRANSFERRED (Dana Ditransfer Finance) */}
+                                          {!((statusFilter === 'APPROVED' || req.status === RequestStatus.APPROVED || req.status === RequestStatus.PARTIALLY_APPROVED) && req.id.startsWith('OP') && !req.id.startsWith('OPT-')) &&
+                                           req.status !== RequestStatus.TRANSFERRED &&
+                                           statusFilter !== 'TRANSFERRED' && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedRequest(req);
+                                                setActiveView('report-usage');
+                                              }}
+                                              className="px-3 py-1.5 border border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs shadow-xs"
+                                            >
+                                              <Eye className="w-3.5 h-3.5 text-slate-500" />
+                                              <span>Rincian Laporan</span>
+                                            </button>
+                                          )}
+                                        </>
                                       )}
                                     </>
                                   )}
@@ -3321,38 +3368,114 @@ export default function App() {
                                   {/* FINANCE ACTIONS */}
                                   {activeRole === Role.FINANCE && (
                                     <>
-                                      {(req.status === RequestStatus.APPROVED || 
-                                         req.status === RequestStatus.PARTIALLY_APPROVED ||
-                                         req.status === RequestStatus.PENDING_TALANGAN_TRANSFER) && (
-                                        <button
-                                          onClick={() => setTransferReq(req)}
-                                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
-                                        >
-                                          {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-                                            ? 'Transfer & Closing Talangan'
-                                            : 'Proses Transfer'}
-                                        </button>
-                                      )}
+                                      {dashboardTab === 'SUBMISSION' ? (
+                                        <>
+                                          {([RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status)) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedRequest(req);
+                                                setActiveView('report-usage');
+                                              }}
+                                              className={`px-3 py-1.5 font-bold rounded-xl transition-all cursor-pointer shadow-sm ${
+                                                hasRejectedItems
+                                                  ? 'bg-rose-600 hover:bg-rose-700 text-white shadow-rose-200'
+                                                  : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                              }`}
+                                            >
+                                              {hasRejectedItems ? 'Perbaiki Laporan' : 'Lihat Laporan'}
+                                            </button>
+                                          )}
 
-                                      {(req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REPORTING) && (
-                                        <button
-                                          onClick={() => setReviewReportReq(req)}
-                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
-                                        >
-                                          {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? 'Review Item Talangan' : 'Tinjau Item Laporan'}
-                                        </button>
-                                      )}
+                                          {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setExpandedReportReqIds(prev => ({
+                                                  ...prev,
+                                                  [req.id]: !prev[req.id]
+                                                }));
+                                              }}
+                                              className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                                            >
+                                              <ClipboardList className="w-3.5 h-3.5 text-indigo-500" />
+                                              <span>{expandedReportReqIds[req.id] ? 'Sembunyikan Item Laporan' : 'Lihat Item Laporan'}</span>
+                                            </button>
+                                          )}
 
-                                      {req.status === RequestStatus.CLOSED && (
-                                        <button
-                                          onClick={() => {
-                                            setSelectedRequest(req);
-                                            setActiveView('report-usage');
-                                          }}
-                                          className="px-3 py-1.5 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold rounded-xl transition-all cursor-pointer"
-                                        >
-                                          Rincian Laporan
-                                        </button>
+                                          {req.status === RequestStatus.CLOSED && (
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedRequest(req);
+                                                setActiveView('report-usage');
+                                              }}
+                                              className="px-3 py-1.5 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold rounded-xl transition-all cursor-pointer"
+                                            >
+                                              Rincian Laporan
+                                            </button>
+                                          )}
+
+                                          {req.status === RequestStatus.REJECTED && (
+                                            <div className="flex items-center gap-1.5">
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setEditingRequest(req);
+                                                  setActiveView('new-request');
+                                                }}
+                                                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
+                                              >
+                                                <Edit2 className="w-3.5 h-3.5" />
+                                                <span>Revisi</span>
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => setCancelConfirmReq(req)}
+                                                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                              >
+                                                <XCircle className="w-3.5 h-3.5" />
+                                                <span>Batalkan</span>
+                                              </button>
+                                            </div>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <>
+                                          {(req.status === RequestStatus.APPROVED || 
+                                             req.status === RequestStatus.PARTIALLY_APPROVED ||
+                                             req.status === RequestStatus.PENDING_TALANGAN_TRANSFER) && (
+                                            <button
+                                              onClick={() => setTransferReq(req)}
+                                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                            >
+                                              {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+                                                ? 'Transfer & Closing Talangan'
+                                                : 'Proses Transfer'}
+                                            </button>
+                                          )}
+
+                                          {(req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REPORTING) && (
+                                            <button
+                                              onClick={() => setReviewReportReq(req)}
+                                              className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                            >
+                                              {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? 'Review Item Talangan' : 'Tinjau Item Laporan'}
+                                            </button>
+                                          )}
+
+                                          {req.status === RequestStatus.CLOSED && (
+                                            <button
+                                              onClick={() => {
+                                                setSelectedRequest(req);
+                                                setActiveView('report-usage');
+                                              }}
+                                              className="px-3 py-1.5 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold rounded-xl transition-all cursor-pointer"
+                                            >
+                                              Rincian Laporan
+                                            </button>
+                                          )}
+                                        </>
                                       )}
                                     </>
                                   )}

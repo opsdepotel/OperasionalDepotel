@@ -82,14 +82,31 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [isAutoGpsActive, setIsAutoGpsActive] = useState<boolean>(true);
   const [prevGpsModalPosition, setPrevGpsModalPosition] = useState<GeolocationPosition | null>(null);
 
-  const [direkturGroupTab, setDirekturGroupTab] = useState<'APPROVAL' | 'MONITORING'>('APPROVAL');
+  const [direkturGroupTab, setDirekturGroupTab] = useState<'APPROVAL' | 'MONITORING'>(() => {
+    try {
+      const saved = localStorage.getItem('applet_direktur_dashboard_tab');
+      if (saved === 'APPROVAL' || saved === 'MONITORING') return saved;
+    } catch (e) {
+      // ignore
+    }
+    return 'APPROVAL';
+  });
+
+  const updateDirekturTab = (newTab: 'APPROVAL' | 'MONITORING') => {
+    setDirekturGroupTab(newTab);
+    try {
+      localStorage.setItem('applet_direktur_dashboard_tab', newTab);
+    } catch (e) {
+      // ignore
+    }
+  };
 
   useEffect(() => {
     if (role === Role.DIREKTUR && activeFilter) {
       if (activeFilter === 'DIREKTUR_APPROVAL' || activeFilter === 'DIREKTUR_RECONCILIATION') {
-        setDirekturGroupTab('APPROVAL');
+        updateDirekturTab('APPROVAL');
       } else if (['PENDING', 'APPROVED', 'REPORTING', 'CLOSED'].includes(activeFilter)) {
-        setDirekturGroupTab('MONITORING');
+        updateDirekturTab('MONITORING');
       }
     }
   }, [role, activeFilter]);
@@ -1061,7 +1078,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
     // Request Stats for Manager's Team
     const teamPendingAppr = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
-    const teamUnderReview = pendingReportReview;
+    const teamUnderReview = managerReqs.filter(r => {
+      const reqItems = usageItems.filter(item => item.requestId === r.id);
+      if (reqItems.length === 0) return false;
+      const hasRejectedItem = reqItems.some(i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED);
+      if (r.status === RequestStatus.REVIEW_MANAGER) return true;
+      if (r.status === RequestStatus.REPORTING && !hasRejectedItem) return true;
+      return false;
+    }).length;
 
     return (
       <div className="space-y-4">
@@ -2532,10 +2556,22 @@ User Agent: ${navigator.userAgent}`;
       r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
     ).length;
 
-    // 2. MENUNGGU TRANSFER (Approved by Manager or Bailout Reimbursement pending)
-    const menungguTransferCount = monitoringReqs.filter(r => 
-      r.status === RequestStatus.APPROVED || r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-    ).length;
+    // 2. MENUNGGU TRANSFER (Approved by Manager / Partially Approved or Bailout Reimbursement pending)
+    const pendingTransferReqs = monitoringReqs.filter(r => 
+      r.status === RequestStatus.APPROVED || 
+      r.status === RequestStatus.PARTIALLY_APPROVED || 
+      r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+    );
+    const menungguTransferCount = pendingTransferReqs.length;
+    const menungguTransferNominal = pendingTransferReqs.reduce((sum, r) => {
+      if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
+        const reqItems = usageItems.filter(i => i.requestId === r.id && i.statusManager === ItemStatus.APPROVED);
+        const approvedUsage = reqItems.reduce((iSum, item) => iSum + (item.nominal || 0), 0);
+        return sum + (approvedUsage || r.managerActionAmount || r.jumlahPengajuan || 0);
+      }
+      const amt = r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0);
+      return sum + amt;
+    }, 0);
 
     // 3. PROSES LAPORAN (Transferred, Reporting, Review Manager, Review Admin)
     const prosesLaporanCount = monitoringReqs.filter(r => 
@@ -2563,7 +2599,7 @@ User Agent: ${navigator.userAgent}`;
           <button
             type="button"
             onClick={() => {
-              setDirekturGroupTab('APPROVAL');
+              updateDirekturTab('APPROVAL');
               if (onSelectFilter && (activeFilter === 'DIREKTUR_APPROVAL' || activeFilter === 'DIREKTUR_RECONCILIATION')) {
                 onSelectFilter('ALL');
               }
@@ -2588,7 +2624,7 @@ User Agent: ${navigator.userAgent}`;
           <button
             type="button"
             onClick={() => {
-              setDirekturGroupTab('MONITORING');
+              updateDirekturTab('MONITORING');
               if (onSelectFilter && (activeFilter === 'DIREKTUR_APPROVAL' || activeFilter === 'DIREKTUR_RECONCILIATION')) {
                 onSelectFilter('ALL');
               }
@@ -2731,7 +2767,13 @@ User Agent: ${navigator.userAgent}`;
                   <span className="text-2xl sm:text-3xl font-display font-bold text-slate-900">{menungguTransferCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
                   <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-blue-200/60">Transfer</span>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-2 font-medium">Disetujui, antrean pencairan Finance</p>
+                <div className="mt-2 pt-2 border-t border-slate-100/80 flex items-center justify-between">
+                  <span className="text-[10px] text-slate-400 font-medium">Total Nominal:</span>
+                  <span className="text-xs font-bold text-slate-800 font-mono">
+                    Rp {menungguTransferNominal.toLocaleString('id-ID')}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1 font-medium">Disetujui, antrean pencairan Finance</p>
               </div>
 
               {/* Card 3: PROSES LAPORAN */}

@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { UsageReportItem, ItemReviewHistory, Role } from '../types';
+import { UsageReportItem, ItemReviewHistory, Role, ItemStatus } from '../types';
 import { ZoomableImage } from './ZoomableImage';
 import {
   X, History, CheckCircle2, AlertTriangle, Edit3, PlusCircle,
@@ -65,8 +65,12 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
   };
 
   // Filter histories for this specific item or request and sort by newest timestamp first
-  const itemHistories = histories
-    .filter(h => h.itemUid === item.id || h.requestUid === item.id)
+  const filteredHistories = histories
+    .filter(h => 
+      h.itemUid === item.id || 
+      h.requestUid === item.id || 
+      (item.requestId && (h.requestUid === item.requestId || h.itemUid === item.requestId))
+    )
     .sort((a, b) => {
       const timeA = parseTimestampToMs(a.timestamp);
       const timeB = parseTimestampToMs(b.timestamp);
@@ -83,6 +87,102 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
       maximumFractionDigits: 0
     }).format(num || 0);
   };
+
+  // If no logged history entries exist in Google Sheets / localStorage for this UID, generate fallback history records from item / request fields
+  const itemHistories = React.useMemo(() => {
+    if (filteredHistories.length > 0) return filteredHistories;
+
+    const fallbackList: ItemReviewHistory[] = [];
+
+    // Fallback 1: Manager approval / rejection if present
+    if (item.statusManager === ItemStatus.APPROVED) {
+      fallbackList.push({
+        id: `fb-mgr-${item.id}`,
+        itemUid: item.id,
+        requestUid: item.requestId || item.id,
+        actionType: 'APPROVAL_MANAGER',
+        actorRole: Role.MANAGER,
+        actorEmail: '',
+        actorNama: 'Manager',
+        status: 'DISETUJUI',
+        catatan: item.managerComment || 'Pengajuan disetujui oleh Manager',
+        tanggalPenggunaan: item.tanggalPenggunaan || '',
+        nominal: item.nominal || 0,
+        keterangan: item.keterangan || '',
+        timestamp: item.updatedAt || item.tanggalPenggunaan || new Date().toISOString()
+      });
+    } else if (item.statusManager === ItemStatus.REJECTED) {
+      fallbackList.push({
+        id: `fb-mgr-${item.id}`,
+        itemUid: item.id,
+        requestUid: item.requestId || item.id,
+        actionType: 'REVISI_MANAGER',
+        actorRole: Role.MANAGER,
+        actorEmail: '',
+        actorNama: 'Manager',
+        status: 'REVISI',
+        catatan: item.managerComment || 'Pengajuan diminta revisi/ditolak oleh Manager',
+        tanggalPenggunaan: item.tanggalPenggunaan || '',
+        nominal: item.nominal || 0,
+        keterangan: item.keterangan || '',
+        timestamp: item.updatedAt || item.tanggalPenggunaan || new Date().toISOString()
+      });
+    }
+
+    // Fallback 2: Admin/Finance approval / rejection if present
+    if (item.statusAdmin === ItemStatus.APPROVED) {
+      fallbackList.push({
+        id: `fb-adm-${item.id}`,
+        itemUid: item.id,
+        requestUid: item.requestId || item.id,
+        actionType: 'APPROVAL_FINANCE',
+        actorRole: Role.FINANCE,
+        actorEmail: '',
+        actorNama: 'Finance',
+        status: 'DISETUJUI',
+        catatan: item.adminComment || 'Proses ditindaklanjuti/disetujui oleh Finance',
+        tanggalPenggunaan: item.tanggalPenggunaan || '',
+        nominal: item.nominal || 0,
+        keterangan: item.keterangan || '',
+        timestamp: item.updatedAt || item.tanggalPenggunaan || new Date().toISOString()
+      });
+    } else if (item.statusAdmin === ItemStatus.REJECTED) {
+      fallbackList.push({
+        id: `fb-adm-${item.id}`,
+        itemUid: item.id,
+        requestUid: item.requestId || item.id,
+        actionType: 'REVISI_FINANCE',
+        actorRole: Role.FINANCE,
+        actorEmail: '',
+        actorNama: 'Finance',
+        status: 'REVISI',
+        catatan: item.adminComment || 'Diminta revisi oleh Finance',
+        tanggalPenggunaan: item.tanggalPenggunaan || '',
+        nominal: item.nominal || 0,
+        keterangan: item.keterangan || '',
+        timestamp: item.updatedAt || item.tanggalPenggunaan || new Date().toISOString()
+      });
+    }
+
+    // Fallback 3: Initial Creation
+    fallbackList.push({
+      id: `fb-create-${item.id}`,
+      itemUid: item.id,
+      requestUid: item.requestId || item.id,
+      actionType: 'PENGAJUAN_CREATED',
+      actorRole: Role.USER,
+      actorEmail: '',
+      actorNama: 'User',
+      status: 'SUBMITTED',
+      catatan: `Pengajuan ${item.id} dibuat dengan nominal ${formatIDR(item.nominal)}`,
+      tanggalPenggunaan: item.tanggalPenggunaan || '',
+      nominal: item.nominal || 0,
+      keterangan: item.keterangan || '',
+      timestamp: item.tanggalPenggunaan || item.updatedAt || new Date().toISOString()
+    });
+
+    return fallbackList;
+  }, [filteredHistories, item]);
 
   const getActionBadge = (history: ItemReviewHistory) => {
     switch (history.actionType) {
@@ -162,10 +262,10 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-sm text-white flex items-center gap-2">
-                Riwayat Approval & Revisi Item
+                {item.id === item.requestId || item.id.startsWith('OP') || item.id.startsWith('BBM') ? 'Riwayat Approval & Revisi Pengajuan' : 'Riwayat Approval & Revisi Item'}
               </h3>
               <p className="text-[11px] text-indigo-100 font-mono mt-0.5">
-                ID Item: {item.id} | Request: {item.requestId}
+                {item.id === item.requestId || item.id.startsWith('OP') || item.id.startsWith('BBM') ? `UID Pengajuan: ${item.id}` : `ID Item: ${item.id} | Request: ${item.requestId}`}
               </p>
             </div>
           </div>

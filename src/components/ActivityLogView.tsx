@@ -1336,17 +1336,19 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                   <div key={act.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col" id={`activity-card-${act.id}`}>
                     <div className="p-4 space-y-2.5">
                       {/* User Badge Info Header */}
-                      <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-1">
-                        <div className="flex items-center gap-2">
-                          <User className="w-4 h-4 text-indigo-600 shrink-0" />
-                          <span className="text-sm font-bold text-slate-800">{userName}</span>
-                          {formattedDivisi && formattedDivisi !== '-' && (
-                            <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
-                              {formattedDivisi}
-                            </span>
-                          )}
+                      <div className="flex items-start justify-between border-b border-slate-100 pb-2 mb-1">
+                        <div className="flex items-start gap-2">
+                          <User className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                          <div className="flex flex-col items-start gap-0.5">
+                            <span className="text-sm font-bold text-slate-800">{userName}</span>
+                            {formattedDivisi && formattedDivisi !== '-' && (
+                              <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
+                                {formattedDivisi}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <span className="text-[11px] text-slate-500 font-semibold font-mono tracking-tight shrink-0">
+                        <span className="text-[11px] text-slate-500 font-semibold font-mono tracking-tight shrink-0 pt-0.5">
                           {act.tanggal} {act.createdAt ? (act.createdAt.includes(',') ? act.createdAt.split(',')[1]?.trim() : act.createdAt.includes(' ') ? act.createdAt.split(' ')[1]?.trim() : act.createdAt) : ''}
                         </span>
                       </div>

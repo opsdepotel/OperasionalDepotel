@@ -256,7 +256,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   };
 
   // Modal & Preview States
-  const [isFormOpen, setIsFormOpen] = useState(() => [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && currentItems.length === 0);
+  const [isFormOpen, setIsFormOpen] = useState(() => role !== Role.DIREKTUR && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && currentItems.length === 0);
   const [showCameraStream, setShowCameraStream] = useState(false);
   const [previewItem, setPreviewItem] = useState<UsageReportItem | null>(null);
   const [previewRequestProof, setPreviewRequestProof] = useState(false);
@@ -693,7 +693,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           <div className="bg-white border border-dashed border-slate-200 text-center py-8 px-4 rounded-2xl text-slate-400 text-xs font-medium">
             <FileText className="w-8 h-8 text-slate-300 mx-auto mb-2" />
             <p>Belum ada rincian penggunaan operasional.</p>
-            <p className="text-[10px] text-slate-400 mt-1">Klik tombol di bawah untuk menambahkan rincian penggunaan.</p>
+            {role !== Role.DIREKTUR && <p className="text-[10px] text-slate-400 mt-1">Klik tombol di bawah untuk menambahkan rincian penggunaan.</p>}
           </div>
         ) : (
           <div className="space-y-3">
@@ -729,7 +729,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   </div>
 
                   {/* Status Review Breakdown (Manager & Finance) */}
-                  {(role === Role.USER || request.status === RequestStatus.CLOSED || [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.PENDING_APPROVAL].includes(request.status)) && (
+                  {(role === Role.USER || role === Role.DIREKTUR || request.status === RequestStatus.CLOSED || [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.PENDING_APPROVAL].includes(request.status)) && (
                     <div className="bg-slate-50/80 rounded-xl p-2 border border-slate-100 mt-2">
                       <div className="grid grid-cols-2 gap-2 text-[10px]">
                         {/* Status Review Manager */}
@@ -813,8 +813,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                   )}
 
-                  {/* Decision Buttons for Manager and Finance (When NOT CLOSED and NOT self-proposal for Manager) */}
-                  {((role === Role.MANAGER && !isRequesterManagerOrFinance) || role === Role.FINANCE) && request.status !== RequestStatus.CLOSED && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                  {/* Decision Buttons for Manager and Finance (When NOT CLOSED and NOT self-proposal for Manager/Finance) */}
+                  {((role === Role.MANAGER && !isRequesterManagerOrFinance) || (role === Role.FINANCE && requesterProfile?.role !== Role.FINANCE)) && request.status !== RequestStatus.CLOSED && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && (
                     <div className="bg-slate-50 p-3 rounded-2xl border border-slate-100 space-y-2 mt-2">
                       <span className="block text-[10px] font-bold text-slate-400 uppercase">
                         Review Keputusan ({role === Role.MANAGER ? (isRequesterManagerOrFinance ? 'Direktur' : 'Manager') : 'Finance'})
@@ -899,7 +899,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         <ExternalLink className="w-3.5 h-3.5" />
                       </button>
 
-                      {(role === Role.MANAGER || role === Role.FINANCE) && (
+                      {(role === Role.MANAGER || role === Role.FINANCE || role === Role.DIREKTUR) && (
                         <button
                           type="button"
                           onClick={() => setViewingActivityItem({ item, date: item.tanggalPenggunaan })}
@@ -911,7 +911,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         </button>
                       )}
 
-                      {hasBbmAccess && (role === Role.MANAGER || role === Role.FINANCE) && (
+                      {hasBbmAccess && (role === Role.MANAGER || role === Role.FINANCE || role === Role.DIREKTUR) && (
                         <button
                           type="button"
                           onClick={() => setViewingBbmItem({
@@ -939,8 +939,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       </button>
                     </div>
 
-                     {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) */}
-                    {!isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+                     {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) and user is not Direktur */}
+                    {role !== Role.DIREKTUR && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
                       <div className="flex items-center gap-2">
                         {isRejected && (
                           <button
@@ -979,8 +979,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         )}
       </div>
 
-      {/* Trigger Button to Open Input Form Modal */}
-      {[RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+      {/* Trigger Button to Open Input Form Modal (Excludes Direktur) */}
+      {role !== Role.DIREKTUR && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
         !hasRejectedItems ? (
           <button
             onClick={() => {
@@ -1013,7 +1013,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
 
       {/* Form Closing Card & Submit Review Button for Manager/Finance */}
-      {(role === Role.MANAGER || role === Role.FINANCE) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && request.status !== RequestStatus.CLOSED && onSubmitReview && currentItems.length > 0 && (
+      {((role === Role.MANAGER && !isRequesterManagerOrFinance) || (role === Role.FINANCE && requesterProfile?.role !== Role.FINANCE)) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && request.status !== RequestStatus.CLOSED && onSubmitReview && currentItems.length > 0 && (
         <div className="space-y-3 pt-2">
           {/* Form Closing Banner for Finance when all items approved */}
           {(() => {
@@ -1134,7 +1134,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       )}
 
       {/* ----------------- POPUP MODAL FORM INPUT ----------------- */}
-      {isFormOpen && (
+      {isFormOpen && role !== Role.DIREKTUR && (
         <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-scale-up border border-slate-100 flex flex-col my-8">
             {/* Header */}
