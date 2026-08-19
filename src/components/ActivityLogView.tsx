@@ -1771,6 +1771,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             );
           }
         }}
+        profiles={profiles}
       />
     </div>
   );

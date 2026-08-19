@@ -935,7 +935,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         title="Lihat Riwayat Approval & Revisi Item ini"
                       >
                         <History className="w-3.5 h-3.5 text-indigo-500" />
-                        <span>Riwayat ({histories.filter(h => h.itemUid === item.id).length})</span>
+                        <span>Riwayat</span>
                       </button>
                     </div>
 
@@ -1321,8 +1321,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </>
                   ) : (
                     <>
-                      <Plus className="w-4 h-4" />
-                      <span>{editingItem ? 'Simpan' : 'Tambahkan'}</span>
+                      <Check className="w-4 h-4" />
+                      <span>Simpan</span>
                     </>
                   )}
                 </button>

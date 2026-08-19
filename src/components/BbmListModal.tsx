@@ -955,6 +955,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
             handleRunAiRecapture(selectedAiActivity, true);
           }
         }}
+        profiles={profiles}
       />
     </div>
   );

@@ -91,6 +91,32 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     return totalTransferred + totalAdjustments - totalReportedApproved;
   };
 
+  // Detailed user financial summary
+  const getUserSummary = (userEmail: string) => {
+    const userReqs = requests.filter(r => r.userEmail.toLowerCase() === userEmail.toLowerCase() && !isBbmRequest(r));
+    const userReqIds = userReqs.map(r => r.id);
+    const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItem(item));
+
+    const totalTransferred = userReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalAdjustments = userReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalReportedApproved = userUsage
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+      .reduce((sum, item) => sum + item.nominal, 0);
+
+    const balance = totalTransferred + totalAdjustments - totalReportedApproved;
+    const requiredNominal = Math.abs(balance);
+    const isPositive = balance > 0;
+
+    return {
+      totalTransferred,
+      totalAdjustments,
+      totalReportedApproved,
+      balance,
+      requiredNominal,
+      isPositive
+    };
+  };
+
   // Auto-fill nominal amount when selected user changes
   useEffect(() => {
     if (selectedUser) {
@@ -248,8 +274,9 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
 
   // If a user is selected, render the Adjustment Form
   if (selectedUser) {
-    const balance = getUserBalance(selectedUser.email);
-    const isPositiveBalance = balance > 0;
+    const selectedSummary = getUserSummary(selectedUser.email);
+    const balance = selectedSummary.balance;
+    const isPositiveBalance = selectedSummary.isPositive;
 
     const isDeduction = adjustmentType 
       ? (adjustmentType === 'Pemotongan Gaji' || adjustmentType === 'Pengembalian Cash dari User')
@@ -303,8 +330,8 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
               </span>
             </div>
             <div>
-              <span className="block text-[8px] font-bold text-slate-400 uppercase tracking-wider">Nominal Penyesuaian</span>
-              <span className={`text-[11px] font-bold font-mono font-display ${currentAdjustmentAmount > 0 ? 'text-emerald-400' : currentAdjustmentAmount < 0 ? 'text-amber-400' : 'text-slate-400'}`}>
+              <span className="block text-[8px] font-bold text-indigo-300 uppercase tracking-wider">Nominal Adjustment</span>
+              <span className={`text-[11px] font-bold font-mono font-display ${currentAdjustmentAmount > 0 ? 'text-emerald-400' : currentAdjustmentAmount < 0 ? 'text-amber-400' : 'text-indigo-200'}`}>
                 {currentAdjustmentAmount > 0 ? `+${formatIDR(currentAdjustmentAmount)}` : currentAdjustmentAmount < 0 ? formatIDR(currentAdjustmentAmount) : formatIDR(0)}
               </span>
             </div>
@@ -315,6 +342,23 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
               </span>
             </div>
           </div>
+
+          {/* Rincian Finansial User */}
+          <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/80 text-[10px] text-left">
+            <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+              <span className="text-[8px] text-slate-400 uppercase block font-semibold">Total Transfer</span>
+              <span className="font-bold font-mono text-slate-200">{formatIDR(selectedSummary.totalTransferred)}</span>
+            </div>
+            <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+              <span className="text-[8px] text-slate-400 uppercase block font-semibold">Laporan Disetujui</span>
+              <span className="font-bold font-mono text-emerald-400">{formatIDR(selectedSummary.totalReportedApproved)}</span>
+            </div>
+            <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800">
+              <span className="text-[8px] text-slate-400 uppercase block font-semibold">Adjustment Lalu</span>
+              <span className="font-bold font-mono text-slate-300">{formatIDR(selectedSummary.totalAdjustments)}</span>
+            </div>
+          </div>
+
           <div className="text-[9px] text-slate-400 leading-relaxed bg-slate-950 p-2 rounded-xl border border-slate-800/80">
             {projectedBalance === 0 ? (
               <span>* Transaksi ini akan langsung membuat saldo operasional user menjadi <strong>Rp 0 (Balance)</strong>.</span>
@@ -591,6 +635,21 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     );
   }
 
+  // Calculate total required adjustment nominal for all unbalanced users
+  const totalAdjustmentNominalAllUsers = useMemo(() => {
+    return unbalancedUsers.reduce((sum, user) => {
+      const summary = getUserSummary(user.email);
+      return sum + summary.requiredNominal;
+    }, 0);
+  }, [unbalancedUsers, requests, usageItems]);
+
+  // Adjustment transaction history
+  const adjustmentHistoryRequests = useMemo(() => {
+    return requests
+      .filter(r => r.siteId === 'ADJUSTMENT')
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  }, [requests]);
+
   // Otherwise, render list of unbalanced users
   return (
     <div className="space-y-4">
@@ -615,8 +674,20 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           Daftar seluruh user dengan saldo operasional yang tidak balance (lebih atau kurang). Klik pada kartu user untuk memproses penyesuaian saldo ke <strong>Rp 0 (Balance)</strong>.
         </p>
 
+        {/* Ringkasan Total Nominal Adjustment */}
+        <div className="grid grid-cols-2 gap-3 pt-1">
+          <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-left">
+            <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">User Membutuhkan Adjustment</span>
+            <span className="text-sm font-black font-display text-slate-800">{unbalancedUsers.length} <span className="text-xs font-normal text-slate-500">User</span></span>
+          </div>
+          <div className="bg-indigo-50/80 p-3 rounded-xl border border-indigo-100 shadow-sm text-left">
+            <span className="text-[9px] font-bold text-indigo-500 block uppercase tracking-wider">Total Nominal Adjustment Saldo</span>
+            <span className="text-sm font-black font-mono font-display text-indigo-700 block">{formatIDR(totalAdjustmentNominalAllUsers)}</span>
+          </div>
+        </div>
+
         {/* Search Input */}
-        <div className="relative">
+        <div className="relative pt-1">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
@@ -632,8 +703,8 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       {unbalancedUsers.length > 0 ? (
         <div className="grid grid-cols-1 gap-3.5">
           {unbalancedUsers.map((user, idx) => {
-            const balance = getUserBalance(user.email);
-            const isPositive = balance > 0;
+            const summary = getUserSummary(user.email);
+            const isPositive = summary.isPositive;
 
             return (
               <div
@@ -642,7 +713,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                   setSelectedUser(user);
                   setError(null);
                 }}
-                className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer relative overflow-hidden group flex flex-col justify-between"
+                className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer relative overflow-hidden group space-y-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
@@ -663,11 +734,31 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                   <div className="text-right">
                     <span className="text-[8px] font-bold text-slate-400 block uppercase tracking-wider">Saldo Operasional</span>
                     <span className={`text-sm font-bold font-mono font-display mt-0.5 block ${isPositive ? 'text-blue-600' : 'text-rose-600'}`}>
-                      {isPositive ? `+${formatIDR(balance)}` : formatIDR(balance)}
+                      {isPositive ? `+${formatIDR(summary.balance)}` : formatIDR(summary.balance)}
                     </span>
                     <span className={`inline-block text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${isPositive ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-rose-50 text-rose-600 border border-rose-200'}`}>
                       {isPositive ? 'Lebih Saldo' : 'Saldo Kurang'}
                     </span>
+                  </div>
+                </div>
+
+                {/* Detailed Financial Breakdown & Required Adjustment Nominal */}
+                <div className="bg-slate-50/90 rounded-xl p-2.5 border border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-2 text-left">
+                  <div>
+                    <span className="block text-[8px] font-bold text-slate-400 uppercase">Total Transfer</span>
+                    <span className="text-[10px] font-bold font-mono text-slate-700">{formatIDR(summary.totalTransferred)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[8px] font-bold text-slate-400 uppercase">Laporan Disetujui</span>
+                    <span className="text-[10px] font-bold font-mono text-emerald-600">{formatIDR(summary.totalReportedApproved)}</span>
+                  </div>
+                  <div>
+                    <span className="block text-[8px] font-bold text-slate-400 uppercase">Adjustment Lalu</span>
+                    <span className="text-[10px] font-bold font-mono text-slate-600">{formatIDR(summary.totalAdjustments)}</span>
+                  </div>
+                  <div className="bg-indigo-50/90 p-1.5 rounded-lg border border-indigo-100 col-span-2 sm:col-span-1">
+                    <span className="block text-[8px] font-extrabold text-indigo-500 uppercase">Jumlah Nominal Adjustment</span>
+                    <span className="text-[11px] font-extrabold font-mono text-indigo-700 block">{formatIDR(summary.requiredNominal)}</span>
                   </div>
                 </div>
               </div>
@@ -681,6 +772,49 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           <p className="text-[10px] text-emerald-700/90 max-w-sm mx-auto">
             Luar biasa! Tidak ada user yang memiliki selisih saldo operasional (seluruh user dalam kondisi Balance Rp 0).
           </p>
+        </div>
+      )}
+
+      {/* Riwayat Transaksi Adjustment Saldo */}
+      {adjustmentHistoryRequests.length > 0 && (
+        <div className="pt-4 border-t border-slate-200 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+              <Coins className="w-4 h-4 text-indigo-600" />
+              <span>Riwayat Transaksi Adjustment Saldo ({adjustmentHistoryRequests.length})</span>
+            </h3>
+          </div>
+
+          <div className="space-y-2">
+            {adjustmentHistoryRequests.map((adj) => (
+              <div key={adj.id} className="bg-white border border-slate-200 rounded-xl p-3 text-xs flex items-center justify-between gap-3 shadow-xs">
+                <div className="space-y-0.5 text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{adj.id}</span>
+                    <span className="font-bold text-slate-800">{adj.userEmail}</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500">{adj.keterangan}</p>
+                  <span className="text-[9px] text-slate-400 font-mono block">{adj.createdAt || adj.tanggalPemakaian}</span>
+                </div>
+                <div className="text-right shrink-0">
+                  <span className={`font-bold font-mono text-xs block ${adj.adminActionAmount > 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {adj.adminActionAmount > 0 ? `+${formatIDR(adj.adminActionAmount)}` : formatIDR(adj.adminActionAmount)}
+                  </span>
+                  {adj.proofFileUrl && (
+                    <a
+                      href={adj.proofFileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[9px] font-bold text-indigo-600 hover:underline mt-0.5"
+                    >
+                      <Paperclip className="w-3 h-3" />
+                      <span>Bukti</span>
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

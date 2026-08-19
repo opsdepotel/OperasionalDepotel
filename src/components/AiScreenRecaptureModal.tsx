@@ -18,7 +18,7 @@ import {
   Layers,
   SearchCheck
 } from 'lucide-react';
-import { UserActivity } from '../types';
+import { UserActivity, UserProfile } from '../types';
 
 export interface AiRecaptureResult {
   isRecapture: boolean;
@@ -41,6 +41,7 @@ interface AiScreenRecaptureModalProps {
   isLoading: boolean;
   error: string | null;
   onReanalyze: () => void;
+  profiles?: UserProfile[];
 }
 
 export const AiScreenRecaptureModal: React.FC<AiScreenRecaptureModalProps> = ({
@@ -53,8 +54,14 @@ export const AiScreenRecaptureModal: React.FC<AiScreenRecaptureModalProps> = ({
   isLoading,
   error,
   onReanalyze,
+  profiles = [],
 }) => {
   if (!isOpen || !activity) return null;
+
+  const userProf = profiles?.find(
+    (p) => p.email.trim().toLowerCase() === (activity.userEmail || '').trim().toLowerCase()
+  );
+  const username = userProf?.userId || userProf?.nama || (activity.userEmail ? activity.userEmail.split('@')[0] : 'User');
 
   const getVerdictStyle = () => {
     if (!result) return { bg: 'bg-slate-50', text: 'text-slate-800', border: 'border-slate-200' };
@@ -162,8 +169,11 @@ export const AiScreenRecaptureModal: React.FC<AiScreenRecaptureModalProps> = ({
             <div className="flex items-center gap-2 min-w-0">
               <User className="w-4 h-4 text-indigo-600 shrink-0" />
               <div className="truncate">
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Pelapor</span>
-                <span className="font-semibold text-slate-700 truncate">{activity.userEmail}</span>
+                <span className="text-[10px] text-slate-400 uppercase font-bold block">User</span>
+                <span className="font-bold text-slate-800 truncate block">{username}</span>
+                {activity.userEmail && (
+                  <span className="text-[10px] text-slate-400 font-mono truncate block">{activity.userEmail}</span>
+                )}
               </div>
             </div>
 

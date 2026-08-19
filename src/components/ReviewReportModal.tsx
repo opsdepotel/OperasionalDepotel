@@ -340,7 +340,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                   className="flex-1 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-200"
                   title="Lihat Riwayat Approval & Revisi Item ini"
                 >
-                  <span>Riwayat ({histories.filter(h => h.itemUid === item.id).length})</span>
+                  <span>Riwayat</span>
                   <History className="w-3.5 h-3.5 text-indigo-600" />
                 </button>
               </div>

@@ -278,7 +278,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
               className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-700 font-bold rounded-lg text-[10px] transition-all flex items-center gap-1 cursor-pointer border border-indigo-200 shadow-2xs"
             >
               <History className="w-3 h-3 text-indigo-600" />
-              <span>Lihat History ({reqHistories.length})</span>
+              <span>Riwayat</span>
             </button>
           </div>
         );

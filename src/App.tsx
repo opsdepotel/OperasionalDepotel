@@ -3072,11 +3072,7 @@ export default function App() {
                                       className="px-2.5 py-1 bg-white hover:bg-amber-100 text-amber-900 font-bold rounded-lg text-[10px] transition-all flex items-center gap-1 cursor-pointer border border-amber-300 shrink-0 shadow-xs"
                                     >
                                       <History className="w-3.5 h-3.5 text-indigo-600" />
-                                      <span>Riwayat ({(() => {
-                                        const loggedCount = itemReviewHistories.filter(h => h.requestUid === req.id || h.itemUid === req.id).length;
-                                        if (loggedCount > 0) return loggedCount;
-                                        return req.status === RequestStatus.APPROVED ? 2 : 1;
-                                      })()})</span>
+                                      <span>Riwayat</span>
                                     </button>
                                   </div>
                                 </div>
@@ -3147,11 +3143,7 @@ export default function App() {
                                       title="Lihat Riwayat Approval & Revisi Pengajuan"
                                     >
                                       <History className="w-3 h-3 text-indigo-600" />
-                                      <span>Riwayat ({(() => {
-                                        const loggedCount = itemReviewHistories.filter(h => h.requestUid === req.id || h.itemUid === req.id).length;
-                                        if (loggedCount > 0) return loggedCount;
-                                        return req.status === RequestStatus.APPROVED ? 2 : 1;
-                                      })()})</span>
+                                      <span>Riwayat</span>
                                     </button>
                                   )}
                                 </div>

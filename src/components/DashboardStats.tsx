@@ -1317,7 +1317,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItemAdmin(item))
       .reduce((sum, item) => sum + item.nominal, 0);
 
-    const unbalancedUsersCount = profiles.filter(user => {
+    const unbalancedUsersStats = profiles.map(user => {
       const userReqs = requests.filter(r => r.userEmail.toLowerCase() === user.email.toLowerCase() && !isBbmRequestAdmin(r));
       const userReqIds = userReqs.map(r => r.id);
       const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItemAdmin(item));
@@ -1329,8 +1329,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         .reduce((sum, item) => sum + item.nominal, 0);
       
       const balance = totalTransferredVal + totalAdjustmentsVal - totalReportedApproved;
-      return Math.abs(balance) > 0.01;
-    }).length;
+      return { user, balance, requiredNominal: Math.abs(balance) };
+    }).filter(item => item.requiredNominal > 0.01);
+
+    const unbalancedUsersCount = unbalancedUsersStats.length;
+    const totalAdjustmentNominalNeeded = unbalancedUsersStats.reduce((sum, item) => sum + item.requiredNominal, 0);
 
     const transferredReqsList = requests.filter(r => 
       !isBbmRequestAdmin(r) && 
@@ -1621,9 +1624,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 </span>
               </div>
               <div className="flex items-end justify-between mt-3">
-                <span className="text-3xl font-display font-bold text-slate-900">
-                  {unbalancedUsersCount} <span className="text-xs text-slate-400 font-normal">User</span>
-                </span>
+                <div>
+                  <span className="text-3xl font-display font-bold text-slate-900">
+                    {unbalancedUsersCount} <span className="text-xs text-slate-400 font-normal">User</span>
+                  </span>
+                  <div className="text-[11px] font-bold text-indigo-600 font-mono mt-1">
+                    Total Nominal Adjustment: {formatIDR(totalAdjustmentNominalNeeded)}
+                  </div>
+                </div>
                 {unbalancedUsersCount > 0 ? (
                   <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
                     Perlu Balance
