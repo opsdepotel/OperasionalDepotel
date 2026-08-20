@@ -303,7 +303,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     handleResetZoomPan();
   };
 
-  useBackHandler(showAddForm, () => setShowAddForm(false), 'activity_addForm');
+  useBackHandler(showAddForm, () => {
+    setShowAddForm(false);
+    formOpenPositionRef.current = null;
+    formOpenedTimeRef.current = null;
+  }, 'activity_addForm');
   useBackHandler(!!selectedPhotoUrl, resetPhotoModal, 'activity_photoModal');
   useBackHandler(isAiRecaptureModalOpen, () => setIsAiRecaptureModalOpen(false), 'activity_aiRecaptureModal');
 
@@ -379,6 +383,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
   // Form State
   const lastGpsPositionRef = useRef<GeolocationPosition | null>(null);
+  const formOpenPositionRef = useRef<GeolocationPosition | null>(null);
+  const formOpenedTimeRef = useRef<number | null>(null);
   const [selectedSiteId, setSelectedSiteId] = useState('');
   const [siteName, setSiteName] = useState('');
   const [coordinatesDb, setCoordinatesDb] = useState('');
@@ -633,6 +639,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
     const updatePosition = (position: GeolocationPosition) => {
       lastGpsPositionRef.current = position;
+      if (!formOpenPositionRef.current) {
+        formOpenPositionRef.current = position;
+        formOpenedTimeRef.current = position.timestamp || Date.now();
+      }
       const lat = position.coords.latitude.toFixed(6);
       const lon = position.coords.longitude.toFixed(6);
       const acc = position.coords.accuracy;
@@ -766,8 +776,14 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       const finalSiteId = isVerified ? trimmedSiteId.toUpperCase() : trimmedSiteId;
       const finalSiteName = matchedSite ? matchedSite.siteName : (gpsAddress || siteName.trim() || finalSiteId);
 
-      // Perform silent Fake GPS check right before submission
-      const fakeCheck = detectFakeGps(lastGpsPositionRef.current, coordinatesActual);
+      // Perform silent Fake GPS check right before submission (including form open vs submit teleportation check)
+      const fakeCheck = detectFakeGps(
+        lastGpsPositionRef.current,
+        coordinatesActual,
+        null,
+        1,
+        formOpenPositionRef.current
+      );
 
       await onSaveActivity({
         tanggal: getTodayStr(), // System date for real-time tracking
@@ -792,6 +808,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setPhotoFile(null);
       setPhotoPreview(null);
       setShowAddForm(false);
+      formOpenPositionRef.current = null;
+      formOpenedTimeRef.current = null;
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal menyimpan kegiatan.');
     } finally {
@@ -985,6 +1003,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               setOriginalPhotoFile(null);
               setPhotoFile(null);
               setPhotoPreview(null);
+              formOpenPositionRef.current = null;
+              formOpenedTimeRef.current = null;
             }}
             className="p-1.5 hover:bg-slate-100 rounded-lg transition-colors text-slate-600 flex items-center gap-1 text-xs font-semibold"
             id="activity-back-to-list-btn"
@@ -1535,7 +1555,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         {/* "Tambah Activity Hari Ini" Button - Only for Role USER */}
         {currentRole === Role.USER && (
           <button
-            onClick={() => setShowAddForm(true)}
+            onClick={() => {
+              formOpenPositionRef.current = lastGpsPositionRef.current;
+              formOpenedTimeRef.current = lastGpsPositionRef.current?.timestamp || Date.now();
+              setShowAddForm(true);
+            }}
             className="w-full bg-slate-900 text-white font-display font-bold text-xs py-3 px-4 rounded-xl shadow-md hover:bg-slate-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2 mt-4"
             id="activity-add-trigger-btn"
           >

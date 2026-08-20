@@ -120,7 +120,8 @@ export function detectFakeGps(
   position: GeolocationPosition | null,
   coordsActualStr: string = '',
   previousPosition?: GeolocationPosition | null,
-  checkHistoryCount: number = 1
+  checkHistoryCount: number = 1,
+  formOpenPosition?: GeolocationPosition | null
 ): FakeGpsCheckResult {
   const now = Date.now();
   const capturedAt = now;
@@ -279,26 +280,19 @@ export function detectFakeGps(
     if (distanceMeters > 5) {
       moveDetail = `${distanceMeters.toFixed(1)}m dalam ${elapsedSeconds.toFixed(1)}s (${calculatedSpeedKmh !== null ? calculatedSpeedKmh.toFixed(1) : 0} km/h)`;
 
-      if (calculatedSpeedKmh !== null && calculatedSpeedKmh > 800) {
-        // Teleportasi ekstrim (> 800 km/h)
+      if (calculatedSpeedKmh !== null && calculatedSpeedKmh > 150) {
+        // Teleportasi ekstrim (> 150 km/h)
         moveStatus = 'ANOMALI';
         moveScore = 10;
-        moveNote = `Teleportasi ekstrim: pergerakan ${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s (kecepatan ${calculatedSpeedKmh.toFixed(0)} km/h) di luar batas fisik.`;
-        reasons.push(`Teleportasi lokasi (${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s, ${calculatedSpeedKmh.toFixed(0)} km/h)`);
-        riskScoreCumulative += 75;
-      } else if (calculatedSpeedKmh !== null && calculatedSpeedKmh > 250) {
-        // Kecepatan di luar batas kendaraan darat (> 250 km/h)
-        moveStatus = 'ANOMALI';
-        moveScore = 30;
-        moveNote = `Pergerakan sangat cepat (${calculatedSpeedKmh.toFixed(0)} km/h, ${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s). Indikasi lompatan koordinat.`;
-        reasons.push(`Lompatan koordinat tidak wajar (${calculatedSpeedKmh.toFixed(0)} km/h)`);
-        riskScoreCumulative += 40;
-      } else if (calculatedSpeedKmh !== null && calculatedSpeedKmh > 130) {
-        // Kecepatan jalan tol / kendaraan cepat (130 - 250 km/h)
+        moveNote = `Teleportasi ekstrim: pergerakan ${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s (kecepatan ${calculatedSpeedKmh.toFixed(0)} km/h) di luar batas fisik operasional.`;
+        reasons.push(`Dugaan Teleportasi lokasi (${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s, ${calculatedSpeedKmh.toFixed(0)} km/h)`);
+        riskScoreCumulative += 80;
+      } else if (calculatedSpeedKmh !== null && calculatedSpeedKmh > 100) {
+        // Kecepatan tinggi / jalan tol (100 - 150 km/h)
         moveStatus = 'WARNING';
         moveScore = 70;
-        moveNote = `Pergerakan kendaraan cepat (${calculatedSpeedKmh.toFixed(0)} km/h). Normal pada perjalanan tol / kereta cepat.`;
-        riskScoreCumulative += 10;
+        moveNote = `Pergerakan kendaraan cepat (${calculatedSpeedKmh.toFixed(0)} km/h). Normal pada perjalanan jalan tol / kendaraan cepat.`;
+        riskScoreCumulative += 15;
       } else {
         moveStatus = 'VALID';
         moveScore = 100;
@@ -307,6 +301,47 @@ export function detectFakeGps(
     } else {
       moveDetail = `Stasioner (${distanceMeters.toFixed(1)}m)`;
       moveNote = 'Pengguna diam di lokasi yang sama.';
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // 1b. ADDITIONAL TELEPORTATION CHECK (Form Open vs Form Submit Comparison)
+  // --------------------------------------------------------------------------
+  if (formOpenPosition && formOpenPosition.coords && lat !== null && lon !== null) {
+    const openLat = formOpenPosition.coords.latitude;
+    const openLon = formOpenPosition.coords.longitude;
+    const openTs = formOpenPosition.timestamp || (currentFixTs - 10000);
+
+    const formDistMeters = calculateHaversineDistanceInMeters(openLat, openLon, lat, lon);
+    const formElapsedMs = Math.max(500, Math.abs(currentFixTs - openTs));
+    const formElapsedSec = formElapsedMs / 1000;
+    const formSpeedKmh = (formDistMeters / formElapsedSec) * 3.6;
+
+    if (formDistMeters > 50) {
+      if (formSpeedKmh > 150) {
+        moveStatus = 'ANOMALI';
+        moveScore = Math.min(moveScore, 10);
+        const distStr = formDistMeters >= 1000 ? `${(formDistMeters / 1000).toFixed(1)} km` : `${Math.round(formDistMeters)}m`;
+        const reasonStr = `Dugaan Teleportasi saat pengisian form (${distStr} dalam ${formElapsedSec.toFixed(1)}s, ${Math.round(formSpeedKmh)} km/h)`;
+        reasons.push(reasonStr);
+        riskScoreCumulative += 80;
+        moveNote += ` [ANOMALI FORM: ${reasonStr}]`;
+      } else if (formSpeedKmh > 100) {
+        moveStatus = 'ANOMALI';
+        moveScore = Math.min(moveScore, 30);
+        const distStr = formDistMeters >= 1000 ? `${(formDistMeters / 1000).toFixed(1)} km` : `${Math.round(formDistMeters)}m`;
+        const reasonStr = `Lompatan lokasi saat pengisian form (${distStr} dalam ${formElapsedSec.toFixed(1)}s, ${Math.round(formSpeedKmh)} km/h)`;
+        reasons.push(reasonStr);
+        riskScoreCumulative += 60;
+        moveNote += ` [ANOMALI FORM: ${reasonStr}]`;
+      } else if (formDistMeters > 1000 && formElapsedSec < 60) {
+        moveStatus = 'ANOMALI';
+        moveScore = Math.min(moveScore, 20);
+        const reasonStr = `Teleportasi lokasi ${(formDistMeters / 1000).toFixed(1)} km dalam ${Math.round(formElapsedSec)}s (${Math.round(formSpeedKmh)} km/h)`;
+        reasons.push(reasonStr);
+        riskScoreCumulative += 75;
+        moveNote += ` [ANOMALI FORM: ${reasonStr}]`;
+      }
     }
   }
 
