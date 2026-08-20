@@ -66,7 +66,7 @@ import {
   RefreshCw, FileSpreadsheet, Eye, Search, AlertTriangle, Check, CreditCard,
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight, Edit2,
   Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel, X,
-  Settings, LogOut, ShieldCheck, History
+  Settings, LogOut, ShieldCheck, History, UserCheck
 } from 'lucide-react';
 
 export default function App() {
@@ -968,6 +968,25 @@ export default function App() {
     file: File | null
   ) => {
     if (!token || !spreadsheetId) return;
+
+    // Check if target user has any unclosed Dana Talangan transactions
+    const unclosedTalangan = requests.filter(r => 
+      r.userEmail.toLowerCase() === targetUserEmail.toLowerCase() &&
+      (
+        r.id.startsWith('OPT-') ||
+        r.keterangan?.toUpperCase().includes('[DANA TALANGAN]') ||
+        r.keterangan?.toUpperCase().includes('DANA TALANGAN') ||
+        r.keterangan?.toUpperCase().includes('TALANGAN') ||
+        r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+      ) &&
+      r.status !== RequestStatus.CLOSED &&
+      r.status !== RequestStatus.REJECTED &&
+      r.status !== RequestStatus.CANCELLED
+    );
+
+    if (unclosedTalangan.length > 0) {
+      throw new Error(`Adjustment tidak dapat dilakukan karena user ${targetUserEmail} masih memiliki ${unclosedTalangan.length} transaksi Dana Talangan yang belum CLOSED.`);
+    }
 
     const success = await runGoogleAction(
       async () => {
@@ -2993,8 +3012,8 @@ export default function App() {
                                 </div>
                               )}
 
-                              {/* Expanded Report Items List for Menunggu Transfer Dana Talangan */}
-                              {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER && expandedReportReqIds[req.id] && (
+                              {/* Expanded Report Items List for Dana Talangan */}
+                              {(req.status === RequestStatus.PENDING_TALANGAN_TRANSFER || isReqTalangan) && expandedReportReqIds[req.id] && (
                                 <div className="bg-indigo-50/30 rounded-xl p-3.5 border border-indigo-100/80 space-y-2.5 animate-slide-up mt-2">
                                   <div className="flex items-center justify-between border-b border-indigo-100 pb-1.5 mb-1.5">
                                     <span className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Item Laporan Penggunaan</span>
@@ -3005,9 +3024,9 @@ export default function App() {
                                   {reqItems.length === 0 ? (
                                     <p className="text-[10px] text-slate-400 italic text-center py-2">Tidak ada item laporan ditemukan.</p>
                                   ) : (
-                                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                                    <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
                                       {reqItems.map((item, idx) => (
-                                        <div key={item.id} className="bg-white border border-slate-100 rounded-xl p-3 space-y-1.5 shadow-sm">
+                                        <div key={item.id} className="bg-white border border-slate-100 rounded-xl p-3 space-y-2 shadow-xs">
                                           <div className="flex items-start justify-between gap-2">
                                             <div className="space-y-0.5">
                                               <span className="text-[8px] text-slate-400 font-bold block">ITEM #{idx + 1}</span>
@@ -3030,6 +3049,82 @@ export default function App() {
                                                 <span>Nota</span>
                                               </button>
                                             )}
+                                          </div>
+
+                                          {/* Persetujuan Manager & Finance per item Dana Talangan */}
+                                          <div className="pt-2 border-t border-slate-100 space-y-1 text-[10px]">
+                                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">
+                                              Status Persetujuan Item:
+                                            </span>
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                              {/* Manager Approval */}
+                                              <div className={`p-1.5 rounded-lg border text-[9.5px] space-y-0.5 ${
+                                                item.statusManager === ItemStatus.APPROVED
+                                                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                                  : item.statusManager === ItemStatus.REJECTED
+                                                  ? 'bg-rose-50/70 border-rose-200 text-rose-900'
+                                                  : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                                              }`}>
+                                                <div className="flex items-center justify-between gap-1">
+                                                  <span className="font-bold text-slate-700 flex items-center gap-1">
+                                                    <UserCheck className="w-3 h-3 text-slate-500" />
+                                                    Manager:
+                                                  </span>
+                                                  <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase tracking-wider border ${
+                                                    item.statusManager === ItemStatus.APPROVED
+                                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                                      : item.statusManager === ItemStatus.REJECTED
+                                                      ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                                      : 'bg-amber-100 text-amber-800 border-amber-300'
+                                                  }`}>
+                                                    {item.statusManager === ItemStatus.APPROVED
+                                                      ? 'Disetujui'
+                                                      : item.statusManager === ItemStatus.REJECTED
+                                                      ? 'Ditolak'
+                                                      : 'Menunggu'}
+                                                  </span>
+                                                </div>
+                                                {item.managerComment && (
+                                                  <p className="text-[9px] italic text-slate-600 bg-white/80 p-1 rounded border border-slate-200/60 leading-tight">
+                                                    <span className="font-bold not-italic text-slate-500">Catatan:</span> "{item.managerComment}"
+                                                  </p>
+                                                )}
+                                              </div>
+
+                                              {/* Finance Approval */}
+                                              <div className={`p-1.5 rounded-lg border text-[9.5px] space-y-0.5 ${
+                                                item.statusAdmin === ItemStatus.APPROVED
+                                                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                                  : item.statusAdmin === ItemStatus.REJECTED
+                                                  ? 'bg-rose-50/70 border-rose-200 text-rose-900'
+                                                  : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                                              }`}>
+                                                <div className="flex items-center justify-between gap-1">
+                                                  <span className="font-bold text-slate-700 flex items-center gap-1">
+                                                    <ShieldCheck className="w-3 h-3 text-slate-500" />
+                                                    Finance:
+                                                  </span>
+                                                  <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase tracking-wider border ${
+                                                    item.statusAdmin === ItemStatus.APPROVED
+                                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                                      : item.statusAdmin === ItemStatus.REJECTED
+                                                      ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                                      : 'bg-amber-100 text-amber-800 border-amber-300'
+                                                  }`}>
+                                                    {item.statusAdmin === ItemStatus.APPROVED
+                                                      ? 'Disetujui'
+                                                      : item.statusAdmin === ItemStatus.REJECTED
+                                                      ? 'Ditolak'
+                                                      : 'Menunggu'}
+                                                  </span>
+                                                </div>
+                                                {item.adminComment && (
+                                                  <p className="text-[9px] italic text-slate-600 bg-white/80 p-1 rounded border border-slate-200/60 leading-tight">
+                                                    <span className="font-bold not-italic text-slate-500">Catatan:</span> "{item.adminComment}"
+                                                  </p>
+                                                )}
+                                              </div>
+                                            </div>
                                           </div>
                                         </div>
                                       ))}
@@ -3379,7 +3474,7 @@ export default function App() {
                                             </button>
                                           )}
 
-                                          {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                                          {(req.status === RequestStatus.PENDING_TALANGAN_TRANSFER || isReqTalangan) && reqItems.length > 0 && (
                                             <button
                                               type="button"
                                               onClick={() => {

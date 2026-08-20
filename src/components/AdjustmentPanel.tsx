@@ -5,7 +5,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
-import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar } from 'lucide-react';
+import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar, AlertTriangle, Lock } from 'lucide-react';
 import { uploadReceiptFile, parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 
 interface AdjustmentPanelProps {
@@ -38,6 +38,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [unclosedTalanganAlertUser, setUnclosedTalanganAlertUser] = useState<UserProfile | null>(null);
   const [adjustmentType, setAdjustmentType] = useState('');
   const [notes, setNotes] = useState('');
   const [tanggalAdjustment, setTanggalAdjustment] = useState(new Date().toISOString().split('T')[0]);
@@ -75,6 +76,28 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
 
   const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
   const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+
+  // Helper to check if request is a Dana Talangan request
+  const isTalanganRequest = (r: BudgetRequest) => {
+    return (
+      r.id.startsWith('OPT-') ||
+      r.keterangan?.toUpperCase().includes('[DANA TALANGAN]') ||
+      r.keterangan?.toUpperCase().includes('DANA TALANGAN') ||
+      r.keterangan?.toUpperCase().includes('TALANGAN') ||
+      r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+    );
+  };
+
+  // Helper to get unclosed Dana Talangan requests for a user
+  const getUnclosedTalanganRequests = (userEmail: string) => {
+    return requests.filter(r => 
+      r.userEmail.toLowerCase() === userEmail.toLowerCase() &&
+      isTalanganRequest(r) &&
+      r.status !== RequestStatus.CLOSED &&
+      r.status !== RequestStatus.REJECTED &&
+      r.status !== RequestStatus.CANCELLED
+    );
+  };
 
   // Calculate user operational balance
   const getUserBalance = (userEmail: string) => {
@@ -211,6 +234,13 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     if (!selectedUser) return;
     setError(null);
 
+    // Validate if selected user has unclosed Dana Talangan transactions
+    const unclosedTalangan = getUnclosedTalanganRequests(selectedUser.email);
+    if (unclosedTalangan.length > 0) {
+      setError(`Adjustment tidak dapat dilakukan! User ${selectedUser.nama || selectedUser.email} masih memiliki ${unclosedTalangan.length} transaksi Dana Talangan yang belum CLOSED. Harap selesaikan transaksi Dana Talangan terlebih dahulu.`);
+      return;
+    }
+
     const balance = getUserBalance(selectedUser.email);
     if (Math.abs(balance) < 0.01) {
       setError('User sudah balance (Rp 0).');
@@ -277,6 +307,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     const selectedSummary = getUserSummary(selectedUser.email);
     const balance = selectedSummary.balance;
     const isPositiveBalance = selectedSummary.isPositive;
+    const selectedUnclosedTalangan = getUnclosedTalanganRequests(selectedUser.email);
 
     const isDeduction = adjustmentType 
       ? (adjustmentType === 'Pemotongan Gaji' || adjustmentType === 'Pengembalian Cash dari User')
@@ -370,6 +401,32 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
 
         {/* Adjustment Form */}
         <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+          {selectedUnclosedTalangan.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 space-y-2 text-left shadow-xs">
+              <div className="flex items-center gap-2 text-amber-800 font-bold text-xs">
+                <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Adjustment Saldo Diblokir (Peringatan Dana Talangan)</span>
+              </div>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                User <strong>{selectedUser.nama || selectedUser.email}</strong> masih memiliki <strong>{selectedUnclosedTalangan.length} transaksi Dana Talangan</strong> yang belum berstatus <strong>CLOSED</strong>.
+              </p>
+
+              <div className="bg-white/80 border border-amber-200 rounded-xl p-2.5 space-y-1.5 text-[10px]">
+                <span className="font-bold text-slate-600 uppercase block">Daftar Request Dana Talangan Belum Closed:</span>
+                {selectedUnclosedTalangan.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between font-mono bg-amber-100/50 p-1.5 rounded border border-amber-200/60">
+                    <span>{r.id} ({r.status})</span>
+                    <span className="font-bold">{formatIDR(r.jumlahPengajuan)}</span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-[10px] text-amber-700 italic">
+                * Harap pastikan seluruh laporan penggunaan Dana Talangan user diselesaikan hingga status CLOSED sebelum menyimpan adjustment.
+              </p>
+            </div>
+          )}
+
           {error && (
             <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-[11px] flex items-start gap-2 text-left">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -705,24 +762,36 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           {unbalancedUsers.map((user, idx) => {
             const summary = getUserSummary(user.email);
             const isPositive = summary.isPositive;
+            const unclosedTalanganList = getUnclosedTalanganRequests(user.email);
 
             return (
               <div
                 key={`${user.email}_${user.userId || idx}`}
                 onClick={() => {
-                  setSelectedUser(user);
-                  setError(null);
+                  if (unclosedTalanganList.length > 0) {
+                    setUnclosedTalanganAlertUser(user);
+                  } else {
+                    setSelectedUser(user);
+                    setError(null);
+                  }
                 }}
-                className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer relative overflow-hidden group space-y-3"
+                className={`bg-white border rounded-2xl p-4 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden group space-y-3 ${
+                  unclosedTalanganList.length > 0 ? 'border-amber-300 hover:border-amber-400' : 'border-slate-200 hover:border-indigo-300'
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-600 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-colors shrink-0">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                      unclosedTalanganList.length > 0 ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-slate-50 text-slate-600 group-hover:bg-indigo-50 group-hover:text-indigo-600 border-slate-100'
+                    }`}>
                       <User className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors">
-                        {user.nama || user.userId}
+                      <h4 className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors flex items-center gap-1.5">
+                        <span>{user.nama || user.userId}</span>
+                        {unclosedTalanganList.length > 0 && (
+                          <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" title="Adjustment diblokir: Ada Dana Talangan belum CLOSED" />
+                        )}
                       </h4>
                       <p className="text-[9px] text-slate-400 font-mono mt-0.5">{user.email}</p>
                       <p className="text-[9px] text-slate-500 font-medium mt-1">
@@ -741,6 +810,19 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                     </span>
                   </div>
                 </div>
+
+                {/* Badge Peringatan Dana Talangan Belum Closed */}
+                {unclosedTalanganList.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200/90 text-amber-900 rounded-xl p-2.5 text-[10px] flex items-center justify-between gap-2 text-left">
+                    <div className="flex items-center gap-1.5 font-medium">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>{unclosedTalanganList.length} Transaksi Dana Talangan Belum CLOSED</span>
+                    </div>
+                    <span className="text-[9px] font-bold bg-amber-200 text-amber-950 px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0">
+                      Wajib Closing
+                    </span>
+                  </div>
+                )}
 
                 {/* Detailed Financial Breakdown & Required Adjustment Nominal */}
                 <div className="bg-slate-50/90 rounded-xl p-2.5 border border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-2 text-left">
@@ -817,6 +899,77 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Notification: Unclosed Dana Talangan Alert */}
+      {unclosedTalanganAlertUser && (() => {
+        const unclosedReqs = getUnclosedTalanganRequests(unclosedTalanganAlertUser.email);
+        return (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
+            <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up my-auto text-left">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+                  <Lock className="w-6 h-6 text-amber-600" />
+                </div>
+                <div>
+                  <span className="text-[9px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    Adjustment Saldo Diblokir
+                  </span>
+                  <h3 className="text-sm font-bold text-slate-800 mt-0.5">
+                    Terdapat Transaksi Dana Talangan Belum CLOSED
+                  </h3>
+                </div>
+              </div>
+
+              <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-3.5 space-y-1 text-xs text-amber-900">
+                <p className="font-bold text-amber-900">
+                  Notifikasi Finance:
+                </p>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Adjustment operasional untuk user <strong>{unclosedTalanganAlertUser.nama || unclosedTalanganAlertUser.userId}</strong> ({unclosedTalanganAlertUser.email}) <strong>tidak dapat dilakukan</strong> karena masih terdapat {unclosedReqs.length} transaksi Dana Talangan yang belum berstatus <strong>CLOSED</strong>.
+                </p>
+              </div>
+
+              {/* Daftar Transaksi Dana Talangan Unclosed */}
+              <div className="space-y-2">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Daftar Transaksi Dana Talangan Unclosed ({unclosedReqs.length})
+                </span>
+                <div className="max-h-52 overflow-y-auto space-y-2 pr-1">
+                  {unclosedReqs.map((r) => (
+                    <div key={r.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-mono font-bold text-indigo-600 text-[11px]">{r.id}</span>
+                        <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md border border-amber-200">
+                          {r.status}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-700 font-medium line-clamp-2">{r.keterangan}</p>
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-200/60">
+                        <span>Tanggal: {r.tanggalPemakaian || r.createdAt}</span>
+                        <span className="font-mono font-bold text-slate-800">{formatIDR(r.jumlahPengajuan)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500 leading-relaxed bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <strong>Aturan Finance:</strong> Selesaikan laporan penggunaan dan pastikan status seluruh transaksi Dana Talangan user ini telah <strong>CLOSED</strong> sebelum memproses adjustment saldo operasional.
+              </p>
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setUnclosedTalanganAlertUser(null)}
+                  className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-sm"
+                >
+                  Mengerti & Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

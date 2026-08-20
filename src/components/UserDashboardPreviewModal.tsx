@@ -733,6 +733,82 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                                   </div>
                                 </div>
 
+                                {/* Persetujuan Manager & Finance per item */}
+                                <div className="pt-2 border-t border-slate-200/60 space-y-1 text-[10px]">
+                                  <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">
+                                    Status Persetujuan Item:
+                                  </span>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                    {/* Manager Approval */}
+                                    <div className={`p-1.5 rounded-lg border text-[9.5px] space-y-0.5 ${
+                                      item.statusManager === ItemStatus.APPROVED
+                                        ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                        : item.statusManager === ItemStatus.REJECTED
+                                        ? 'bg-rose-50/70 border-rose-200 text-rose-900'
+                                        : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                                    }`}>
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span className="font-bold text-slate-700 flex items-center gap-1">
+                                          <UserCheck className="w-3 h-3 text-slate-500" />
+                                          Manager:
+                                        </span>
+                                        <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase tracking-wider border ${
+                                          item.statusManager === ItemStatus.APPROVED
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : item.statusManager === ItemStatus.REJECTED
+                                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                            : 'bg-amber-100 text-amber-800 border-amber-300'
+                                        }`}>
+                                          {item.statusManager === ItemStatus.APPROVED
+                                            ? 'Disetujui'
+                                            : item.statusManager === ItemStatus.REJECTED
+                                            ? 'Ditolak'
+                                            : 'Menunggu'}
+                                        </span>
+                                      </div>
+                                      {item.managerComment && (
+                                        <p className="text-[9px] italic text-slate-600 bg-white/80 p-1 rounded border border-slate-200/60 leading-tight">
+                                          <span className="font-bold not-italic text-slate-500">Catatan:</span> "{item.managerComment}"
+                                        </p>
+                                      )}
+                                    </div>
+
+                                    {/* Finance Approval */}
+                                    <div className={`p-1.5 rounded-lg border text-[9.5px] space-y-0.5 ${
+                                      item.statusAdmin === ItemStatus.APPROVED
+                                        ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                        : item.statusAdmin === ItemStatus.REJECTED
+                                        ? 'bg-rose-50/70 border-rose-200 text-rose-900'
+                                        : 'bg-amber-50/70 border-amber-200 text-amber-900'
+                                    }`}>
+                                      <div className="flex items-center justify-between gap-1">
+                                        <span className="font-bold text-slate-700 flex items-center gap-1">
+                                          <ShieldCheck className="w-3 h-3 text-slate-500" />
+                                          Finance:
+                                        </span>
+                                        <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase tracking-wider border ${
+                                          item.statusAdmin === ItemStatus.APPROVED
+                                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                                            : item.statusAdmin === ItemStatus.REJECTED
+                                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                            : 'bg-amber-100 text-amber-800 border-amber-300'
+                                        }`}>
+                                          {item.statusAdmin === ItemStatus.APPROVED
+                                            ? 'Disetujui'
+                                            : item.statusAdmin === ItemStatus.REJECTED
+                                            ? 'Ditolak'
+                                            : 'Menunggu'}
+                                        </span>
+                                      </div>
+                                      {item.adminComment && (
+                                        <p className="text-[9px] italic text-slate-600 bg-white/80 p-1 rounded border border-slate-200/60 leading-tight">
+                                          <span className="font-bold not-italic text-slate-500">Catatan:</span> "{item.adminComment}"
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
                                 {(item.rejectReason || item.comment) && (
                                   <p className="text-[10px] text-slate-600 bg-white p-2 rounded-lg border border-slate-200 italic">
                                     Catatan: {item.rejectReason || item.comment}

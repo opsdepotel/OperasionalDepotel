@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { BudgetRequest, UsageReportItem, UserProfile, Role, ItemStatus } from '../types';
-import { FileText, Download, Filter, X, User, ArrowUpRight, Search } from 'lucide-react';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, ItemStatus, RequestStatus } from '../types';
+import { FileText, Download, Filter, X, User, ArrowUpRight, Search, Clock, FileSpreadsheet } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import ExcelJS from 'exceljs';
 
 interface FinancialReportsModalProps {
   isOpen: boolean;
@@ -50,14 +51,20 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 }) => {
   useBackHandler(isOpen, onClose, 'isFinancialReportsModalOpen');
 
-  // Active Report Tab: 'TRANSFER' or 'SALDO'
-  const [activeTab, setActiveTab] = useState<'TRANSFER' | 'SALDO'>('TRANSFER');
+  // Active Report Tab: 'TRANSFER', 'PENDING_TRANSFER', or 'SALDO'
+  const [activeTab, setActiveTab] = useState<'TRANSFER' | 'PENDING_TRANSFER' | 'SALDO'>('TRANSFER');
 
   // Filters for Transfer Report
   const [transferStartDate, setTransferStartDate] = useState<string>('');
   const [transferEndDate, setTransferEndDate] = useState<string>('');
   const [transferDivisi, setTransferDivisi] = useState<string>('ALL');
   const [transferUserName, setTransferUserName] = useState<string>('');
+
+  // Filters for Pending Transfer Report
+  const [pendingStartDate, setPendingStartDate] = useState<string>('');
+  const [pendingEndDate, setPendingEndDate] = useState<string>('');
+  const [pendingDivisi, setPendingDivisi] = useState<string>('ALL');
+  const [pendingSearchQuery, setPendingSearchQuery] = useState<string>('');
 
   // Filters for Saldo Report
   const [saldoUser, setSaldoUser] = useState<string>('ALL');
@@ -213,6 +220,63 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   const totalTransferAmount = useMemo(() => {
     return filteredTransfers.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
   }, [filteredTransfers]);
+
+  // Helper to calculate pending transfer amount for a request
+  const getPendingTransferAmount = (r: BudgetRequest): number => {
+    if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
+      const approvedUsageTotal = usageItems
+        .filter(item => item.requestId === r.id && item.statusAdmin === ItemStatus.APPROVED)
+        .reduce((sum, item) => sum + (item.nominal || 0), 0);
+      return approvedUsageTotal > 0 ? approvedUsageTotal : (r.managerActionAmount || r.jumlahPengajuan || 0);
+    }
+    return r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0);
+  };
+
+  // 2. FILTERED PENDING TRANSFER DATA (Menunggu Transfer)
+  const filteredPendingTransfers = useMemo(() => {
+    return requests.filter(r => {
+      // Must be in a status that is waiting for transfer
+      const isPendingTransfer =
+        r.status === RequestStatus.APPROVED ||
+        r.status === RequestStatus.PARTIALLY_APPROVED ||
+        r.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
+
+      if (!isPendingTransfer) return false;
+
+      const userProf = uniqueProfiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+      const userDiv = userProf?.divisi?.trim() || '';
+
+      // Search Query Filter
+      if (pendingSearchQuery.trim()) {
+        const q = pendingSearchQuery.toLowerCase().trim();
+        const userName = (userProf?.nama || '').toLowerCase();
+        const userId = (userProf?.userId || '').toLowerCase();
+        const userEmail = (r.userEmail || '').toLowerCase();
+        const reqId = (r.id || '').toLowerCase();
+        const site = (r.siteId || '').toLowerCase();
+        const ket = (r.keterangan || '').toLowerCase();
+        if (!userName.includes(q) && !userId.includes(q) && !userEmail.includes(q) && !reqId.includes(q) && !site.includes(q) && !ket.includes(q)) {
+          return false;
+        }
+      }
+
+      // Divisi Filter
+      if (pendingDivisi !== 'ALL' && userDiv.toLowerCase() !== pendingDivisi.toLowerCase()) {
+        return false;
+      }
+
+      // Date Range Filter
+      const reqDate = getTransferRecordDate(r);
+      if (pendingStartDate && (!reqDate || reqDate < pendingStartDate)) return false;
+      if (pendingEndDate && (!reqDate || reqDate > pendingEndDate)) return false;
+
+      return true;
+    }).sort((a, b) => b.id.localeCompare(a.id));
+  }, [requests, uniqueProfiles, pendingSearchQuery, pendingDivisi, pendingStartDate, pendingEndDate, usageItems]);
+
+  const totalPendingTransferAmount = useMemo(() => {
+    return filteredPendingTransfers.reduce((sum, r) => sum + getPendingTransferAmount(r), 0);
+  }, [filteredPendingTransfers, usageItems]);
 
   // 2. FILTERED SALDO DATA
   const filteredSaldoUsers = useMemo(() => {
@@ -390,6 +454,94 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
       doc.save(`Laporan_Transfer_Finance_${new Date().toISOString().slice(0, 10)}.pdf`);
 
+    } else if (activeTab === 'PENDING_TRANSFER') {
+      doc.setFontSize(11);
+      doc.setTextColor(180, 83, 9);
+      doc.text('LAPORAN DAFTAR UID MENUNGGU TRANSFER FINANCE', 42, 18);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 116, 139);
+      const periodeText = `Periode: ${pendingStartDate || 'Semua'} s/d ${pendingEndDate || 'Semua'} | Pencarian: ${pendingSearchQuery.trim() || 'Semua'} | Divisi: ${pendingDivisi === 'ALL' ? 'Semua Divisi' : pendingDivisi}`;
+      doc.text(periodeText, 42, 23);
+      doc.text(`Dicetak Pada: ${nowStr}`, 255, 23, { align: 'right' });
+
+      // Summary Box
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(254, 243, 199);
+      doc.roundedRect(14, 27, 269, 12, 2, 2, 'FD');
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(120, 53, 15);
+      doc.text(`Total Pengajuan: ${filteredPendingTransfers.length} UID Menunggu Transfer`, 20, 34.5);
+      doc.text(`Total Estimasi Nominal Transfer: ${formatIDR(totalPendingTransferAmount)}`, 160, 34.5);
+
+      // Table Data
+      const tableRows = filteredPendingTransfers.map((r, idx) => {
+        const userProf = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+        const userNama = userProf?.nama || r.userEmail;
+        const divisi = userProf?.divisi || '-';
+        const tgl = formatDateDisplay(getTransferRecordDate(r));
+        const approvedAmt = getPendingTransferAmount(r);
+        const statusLabel = r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+          ? 'Transfer Talangan'
+          : r.status === RequestStatus.PARTIALLY_APPROVED
+          ? 'Disetujui Sebagian'
+          : 'Disetujui Manager';
+
+        return [
+          idx + 1,
+          r.id,
+          tgl,
+          `${userNama}\n(${r.userEmail})`,
+          divisi,
+          r.siteId || '-',
+          r.keterangan || '-',
+          formatIDR(r.jumlahPengajuan || 0),
+          formatIDR(approvedAmt),
+          statusLabel
+        ];
+      });
+
+      autoTable(doc, {
+        startY: 42,
+        head: [['No', 'UID Pengajuan', 'Tanggal', 'Pemohon / User', 'Divisi', 'Site ID', 'Kebutuhan', 'Pengajuan', 'Est. Transfer', 'Status']],
+        body: tableRows,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [180, 83, 9], // amber-700
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: 'bold',
+          halign: 'center'
+        },
+        bodyStyles: {
+          fontSize: 8,
+          textColor: [51, 65, 85]
+        },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 10 },
+          1: { cellWidth: 28, fontStyle: 'bold' },
+          2: { halign: 'center', cellWidth: 22 },
+          3: { cellWidth: 42 },
+          4: { cellWidth: 25 },
+          5: { cellWidth: 22 },
+          6: { cellWidth: 42 },
+          7: { halign: 'right', cellWidth: 26 },
+          8: { halign: 'right', fontStyle: 'bold', cellWidth: 28 },
+          9: { halign: 'center', cellWidth: 24 }
+        },
+        foot: [[
+          { content: 'TOTAL MENUNGGU TRANSFER', colSpan: 8, styles: { halign: 'right', fontStyle: 'bold', fillColor: [254, 243, 199] } },
+          { content: formatIDR(totalPendingTransferAmount), styles: { halign: 'right', fontStyle: 'bold', textColor: [180, 83, 9], fillColor: [254, 243, 199] } },
+          { content: '', styles: { fillColor: [254, 243, 199] } }
+        ]],
+        margin: { left: 14, right: 14 }
+      });
+
+      doc.save(`Laporan_Menunggu_Transfer_Finance_${new Date().toISOString().slice(0, 10)}.pdf`);
+
     } else {
       // SALDO USER PDF
       doc.setFontSize(11);
@@ -481,6 +633,452 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
     }
   };
 
+  // Excel Export Generator Function (matching exact sample layout & metadata specifications)
+  const generateExcel = async () => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const exportDateTimeStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}  ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    const todayFilename = new Date().toISOString().slice(0, 10);
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'PT. DEPORINDO TELEKOMUNIKASI';
+    workbook.created = new Date();
+
+    if (activeTab === 'TRANSFER') {
+      const sheet = workbook.addWorksheet('Laporan Transfer');
+
+      // Title Block
+      const row1 = sheet.addRow(['PT. DEPORINDO TELEKOMUNIKASI']);
+      row1.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
+
+      const row2 = sheet.addRow(['LAPORAN TRANSFER']);
+      row2.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
+
+      sheet.addRow([]); // Blank row 3
+
+      // Metadata Block (Rows 4-7)
+      const userText = transferUserName.trim() ? transferUserName.trim() : '';
+      const tglMulaiText = transferStartDate ? formatDateDisplay(transferStartDate) : '';
+      const tglSelesaiText = transferEndDate ? formatDateDisplay(transferEndDate) : '';
+      const divisiText = transferDivisi !== 'ALL' ? transferDivisi : '';
+
+      const metaUser = sheet.addRow(['User', userText]);
+      const metaRange = sheet.addRow(['Rentang waktu', tglMulaiText, '', tglSelesaiText]);
+      const metaDivisi = sheet.addRow(['Divisi', divisiText]);
+      const metaDate = sheet.addRow(['Tanggal export :', exportDateTimeStr]);
+
+      // Fill gray background for metadata block across columns 1..10
+      [metaUser, metaRange, metaDivisi, metaDate].forEach(row => {
+        for (let col = 1; col <= 10; col++) {
+          const cell = row.getCell(col);
+          cell.font = { name: 'Calibri', size: 10 };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFEFEFEF' }
+          };
+        }
+      });
+
+      sheet.addRow([]); // Blank row 8
+
+      // Table Header Row (Row 9)
+      const headerRow = sheet.addRow([
+        'No',
+        'UID Pengajuan',
+        'Tanggal Transfer',
+        'Pemohon / User',
+        'Email User',
+        'Divisi',
+        'Site ID',
+        'Kebutuhan / Keterangan',
+        'Nominal Transfer (Rp)',
+        'Status'
+      ]);
+
+      headerRow.height = 24;
+      headerRow.eachCell((cell) => {
+        cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF0F2942' } // Dark Navy Blue matching image
+        };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF0F2942' } },
+          bottom: { style: 'thin', color: { argb: 'FF0F2942' } },
+          left: { style: 'thin', color: { argb: 'FF0F2942' } },
+          right: { style: 'thin', color: { argb: 'FF0F2942' } }
+        };
+      });
+
+      // Data Rows
+      filteredTransfers.forEach((r, idx) => {
+        const userProf = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+        const userNama = userProf?.nama || r.userEmail;
+        const divisi = userProf?.divisi || '-';
+        const tgl = formatDateDisplay(getTransferRecordDate(r));
+
+        const row = sheet.addRow([
+          idx + 1,
+          r.id,
+          tgl,
+          userNama,
+          r.userEmail,
+          divisi,
+          r.siteId || '-',
+          r.keterangan || '-',
+          r.adminActionAmount || 0,
+          r.status || 'CLOSED'
+        ]);
+
+        row.height = 20;
+
+        // Alternating Sage Green background color matching sample image
+        const isEven = idx % 2 === 0;
+        const bgColor = isEven ? 'FFE2EFCB' : 'FFEEF4E3';
+
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          cell.font = { name: 'Calibri', size: 10 };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: bgColor }
+          };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFCBDDAF' } },
+            bottom: { style: 'thin', color: { argb: 'FFCBDDAF' } },
+            left: { style: 'thin', color: { argb: 'FFCBDDAF' } },
+            right: { style: 'thin', color: { argb: 'FFCBDDAF' } }
+          };
+
+          if (colNumber === 1) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          } else if (colNumber === 3 || colNumber === 6 || colNumber === 10) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          } else if (colNumber === 9) {
+            cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            cell.numFmt = '#,##0';
+          } else {
+            cell.alignment = { horizontal: 'left', vertical: 'middle' };
+          }
+        });
+      });
+
+      // Set explicit Column widths
+      sheet.columns = [
+        { width: 6 },  // No
+        { width: 22 }, // UID
+        { width: 18 }, // Tanggal
+        { width: 26 }, // Pemohon
+        { width: 32 }, // Email
+        { width: 14 }, // Divisi
+        { width: 20 }, // Site ID
+        { width: 45 }, // Kebutuhan
+        { width: 24 }, // Nominal Transfer
+        { width: 14 }  // Status
+      ];
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Laporan_Transfer_Finance_${todayFilename}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+
+    } else if (activeTab === 'PENDING_TRANSFER') {
+      const sheet = workbook.addWorksheet('Menunggu Transfer');
+
+      // Title Block
+      const row1 = sheet.addRow(['PT. DEPORINDO TELEKOMUNIKASI']);
+      row1.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
+
+      const row2 = sheet.addRow(['LAPORAN DAFTAR UID MENUNGGU TRANSFER']);
+      row2.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
+
+      sheet.addRow([]);
+
+      // Metadata Block
+      const tglMulaiText = pendingStartDate ? formatDateDisplay(pendingStartDate) : '';
+      const tglSelesaiText = pendingEndDate ? formatDateDisplay(pendingEndDate) : '';
+      const divisiText = pendingDivisi !== 'ALL' ? pendingDivisi : '';
+      const userSearchText = pendingSearchQuery.trim() ? pendingSearchQuery.trim() : '';
+
+      const metaSearch = sheet.addRow(['User / Pencarian', userSearchText]);
+      const metaRange = sheet.addRow(['Rentang waktu', tglMulaiText, '', tglSelesaiText]);
+      const metaDivisi = sheet.addRow(['Divisi', divisiText]);
+      const metaDate = sheet.addRow(['Tanggal export :', exportDateTimeStr]);
+
+      [metaSearch, metaRange, metaDivisi, metaDate].forEach(row => {
+        for (let col = 1; col <= 10; col++) {
+          const cell = row.getCell(col);
+          cell.font = { name: 'Calibri', size: 10 };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFEFEFEF' }
+          };
+        }
+      });
+
+      sheet.addRow([]);
+
+      // Table Header Row
+      const headerRow = sheet.addRow([
+        'No',
+        'UID Pengajuan',
+        'Tanggal Pengajuan',
+        'Pemohon / User',
+        'Email User',
+        'Divisi',
+        'Site ID',
+        'Kebutuhan / Keterangan',
+        'Nominal Pengajuan (Rp)',
+        'Estimasi Transfer (Rp)',
+        'Status Persetujuan'
+      ]);
+
+      headerRow.height = 24;
+      headerRow.eachCell((cell) => {
+        cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF78350F' } // Amber Brown/Navy
+        };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF78350F' } },
+          bottom: { style: 'thin', color: { argb: 'FF78350F' } },
+          left: { style: 'thin', color: { argb: 'FF78350F' } },
+          right: { style: 'thin', color: { argb: 'FF78350F' } }
+        };
+      });
+
+      // Data Rows
+      filteredPendingTransfers.forEach((r, idx) => {
+        const userProf = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+        const userNama = userProf?.nama || r.userEmail;
+        const divisi = userProf?.divisi || '-';
+        const tgl = formatDateDisplay(getTransferRecordDate(r));
+        const pendingAmt = getPendingTransferAmount(r);
+        const statusLabel = r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+          ? 'Transfer Talangan'
+          : r.status === RequestStatus.PARTIALLY_APPROVED
+          ? 'Disetujui Sebagian'
+          : 'Disetujui Manager';
+
+        const row = sheet.addRow([
+          idx + 1,
+          r.id,
+          tgl,
+          userNama,
+          r.userEmail,
+          divisi,
+          r.siteId || '-',
+          r.keterangan || '-',
+          r.jumlahPengajuan || 0,
+          pendingAmt,
+          statusLabel
+        ]);
+
+        row.height = 20;
+
+        const isEven = idx % 2 === 0;
+        const bgColor = isEven ? 'FFFEF3C7' : 'FFFFFBEB';
+
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          cell.font = { name: 'Calibri', size: 10 };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: bgColor }
+          };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFFCD34D' } },
+            bottom: { style: 'thin', color: { argb: 'FFFCD34D' } },
+            left: { style: 'thin', color: { argb: 'FFFCD34D' } },
+            right: { style: 'thin', color: { argb: 'FFFCD34D' } }
+          };
+
+          if (colNumber === 1) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          } else if (colNumber === 3 || colNumber === 6 || colNumber === 11) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          } else if (colNumber === 9 || colNumber === 10) {
+            cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            cell.numFmt = '#,##0';
+          } else {
+            cell.alignment = { horizontal: 'left', vertical: 'middle' };
+          }
+        });
+      });
+
+      sheet.columns = [
+        { width: 6 },  // No
+        { width: 22 }, // UID
+        { width: 18 }, // Tanggal
+        { width: 26 }, // Pemohon
+        { width: 32 }, // Email
+        { width: 14 }, // Divisi
+        { width: 20 }, // Site ID
+        { width: 45 }, // Kebutuhan
+        { width: 22 }, // Pengajuan
+        { width: 24 }, // Estimasi Transfer
+        { width: 20 }  // Status
+      ];
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Laporan_Menunggu_Transfer_Finance_${todayFilename}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+
+    } else if (activeTab === 'SALDO') {
+      const sheet = workbook.addWorksheet('Saldo Operasional');
+
+      // Title Block
+      const row1 = sheet.addRow(['PT. DEPORINDO TELEKOMUNIKASI']);
+      row1.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
+
+      const row2 = sheet.addRow(['LAPORAN SALDO OPERASIONAL USER']);
+      row2.getCell(1).font = { name: 'Calibri', size: 11, bold: true };
+
+      sheet.addRow([]);
+
+      // Metadata Block
+      const divisiText = saldoDivisi !== 'ALL' ? saldoDivisi : '';
+      const userText = saldoUser !== 'ALL' ? saldoUser : '';
+
+      const metaUser = sheet.addRow(['User Filter', userText]);
+      const metaDivisi = sheet.addRow(['Divisi Filter', divisiText]);
+      const metaDate = sheet.addRow(['Tanggal export :', exportDateTimeStr]);
+
+      [metaUser, metaDivisi, metaDate].forEach(row => {
+        for (let col = 1; col <= 10; col++) {
+          const cell = row.getCell(col);
+          cell.font = { name: 'Calibri', size: 10 };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFEFEFEF' }
+          };
+        }
+      });
+
+      sheet.addRow([]);
+
+      // Table Header Row
+      const headerRow = sheet.addRow([
+        'No',
+        'Nama Personel',
+        'Email User',
+        'Divisi',
+        'Manager Email',
+        'Jumlah Transfer (Kali)',
+        'Total Transfer Received (Rp)',
+        'Total Usage Disetujui (Rp)',
+        'Sisa Saldo Operasional (Rp)',
+        'Status Balance'
+      ]);
+
+      headerRow.height = 24;
+      headerRow.eachCell((cell) => {
+        cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF0F2942' }
+        };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FF0F2942' } },
+          bottom: { style: 'thin', color: { argb: 'FF0F2942' } },
+          left: { style: 'thin', color: { argb: 'FF0F2942' } },
+          right: { style: 'thin', color: { argb: 'FF0F2942' } }
+        };
+      });
+
+      // Data Rows
+      filteredSaldoUsers.forEach((item, idx) => {
+        const u = item.user;
+        const isBalanced = Math.abs(item.balance) < 0.01;
+        const hasPositiveBalance = item.balance > 0;
+        const statusStr = isBalanced ? 'BALANCE (Rp 0)' : hasPositiveBalance ? 'MEMEGANG SALDO' : 'SURPLUS / DEFISIT';
+
+        const row = sheet.addRow([
+          idx + 1,
+          u.nama || u.userId || u.email,
+          u.email,
+          u.divisi || '-',
+          u.managerEmail || '-',
+          item.transferCount,
+          item.totalTransferred,
+          item.totalReportedApproved,
+          item.balance,
+          statusStr
+        ]);
+
+        row.height = 20;
+
+        const isEven = idx % 2 === 0;
+        const bgColor = isEven ? 'FFE2EFCB' : 'FFEEF4E3';
+
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          cell.font = { name: 'Calibri', size: 10 };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: bgColor }
+          };
+          cell.border = {
+            top: { style: 'thin', color: { argb: 'FFCBDDAF' } },
+            bottom: { style: 'thin', color: { argb: 'FFCBDDAF' } },
+            left: { style: 'thin', color: { argb: 'FFCBDDAF' } },
+            right: { style: 'thin', color: { argb: 'FFCBDDAF' } }
+          };
+
+          if (colNumber === 1 || colNumber === 4 || colNumber === 6 || colNumber === 10) {
+            cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          } else if (colNumber === 7 || colNumber === 8 || colNumber === 9) {
+            cell.alignment = { horizontal: 'right', vertical: 'middle' };
+            cell.numFmt = '#,##0';
+          } else {
+            cell.alignment = { horizontal: 'left', vertical: 'middle' };
+          }
+        });
+      });
+
+      sheet.columns = [
+        { width: 6 },  // No
+        { width: 28 }, // Nama
+        { width: 32 }, // Email
+        { width: 14 }, // Divisi
+        { width: 32 }, // Manager
+        { width: 20 }, // Count
+        { width: 26 }, // Total Transfer
+        { width: 26 }, // Total Usage
+        { width: 26 }, // Sisa Saldo
+        { width: 20 }  // Status
+      ];
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Laporan_Saldo_Operasional_User_${todayFilename}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -508,42 +1106,64 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
         </div>
 
         {/* Tab Selection Navigation */}
-        <div className="bg-slate-100/80 p-2 border-b border-slate-200 flex items-center justify-between gap-2 shrink-0">
-          <div className="flex items-center gap-1.5 w-full sm:w-auto">
+        <div className="bg-slate-100/80 p-2 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
             <button
               type="button"
               onClick={() => setActiveTab('TRANSFER')}
-              className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
                 activeTab === 'TRANSFER'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'bg-white text-slate-600 hover:bg-slate-200/70 border border-slate-200'
               }`}
             >
               <ArrowUpRight className="w-3.5 h-3.5" />
-              <span>1. Daftar Transfer Finance</span>
+              <span>1. Transfer Finance</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('PENDING_TRANSFER')}
+              className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                activeTab === 'PENDING_TRANSFER'
+                  ? 'bg-amber-600 text-white shadow-sm'
+                  : 'bg-white text-slate-600 hover:bg-slate-200/70 border border-slate-200'
+              }`}
+            >
+              <Clock className="w-3.5 h-3.5" />
+              <span>2. Menunggu Transfer ({filteredPendingTransfers.length})</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('SALDO')}
-              className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+              className={`flex-1 sm:flex-initial px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
                 activeTab === 'SALDO'
                   ? 'bg-indigo-600 text-white shadow-sm'
                   : 'bg-white text-slate-600 hover:bg-slate-200/70 border border-slate-200'
               }`}
             >
               <User className="w-3.5 h-3.5" />
-              <span>2. Daftar Saldo Operasional User</span>
+              <span>3. Saldo Operasional User</span>
             </button>
           </div>
 
-          <button
-            type="button"
-            onClick={generatePDF}
-            className="hidden sm:inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer active:scale-95"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>Cetak PDF Laporan</span>
-          </button>
+          <div className="hidden sm:flex items-center gap-2 ml-auto">
+            <button
+              type="button"
+              onClick={generateExcel}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer active:scale-95"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
+              <span>Export Excel (.xlsx)</span>
+            </button>
+            <button
+              type="button"
+              onClick={generatePDF}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer active:scale-95"
+            >
+              <Download className="w-3.5 h-3.5 text-indigo-200" />
+              <span>Cetak PDF Laporan</span>
+            </button>
+          </div>
         </div>
 
         {/* Content Body */}
@@ -710,7 +1330,184 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
             </div>
           )}
 
-          {/* TAB 2: DAFTAR SALDO OPERASIONAL USER */}
+          {/* TAB 2: DAFTAR MENUNGGU TRANSFER */}
+          {activeTab === 'PENDING_TRANSFER' && (
+            <div className="space-y-4 animate-fadeIn">
+              {/* Filter Card */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 sm:p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <Filter className="w-4 h-4 text-amber-600" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider">Filter UID Menunggu Transfer</h3>
+                  </div>
+                  {(pendingStartDate || pendingEndDate || pendingDivisi !== 'ALL' || pendingSearchQuery) && (
+                    <button
+                      onClick={() => {
+                        setPendingStartDate('');
+                        setPendingEndDate('');
+                        setPendingDivisi('ALL');
+                        setPendingSearchQuery('');
+                      }}
+                      className="text-[10px] font-bold text-rose-600 hover:underline cursor-pointer"
+                    >
+                      Reset Filter
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Cari UID / User / Site</label>
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        placeholder="Ketik UID, nama, email..."
+                        value={pendingSearchQuery}
+                        onChange={(e) => setPendingSearchQuery(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500 font-medium"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tanggal Mulai</label>
+                    <input
+                      type="date"
+                      value={pendingStartDate}
+                      onChange={(e) => setPendingStartDate(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tanggal Selesai</label>
+                    <input
+                      type="date"
+                      value={pendingEndDate}
+                      onChange={(e) => setPendingEndDate(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Filter Divisi</label>
+                    <select
+                      value={pendingDivisi}
+                      onChange={(e) => setPendingDivisi(e.target.value)}
+                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-amber-500 font-semibold"
+                    >
+                      <option value="ALL">Semua Divisi ({availableDivisions.length})</option>
+                      {availableDivisions.map(div => (
+                        <option key={div} value={div}>{div}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary Header */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Total UID Menunggu Transfer</span>
+                    <span className="text-xl font-display font-bold text-amber-950 mt-0.5 block">{filteredPendingTransfers.length} Pengajuan</span>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+                    #{filteredPendingTransfers.length}
+                  </div>
+                </div>
+
+                <div className="bg-orange-50/70 border border-orange-200/80 rounded-2xl p-4 flex items-center justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold text-orange-800 uppercase tracking-wider block">Total Estimasi Nominal Transfer</span>
+                    <span className="text-xl font-display font-bold text-orange-950 mt-0.5 block">{formatIDR(totalPendingTransferAmount)}</span>
+                  </div>
+                  <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-800 flex items-center justify-center font-bold">
+                    Rp
+                  </div>
+                </div>
+              </div>
+
+              {/* Table List */}
+              <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-900 text-white uppercase text-[9px] font-bold tracking-wider">
+                      <tr>
+                        <th className="py-3 px-3 text-center w-10">No</th>
+                        <th className="py-3 px-3">UID Pengajuan</th>
+                        <th className="py-3 px-3">Tanggal</th>
+                        <th className="py-3 px-3">Pemohon / User</th>
+                        <th className="py-3 px-3">Divisi</th>
+                        <th className="py-3 px-3">Site ID</th>
+                        <th className="py-3 px-3">Kebutuhan</th>
+                        <th className="py-3 px-3 text-right">Pengajuan</th>
+                        <th className="py-3 px-3 text-right">Estimasi Transfer</th>
+                        <th className="py-3 px-3 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {filteredPendingTransfers.length === 0 ? (
+                        <tr>
+                          <td colSpan={10} className="py-8 text-center text-slate-400 italic font-medium">
+                            Tidak ada pengajuan UID yang menunggu transfer saat ini.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredPendingTransfers.map((r, idx) => {
+                          const userProf = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+                          const tgl = formatDateDisplay(getTransferRecordDate(r));
+                          const pendingAmt = getPendingTransferAmount(r);
+
+                          return (
+                            <tr key={r.id} className="hover:bg-amber-50/30 transition-colors">
+                              <td className="py-2.5 px-3 text-center font-mono text-slate-400">{idx + 1}</td>
+                              <td className="py-2.5 px-3 font-mono font-bold text-amber-700">{r.id}</td>
+                              <td className="py-2.5 px-3 text-slate-600 whitespace-nowrap">{tgl}</td>
+                              <td className="py-2.5 px-3">
+                                <div className="font-bold text-slate-800">{userProf?.nama || userProf?.userId || r.userEmail}</div>
+                                <div className="text-[10px] text-slate-400 font-mono">{r.userEmail}</div>
+                              </td>
+                              <td className="py-2.5 px-3">
+                                <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-slate-100 text-slate-700">
+                                  {userProf?.divisi || '-'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3 font-mono text-slate-700">{r.siteId || '-'}</td>
+                              <td className="py-2.5 px-3 text-slate-700 max-w-[180px] truncate" title={r.keterangan}>
+                                {r.keterangan}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-slate-500">
+                                {formatIDR(r.jumlahPengajuan || 0)}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-bold font-mono text-amber-700">
+                                {formatIDR(pendingAmt)}
+                              </td>
+                              <td className="py-2.5 px-3 text-center">
+                                {r.status === RequestStatus.PENDING_TALANGAN_TRANSFER ? (
+                                  <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-purple-50 text-purple-700 border border-purple-200">
+                                    Transfer Talangan
+                                  </span>
+                                ) : r.status === RequestStatus.PARTIALLY_APPROVED ? (
+                                  <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-sky-50 text-sky-700 border border-sky-200">
+                                    Disetujui Sebagian
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 text-[9px] font-bold rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+                                    Disetujui Manager
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: DAFTAR SALDO OPERASIONAL USER */}
           {activeTab === 'SALDO' && (
             <div className="space-y-4 animate-fadeIn">
               {/* Filter Card */}
@@ -893,7 +1690,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
         {/* Footer Actions */}
         <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
           <p className="text-[10px] text-slate-400 font-medium hidden sm:block">
-            * Laporan dapat di-export secara langsung dalam format PDF resmi (ber-logo DEPOTEL &amp; DIOMS) dengan menekan tombol &quot;Cetak PDF Laporan&quot;.
+            * Laporan dapat di-export secara langsung dalam format PDF resmi atau Excel (.xlsx) sesuai dengan filter data yang aktif.
           </p>
           <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             <button
@@ -905,11 +1702,19 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
             </button>
             <button
               type="button"
-              onClick={generatePDF}
-              className="sm:hidden px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+              onClick={generateExcel}
+              className="sm:hidden px-3.5 py-2 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
             >
-              <Download className="w-3.5 h-3.5" />
-              <span>Cetak PDF</span>
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
+              <span>Excel</span>
+            </button>
+            <button
+              type="button"
+              onClick={generatePDF}
+              className="sm:hidden px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5 text-indigo-200" />
+              <span>PDF</span>
             </button>
           </div>
         </div>
