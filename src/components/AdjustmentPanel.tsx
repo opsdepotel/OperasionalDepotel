@@ -173,6 +173,21 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     return Math.abs(balance) > 0.01 && matchSearch;
   });
 
+  // Calculate total required adjustment nominal for all unbalanced users
+  const totalAdjustmentNominalAllUsers = useMemo(() => {
+    return unbalancedUsers.reduce((sum, user) => {
+      const summary = getUserSummary(user.email);
+      return sum + summary.requiredNominal;
+    }, 0);
+  }, [unbalancedUsers, requests, usageItems]);
+
+  // Adjustment transaction history
+  const adjustmentHistoryRequests = useMemo(() => {
+    return requests
+      .filter(r => r.siteId === 'ADJUSTMENT')
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+  }, [requests]);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
@@ -691,21 +706,6 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       </div>
     );
   }
-
-  // Calculate total required adjustment nominal for all unbalanced users
-  const totalAdjustmentNominalAllUsers = useMemo(() => {
-    return unbalancedUsers.reduce((sum, user) => {
-      const summary = getUserSummary(user.email);
-      return sum + summary.requiredNominal;
-    }, 0);
-  }, [unbalancedUsers, requests, usageItems]);
-
-  // Adjustment transaction history
-  const adjustmentHistoryRequests = useMemo(() => {
-    return requests
-      .filter(r => r.siteId === 'ADJUSTMENT')
-      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-  }, [requests]);
 
   // Otherwise, render list of unbalanced users
   return (
