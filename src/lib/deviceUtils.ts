@@ -43,38 +43,25 @@ function setCookie(name: string, value: string, days = 3650) {
 }
 
 /**
- * Computes a stable, deterministic hardware & browser fingerprint seed.
- * This remains constant for the same device hardware even if local storage / site data is cleared.
+ * Computes a unique, persistent hardware & device fingerprint seed.
+ * Includes unique random entropy (UUID) combined with screen specs to ensure 
+ * identical phone models (e.g. 2 Samsung A14 devices) do NOT get collision Device IDs.
  */
 export function generateHardwareFingerprint(): string {
   if (typeof window === 'undefined') return 'DEV-FPRT-UNKNOWN';
 
-  const nav = navigator as any;
   const screen = window.screen;
-
-  const components = [
-    nav.userAgent || '',
-    nav.language || '',
-    screen.width || 0,
-    screen.height || 0,
-    screen.colorDepth || 0,
-    window.devicePixelRatio || 1,
-    nav.hardwareConcurrency || 2,
-    nav.maxTouchPoints || 0,
-    Intl.DateTimeFormat().resolvedOptions().timeZone || ''
-  ];
-
-  const rawString = components.join('|');
-  let hash = 0;
-  for (let i = 0; i < rawString.length; i++) {
-    const char = rawString.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
-    hash |= 0;
+  const screenPart = `${screen.width || 0}x${screen.height || 0}`;
+  
+  // Use crypto.randomUUID if available, or timestamp + random seed
+  let randomSeed = '';
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    randomSeed = crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
+  } else {
+    randomSeed = (Date.now().toString(36) + Math.random().toString(36).substring(2, 6)).toUpperCase();
   }
 
-  const positiveHash = Math.abs(hash).toString(36).toUpperCase();
-  const screenPart = `${screen.width || 0}x${screen.height || 0}`;
-  return `DEV-FPRT-${screenPart}-${positiveHash}`;
+  return `DEV-MOB-${screenPart}-${randomSeed}`;
 }
 
 /**

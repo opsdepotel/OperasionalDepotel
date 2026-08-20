@@ -573,7 +573,7 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
           </span>
         </div>
         <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
-          Daftar seluruh pengajuan UID yang telah ditransfer oleh Finance. Klik pada kartu UID untuk melihat rincian transfer, bukti transfer, dan laporan penggunaan.
+          Daftar seluruh pengajuan UID yang telah ditransfer oleh Finance.
         </p>
 
         {/* Date Filter & Search Input */}
@@ -644,7 +644,7 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
             return (
               <div
                 key={req.id}
-                className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm relative overflow-hidden flex flex-col justify-between space-y-3"
+                className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs relative overflow-hidden flex flex-col justify-between space-y-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
@@ -678,9 +678,11 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap text-[10px] text-slate-500 font-medium">
-                  <div className="truncate max-w-[260px] sm:max-w-[360px]">
-                    <span className="truncate block">Keterangan: <strong className="text-slate-700">{req.keterangan}</strong></span>
+                <div className="pt-2 border-t border-slate-100 space-y-2 text-[10px] text-slate-500 font-medium">
+                  <div>
+                    <span className="block truncate text-slate-600">
+                      Keterangan: <strong className="text-slate-700">{req.keterangan}</strong>
+                    </span>
                     <span className="text-slate-400 text-[9px] font-mono mt-0.5 block">
                       {(() => {
                         const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
@@ -690,11 +692,12 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center justify-start pt-0.5">
                     {req.buktiTransferUrl ? (
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation();
                           if (onPreviewDocument) {
                             onPreviewDocument({
                               url: req.buktiTransferUrl,
@@ -705,7 +708,7 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
                             window.open(req.buktiTransferUrl, '_blank');
                           }
                         }}
-                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm rounded-xl text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm rounded-xl text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer"
                       >
                         <Eye className="w-3.5 h-3.5" />
                         <span>Lihat Bukti Transfer</span>
