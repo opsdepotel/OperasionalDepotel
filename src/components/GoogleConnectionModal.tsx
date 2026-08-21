@@ -7,13 +7,9 @@ import React, { useState } from 'react';
 import { 
   AlertTriangle, 
   RefreshCw, 
-  LogIn, 
   CheckCircle2, 
   X, 
   Link2Off, 
-  FileSpreadsheet, 
-  HardDrive,
-  Clock,
   ShieldCheck,
   Zap
 } from 'lucide-react';
@@ -120,7 +116,7 @@ export const GoogleConnectionModal: React.FC<GoogleConnectionModalProps> = ({
                   Sesi Autentikasi Google Telah Berakhir
                 </p>
                 <p className="text-[11.5px] text-amber-800 leading-relaxed font-normal">
-                  Koneksi akses Google Sheets Database & Google Drive Anda terputus (kebijakan keamanan token Google berlaku selama 60 menit).
+                  Kebijakan keamanan token Google berlaku selama 60 menit.
                 </p>
               </div>
             </div>
@@ -129,37 +125,8 @@ export const GoogleConnectionModal: React.FC<GoogleConnectionModalProps> = ({
             <div className="bg-white/90 border border-amber-200/80 rounded-xl p-2.5 flex items-center gap-2 text-slate-700">
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
               <p className="text-[11px] text-slate-600 leading-tight">
-                <strong className="text-slate-800 font-semibold">Data Anda Aman:</strong> Formulir, input, dan layar kerja yang sedang Anda buka <strong>tidak akan hilang</strong>.
+                Formulir, input, dan layar kerja yang sedang Anda buka <strong>tidak akan hilang</strong>.
               </p>
-            </div>
-          </div>
-
-          {/* Connection Context Info */}
-          <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2 text-xs">
-            <div className="flex items-center justify-between text-slate-600 pb-2 border-b border-slate-200/60">
-              <span className="text-slate-500 font-medium">Akun Google Terdaftar:</span>
-              <span className="font-semibold text-slate-800 bg-white px-2 py-0.5 rounded-lg border border-slate-200 text-[11px] max-w-[200px] truncate">
-                {userEmail || 'ops.depotel@gmail.com'}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between text-slate-600 pb-2 border-b border-slate-200/60">
-              <span className="text-slate-500 font-medium">Layanan Terpengaruh:</span>
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-slate-700 bg-white px-2 py-0.5 rounded-lg border border-slate-200">
-                  <FileSpreadsheet className="w-3 h-3 text-emerald-600" /> Sheets
-                </span>
-                <span className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-slate-700 bg-white px-2 py-0.5 rounded-lg border border-slate-200">
-                  <HardDrive className="w-3 h-3 text-blue-600" /> Drive
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-slate-600">
-              <span className="text-slate-500 font-medium">Tindakan Diperlukan:</span>
-              <span className="text-amber-700 font-bold text-[11px]">
-                Hubungkan Ulang sebelum Transaksi
-              </span>
             </div>
           </div>
         </div>
@@ -186,7 +153,7 @@ export const GoogleConnectionModal: React.FC<GoogleConnectionModalProps> = ({
             ) : (
               <>
                 <Zap className="w-4 h-4 fill-amber-200 text-amber-200" />
-                <span>1-Klik Koneksi / Perbarui Sesi Google</span>
+                <span>Perbarui Sesi Google</span>
               </>
             )}
           </button>

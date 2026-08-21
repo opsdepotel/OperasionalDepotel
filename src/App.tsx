@@ -337,7 +337,28 @@ export default function App() {
         fetchItemReviewHistories(accessToken, sheetId)
       ]);
 
-      setRequests(allReqs.sort((a, b) => b.id.localeCompare(a.id))); // Newest first
+      // Synchronize Dana Talangan requests' JumlahPengajuan with total nominal of their items
+      const synchronizedReqs = allReqs.map(req => {
+        const isTalangan = req.id.startsWith('OPT-') || 
+          req.id.startsWith('BBMDS') || 
+          req.id.startsWith('BBM_DurenSawit') || 
+          req.tipePengajuan === 'DANA_TALANGAN' || 
+          req.keterangan.startsWith('[DANA TALANGAN]');
+        
+        if (isTalangan) {
+          const reqItems = allItems.filter(i => i.requestId === req.id);
+          if (reqItems.length > 0) {
+            const sumNominal = reqItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+            if (req.jumlahPengajuan !== sumNominal) {
+              return { ...req, jumlahPengajuan: sumNominal };
+            }
+          }
+        }
+        return req;
+      });
+
+      const sortedReqs = synchronizedReqs.sort((a, b) => b.id.localeCompare(a.id));
+      setRequests(sortedReqs); // Newest first
       setUsageItems(allItems);
       setProfiles(allProfs);
       setSites(allSites);
@@ -345,7 +366,7 @@ export default function App() {
       setResetDeviceLogs(allResetLogs.sort((a, b) => b.id.localeCompare(a.id)));
       setItemReviewHistories(allHistories.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
       setIsTokenExpired(false);
-      localStorage.setItem('op_app_cached_requests', JSON.stringify(allReqs));
+      localStorage.setItem('op_app_cached_requests', JSON.stringify(sortedReqs));
       localStorage.setItem('op_app_cached_usage_items', JSON.stringify(allItems));
       localStorage.setItem('op_app_cached_profiles', JSON.stringify(allProfs));
       localStorage.setItem('op_app_cached_sites', JSON.stringify(allSites));
@@ -354,7 +375,7 @@ export default function App() {
       localStorage.setItem('op_app_cached_item_review_histories', JSON.stringify(allHistories));
 
       if (selectedRequest) {
-        const freshReq = allReqs.find(r => r.id === selectedRequest.id);
+        const freshReq = sortedReqs.find(r => r.id === selectedRequest.id);
         if (freshReq) {
           setSelectedRequest(freshReq);
         }
@@ -1254,17 +1275,36 @@ export default function App() {
 
   // Workflow Action 4: User Usage Reporting Management
   const handleAddUsageItem = async (newItem: UsageReportItem) => {
-    setUsageItems(prev => [...prev.filter(i => i.id !== newItem.id), newItem]);
-    if (selectedRequest && selectedRequest.status === RequestStatus.TRANSFERRED) {
-      const updatedReq = { ...selectedRequest, status: RequestStatus.REPORTING };
-      setSelectedRequest(updatedReq);
-      setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
-      if (token && spreadsheetId) {
-        runGoogleAction(
-          () => updateBudgetRequest(token, spreadsheetId, updatedReq),
-          'Gagal memperbarui status pengajuan.'
-        ).catch(console.error);
+    const updatedUsageItems = [...usageItems.filter(i => i.id !== newItem.id), newItem];
+    setUsageItems(updatedUsageItems);
+
+    const targetReq = requests.find(r => r.id === newItem.requestId) || (selectedRequest?.id === newItem.requestId ? selectedRequest : null);
+    const isTalangan = targetReq && (
+      targetReq.id.startsWith('OPT-') ||
+      targetReq.id.startsWith('BBMDS') ||
+      targetReq.id.startsWith('BBM_DurenSawit') ||
+      targetReq.tipePengajuan === 'DANA_TALANGAN' ||
+      targetReq.keterangan.startsWith('[DANA TALANGAN]')
+    );
+
+    let updatedReq: BudgetRequest | null = null;
+    if (targetReq) {
+      if (isTalangan) {
+        const reqItems = updatedUsageItems.filter(i => i.requestId === targetReq.id);
+        const totalNominal = reqItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+        updatedReq = {
+          ...targetReq,
+          jumlahPengajuan: totalNominal,
+          status: targetReq.status === RequestStatus.TRANSFERRED ? RequestStatus.REPORTING : targetReq.status
+        };
+      } else if (targetReq.status === RequestStatus.TRANSFERRED) {
+        updatedReq = { ...targetReq, status: RequestStatus.REPORTING };
       }
+    }
+
+    if (updatedReq) {
+      setSelectedRequest(updatedReq);
+      setRequests(prev => prev.map(r => r.id === updatedReq!.id ? updatedReq! : r));
     }
 
     const currentToken = token || 'mock_demo_token';
@@ -1294,6 +1334,9 @@ export default function App() {
     const success = await runGoogleAction(
       async () => {
         await createUsageItem(currentToken, currentSheetId, newItem);
+        if (updatedReq) {
+          await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
+        }
         await createItemReviewHistory(currentToken, currentSheetId, createHistoryLog);
       },
       'Gagal menambahkan item penggunaan.'
@@ -1306,17 +1349,36 @@ export default function App() {
   };
 
   const handleUpdateUsageItem = async (updatedItem: UsageReportItem) => {
-    setUsageItems(prev => prev.map(i => i.id === updatedItem.id ? updatedItem : i));
-    if (selectedRequest && selectedRequest.status === RequestStatus.TRANSFERRED) {
-      const updatedReq = { ...selectedRequest, status: RequestStatus.REPORTING };
-      setSelectedRequest(updatedReq);
-      setRequests(prev => prev.map(r => r.id === updatedReq.id ? updatedReq : r));
-      if (token && spreadsheetId) {
-        runGoogleAction(
-          () => updateBudgetRequest(token, spreadsheetId, updatedReq),
-          'Gagal memperbarui status pengajuan.'
-        ).catch(console.error);
+    const updatedUsageItems = usageItems.map(i => i.id === updatedItem.id ? updatedItem : i);
+    setUsageItems(updatedUsageItems);
+
+    const targetReq = requests.find(r => r.id === updatedItem.requestId) || (selectedRequest?.id === updatedItem.requestId ? selectedRequest : null);
+    const isTalangan = targetReq && (
+      targetReq.id.startsWith('OPT-') ||
+      targetReq.id.startsWith('BBMDS') ||
+      targetReq.id.startsWith('BBM_DurenSawit') ||
+      targetReq.tipePengajuan === 'DANA_TALANGAN' ||
+      targetReq.keterangan.startsWith('[DANA TALANGAN]')
+    );
+
+    let updatedReq: BudgetRequest | null = null;
+    if (targetReq) {
+      if (isTalangan) {
+        const reqItems = updatedUsageItems.filter(i => i.requestId === targetReq.id);
+        const totalNominal = reqItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+        updatedReq = {
+          ...targetReq,
+          jumlahPengajuan: totalNominal,
+          status: targetReq.status === RequestStatus.TRANSFERRED ? RequestStatus.REPORTING : targetReq.status
+        };
+      } else if (targetReq.status === RequestStatus.TRANSFERRED) {
+        updatedReq = { ...targetReq, status: RequestStatus.REPORTING };
       }
+    }
+
+    if (updatedReq) {
+      setSelectedRequest(updatedReq);
+      setRequests(prev => prev.map(r => r.id === updatedReq!.id ? updatedReq! : r));
     }
 
     const currentToken = token || 'mock_demo_token';
@@ -1346,6 +1408,9 @@ export default function App() {
     const success = await runGoogleAction(
       async () => {
         await updateUsageItem(currentToken, currentSheetId, updatedItem);
+        if (updatedReq) {
+          await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
+        }
         await createItemReviewHistory(currentToken, currentSheetId, editHistoryLog);
       },
       'Gagal memperbarui item penggunaan.'
@@ -1359,10 +1424,43 @@ export default function App() {
 
 
   const handleDeleteUsageItem = async (itemId: string) => {
-    setUsageItems(prev => prev.filter(i => i.id !== itemId));
+    const deletedItem = usageItems.find(i => i.id === itemId);
+    const updatedUsageItems = usageItems.filter(i => i.id !== itemId);
+    setUsageItems(updatedUsageItems);
+
+    let updatedReq: BudgetRequest | null = null;
+    if (deletedItem) {
+      const targetReq = requests.find(r => r.id === deletedItem.requestId) || (selectedRequest?.id === deletedItem.requestId ? selectedRequest : null);
+      const isTalangan = targetReq && (
+        targetReq.id.startsWith('OPT-') ||
+        targetReq.id.startsWith('BBMDS') ||
+        targetReq.id.startsWith('BBM_DurenSawit') ||
+        targetReq.tipePengajuan === 'DANA_TALANGAN' ||
+        targetReq.keterangan.startsWith('[DANA TALANGAN]')
+      );
+      if (isTalangan && targetReq) {
+        const reqItems = updatedUsageItems.filter(i => i.requestId === targetReq.id);
+        const totalNominal = reqItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+        updatedReq = {
+          ...targetReq,
+          jumlahPengajuan: totalNominal
+        };
+        setSelectedRequest(updatedReq);
+        setRequests(prev => prev.map(r => r.id === updatedReq!.id ? updatedReq! : r));
+      }
+    }
+
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+
     if (token && spreadsheetId) {
       const success = await runGoogleAction(
-        () => deleteUsageItem(token, spreadsheetId, itemId),
+        async () => {
+          await deleteUsageItem(currentToken, currentSheetId, itemId);
+          if (updatedReq) {
+            await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
+          }
+        },
         'Gagal menghapus item penggunaan.'
       );
       if (success !== null) {
