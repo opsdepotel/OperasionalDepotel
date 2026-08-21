@@ -309,11 +309,6 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (isMobileUser) {
-      alert('Akun Anda dikonfigurasi Wajib Mobile. Upload dari galeri/file tidak diizinkan, semua foto nota wajib diambil langsung dari Kamera HP.');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
     if (e.target.files && e.target.files.length > 0) {
       setSelectedFile(e.target.files[0]);
     }
@@ -1275,28 +1270,26 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 />
 
                 {/* Capture/Upload Options Panel */}
-                <div className={isMobileUser ? "grid grid-cols-1 gap-2" : "grid grid-cols-2 gap-2"}>
+                <div className="grid grid-cols-2 gap-2">
                   {/* Native device camera */}
                   <button
                     type="button"
                     onClick={() => cameraInputRef.current?.click()}
-                    className={`p-3 bg-indigo-50/80 hover:bg-indigo-100/80 text-indigo-700 border border-indigo-200/80 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold cursor-pointer ${isMobileUser ? 'py-3.5 shadow-xs' : ''}`}
+                    className="p-3 bg-indigo-50/80 hover:bg-indigo-100/80 text-indigo-700 border border-indigo-200/80 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold cursor-pointer"
                   >
                     <Camera className="w-5 h-5 text-indigo-600" />
                     <span>Kamera HP</span>
                   </button>
 
-                  {/* Choose file / gallery - Only for non-mobile users */}
-                  {!isMobileUser && (
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
-                    >
-                      <UploadCloud className="w-5 h-5 text-indigo-500" />
-                      <span>File / Galeri</span>
-                    </button>
-                  )}
+                  {/* Choose file / gallery */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                  >
+                    <UploadCloud className="w-5 h-5 text-indigo-500" />
+                    <span>File / Galeri</span>
+                  </button>
                 </div>
               </div>
 

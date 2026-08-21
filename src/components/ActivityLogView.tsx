@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud } from 'lucide-react';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
@@ -1169,11 +1169,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         )}
                       </span>
                     </div>
-                  ) : (
+                  ) : isMobileUser ? (
                     <label className="cursor-pointer flex flex-col items-center justify-center py-5 w-full">
                       <Camera className="w-8 h-8 text-indigo-500 mb-2 animate-pulse" />
-                      <span className="text-xs font-bold text-slate-700">Buka Kamera HP</span>
-                      <span className="text-[10px] text-slate-400 mt-1 font-medium">Klik untuk memotret kegiatan lapangan secara real-time</span>
+                      <span className="text-xs font-bold text-slate-700">Buka Kamera HP (Wajib Kamera)</span>
+                      <span className="text-[10px] text-slate-400 mt-1 font-medium">Pengguna Wajib Mobile wajib memotret kegiatan harian langsung dari Kamera HP</span>
                       <input
                         type="file"
                         accept="image/*"
@@ -1184,6 +1184,30 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         required
                       />
                     </label>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2 p-2 w-full">
+                      <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-indigo-50/80 hover:bg-indigo-100/80 text-indigo-700 border border-indigo-200/80 rounded-xl transition-all">
+                        <Camera className="w-5 h-5 text-indigo-600 mb-1" />
+                        <span className="text-[10px] font-bold">Kamera HP</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={handlePhotoChange}
+                          className="hidden"
+                        />
+                      </label>
+                      <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl transition-all">
+                        <UploadCloud className="w-5 h-5 text-indigo-500 mb-1" />
+                        <span className="text-[10px] font-bold text-slate-600">File / Galeri</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={handlePhotoChange}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
                   )}
                 </div>
               </div>

@@ -93,11 +93,6 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 
   // Handle file selection
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (isMobileUser && e.target === fileInputRef.current) {
-      alert('Akun Anda dikonfigurasi Wajib Mobile. Semua foto bukti nota wajib diambil langsung dari Kamera HP.');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setSelectedFile(file);
@@ -566,21 +561,14 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                     <span className="text-[11px] font-bold">Kamera HP (Native)</span>
                   </button>
 
-                  {!isMobileUser ? (
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="py-3 px-3 border-2 border-dashed border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all text-slate-600 cursor-pointer"
-                    >
-                      <UploadCloud className="w-5 h-5 text-slate-500" />
-                      <span className="text-[11px] font-bold">Galeri / File</span>
-                    </button>
-                  ) : (
-                    <div className="py-3 px-3 border border-amber-200 bg-amber-50/50 rounded-2xl flex flex-col items-center justify-center text-center p-2">
-                      <span className="text-[10px] font-bold text-amber-800">Mode Mobile Aktif</span>
-                      <span className="text-[9px] text-amber-600">Hanya Kamera HP diizinkan</span>
-                    </div>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="py-3 px-3 border-2 border-dashed border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all text-slate-600 cursor-pointer"
+                  >
+                    <UploadCloud className="w-5 h-5 text-slate-500" />
+                    <span className="text-[11px] font-bold">Galeri / File</span>
+                  </button>
                 </div>
               )}
             </div>
