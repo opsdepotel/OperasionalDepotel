@@ -1434,6 +1434,12 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 <span className="text-[9px] text-slate-400 font-bold block uppercase">Jumlah Transfer / Penyesuaian</span>
                 <span className="font-bold text-slate-800">{formatIDR(request.adminActionAmount)}</span>
               </div>
+              {request.adminActionTime && (
+                <div>
+                  <span className="text-[9px] text-slate-400 font-bold block uppercase">Waktu Transfer Finance</span>
+                  <span className="font-bold text-emerald-600 font-mono text-[11px]">{request.adminActionTime}</span>
+                </div>
+              )}
             </div>
 
             {/* Inline Preview Window */}

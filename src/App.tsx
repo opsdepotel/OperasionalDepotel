@@ -1032,6 +1032,7 @@ export default function App() {
         const randomDigits = Math.floor(1000 + Math.random() * 9000);
         const uid = `ADJ-${dateStr}-${randomDigits}`;
 
+        const nowTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
         const newRequest: BudgetRequest = {
           id: uid,
           userEmail: targetUserEmail,
@@ -1044,9 +1045,10 @@ export default function App() {
           managerActionAmount: amount,
           managerComment: 'Disetujui otomatis oleh Finance',
           adminActionAmount: amount,
-          createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+          createdAt: nowTime,
           buktiTransferUrl: finalBuktiUrl || undefined,
-          buktiTransferFileId: finalBuktiFileId || undefined
+          buktiTransferFileId: finalBuktiFileId || undefined,
+          adminActionTime: nowTime
         };
 
         await createBudgetRequest(token, spreadsheetId, newRequest);
@@ -1192,13 +1194,15 @@ export default function App() {
     const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.id.startsWith('BBMDS') || transferReq.id.startsWith('BBM_DurenSawit') || transferReq.tipePengajuan === 'DANA_TALANGAN' || transferReq.keterangan.startsWith('[DANA TALANGAN]');
     const isPendingTalanganTransfer = transferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
 
+    const nowActionTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
     const updated: BudgetRequest = {
       ...transferReq,
       status: (isReqTalangan && isPendingTalanganTransfer) ? RequestStatus.CLOSED : RequestStatus.TRANSFERRED,
       adminActionAmount: transferredAmount,
       buktiTransferUrl: buktiUrl,
       buktiTransferFileId: buktiFileId,
-      adminComment: adminComment || ''
+      adminComment: adminComment || '',
+      adminActionTime: nowActionTime
     };
 
     const historyLog: ItemReviewHistory = {
@@ -1735,7 +1739,8 @@ export default function App() {
       ...targetReq,
       adminComment,
       buktiTransferUrl: finalBuktiUrl,
-      buktiTransferFileId: finalBuktiFileId
+      buktiTransferFileId: finalBuktiFileId,
+      adminActionTime: targetReq.adminActionTime || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
     };
 
     const success = await runGoogleAction(

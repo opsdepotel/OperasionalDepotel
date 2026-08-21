@@ -148,7 +148,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
   // Helper to extract transfer date for a request
   const getTransferRecordDate = (r: BudgetRequest): string => {
-    return extractDate(r.createdAt) || extractDate(r.timestamp) || extractDate(r.tanggalPemakaian);
+    return extractDate(r.adminActionTime) || extractDate(r.createdAt) || extractDate(r.timestamp) || extractDate(r.tanggalPemakaian);
   };
 
   // Helper for displaying date formatted DD/MM/YYYY

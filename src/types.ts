@@ -48,6 +48,8 @@ export interface BudgetRequest {
   timestamp?: string;
   buktiTransferUrl?: string;
   buktiTransferFileId?: string;
+  adminActionTime?: string;
+  tipePengajuan?: string;
 }
 
 export interface UsageReportItem {

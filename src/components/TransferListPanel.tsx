@@ -5,7 +5,7 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { UserProfile, Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
-import { ArrowLeft, User, Search, CreditCard, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Eye, Calendar } from 'lucide-react';
+import { ArrowLeft, User, Search, CreditCard, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Eye, Calendar, Clock } from 'lucide-react';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 
 interface TransferListPanelProps {
@@ -32,6 +32,10 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
   onAuthError
 }) => {
   const getTodayDateStr = () => {
+    try {
+      const jakartaStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+      if (/^\d{4}-\d{2}-\d{2}$/.test(jakartaStr)) return jakartaStr;
+    } catch (e) {}
     const d = new Date();
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -106,21 +110,32 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
       if (isBbmRequest(r) || r.status === RequestStatus.CANCELLED) return false;
       return (r.adminActionAmount || 0) > 0;
     }).sort((a, b) => {
-      const timeA = new Date(a.createdAt || a.timestamp || 0).getTime();
-      const timeB = new Date(b.createdAt || b.timestamp || 0).getTime();
-      return timeB - timeA;
+      const getTimestamp = (req: BudgetRequest) => {
+        if (req.adminActionTime) {
+          const parsed = parseDateToYYYYMMDD(req.adminActionTime);
+          const t = new Date(req.adminActionTime).getTime();
+          if (!isNaN(t) && t > 0) return t;
+          if (parsed) return new Date(parsed).getTime();
+        }
+        return new Date(req.createdAt || req.timestamp || 0).getTime();
+      };
+      return getTimestamp(b) - getTimestamp(a);
     });
   }, [requests]);
 
-  // Filter by date & search query
+  // Filter by date & search query (referensi utama AdminActionTime)
   const filteredRequests = useMemo(() => {
     let result = transferredRequests;
 
     if (selectedDate) {
       result = result.filter(r => {
+        const dateAdminActionTime = parseDateToYYYYMMDD(r.adminActionTime);
         const datePemakaian = parseDateToYYYYMMDD(r.tanggalPemakaian);
         const dateCreatedAt = parseDateToYYYYMMDD(r.createdAt);
         const dateTimestamp = parseDateToYYYYMMDD(r.timestamp);
+        if (dateAdminActionTime) {
+          return dateAdminActionTime === selectedDate;
+        }
         return datePemakaian === selectedDate || dateCreatedAt === selectedDate || dateTimestamp === selectedDate;
       });
     }
@@ -325,12 +340,18 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
               </span>
             </div>
           </div>
-          <div className="text-[9px] text-slate-400 leading-relaxed bg-slate-950 p-2 rounded-xl border border-slate-800/80 flex items-center justify-between">
+          <div className="text-[9px] text-slate-400 leading-relaxed bg-slate-950 p-2 rounded-xl border border-slate-800/80 flex items-center justify-between flex-wrap gap-2">
             <span className="truncate max-w-[280px]">Keterangan Pengajuan: <strong>{selectedRequest.keterangan}</strong></span>
             <span className={`font-mono font-bold shrink-0 ${sisaSaldo === 0 ? 'text-emerald-400' : sisaSaldo > 0 ? 'text-blue-400' : 'text-rose-400'}`}>
               Sisa: {formatIDR(sisaSaldo)}
             </span>
           </div>
+          {selectedRequest.adminActionTime && (
+            <div className="text-[9px] text-emerald-300 bg-emerald-950/60 p-2 rounded-xl border border-emerald-800/60 flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+              <span>Waktu Transfer Finance (AdminActionTime): <strong>{selectedRequest.adminActionTime}</strong></span>
+            </div>
+          )}
         </div>
 
         {/* Form Body */}
@@ -690,6 +711,11 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
                         return `Disetujui ${supervisor}:`;
                       })()} <strong className="text-blue-600">{formatIDR(req.managerActionAmount)}</strong>
                     </span>
+                    {req.adminActionTime && (
+                      <span className="text-emerald-600 text-[9px] font-mono mt-0.5 block">
+                        Waktu Transfer: <strong className="text-emerald-700">{req.adminActionTime}</strong>
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center justify-start pt-0.5">

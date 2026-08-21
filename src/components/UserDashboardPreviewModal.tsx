@@ -616,6 +616,11 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                         <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-xs">
                           <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-wider block">TRANSFER ADMIN</span>
                           <span className="text-sm font-bold text-indigo-700 mt-0.5 block font-mono">{formatIDR(adminTransfer)}</span>
+                          {selectedDetailRequest.adminActionTime && (
+                            <span className="text-[9px] text-emerald-600 block mt-0.5 font-mono font-medium truncate" title={`Waktu Transfer: ${selectedDetailRequest.adminActionTime}`}>
+                              {selectedDetailRequest.adminActionTime}
+                            </span>
+                          )}
                         </div>
                         <div className="p-3 bg-white rounded-2xl border border-slate-200 shadow-xs">
                           <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-wider block">TOTAL LAPORAN NOTA</span>

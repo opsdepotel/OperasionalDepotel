@@ -1367,6 +1367,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     };
 
     const getTodayStr = () => {
+      try {
+        const jakartaStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+        if (/^\d{4}-\d{2}-\d{2}$/.test(jakartaStr)) return jakartaStr;
+      } catch (e) {}
       const d = new Date();
       const year = d.getFullYear();
       const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -1376,9 +1380,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const todayStr = getTodayStr();
 
     const todayTransferredReqs = transferredReqsList.filter(r => {
+      const dateAdminActionTime = parseDateToYYYYMMDD(r.adminActionTime);
       const datePemakaian = parseDateToYYYYMMDD(r.tanggalPemakaian);
       const dateCreatedAt = parseDateToYYYYMMDD(r.createdAt);
       const dateTimestamp = parseDateToYYYYMMDD(r.timestamp);
+      if (dateAdminActionTime) {
+        return dateAdminActionTime === todayStr;
+      }
       return datePemakaian === todayStr || dateCreatedAt === todayStr || dateTimestamp === todayStr;
     });
     const todayTransferredCount = todayTransferredReqs.length;

@@ -37,6 +37,7 @@ const PENGAJUAN_HEADERS = [
   'UID', 'UserEmail', 'ManagerEmail', 'TanggalPemakaian', 'SiteID',
   'JumlahPengajuan', 'Keterangan', 'Status', 'ManagerActionAmount',
   'ManagerComment', 'AdminActionAmount', 'AdminComment', 'CreatedAt', 'BuktiTransferUrl', 'BuktiTransferFileId',
+  'AdminActionTime',
   'Timestamp'
 ];
 
@@ -162,7 +163,8 @@ function mapToBudgetRequest(row: Record<string, any>): BudgetRequest {
     createdAt: String(row.CreatedAt || row.createdAt || ''),
     timestamp: ts,
     buktiTransferUrl: String(row.BuktiTransferUrl || row.buktiTransferUrl || ''),
-    buktiTransferFileId: String(row.BuktiTransferFileId || row.buktiTransferFileId || '')
+    buktiTransferFileId: String(row.BuktiTransferFileId || row.buktiTransferFileId || ''),
+    adminActionTime: String(row.AdminActionTime || row.adminActionTime || row['Admin Action Time'] || '')
   };
 }
 
@@ -451,7 +453,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
     body: JSON.stringify({
       valueInputOption: 'USER_ENTERED',
       data: [
-        { range: 'Pengajuan!A1:P1', values: [PENGAJUAN_HEADERS] },
+        { range: 'Pengajuan!A1:Q1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
         { range: 'Users!A1:M1', values: [USERS_HEADERS] },
         { range: 'Activity!A1:S1', values: [ACTIVITY_HEADERS] },
@@ -744,6 +746,24 @@ export async function fetchBudgetRequests(token: string, spreadsheetId: string):
   }
   if (!res.ok) return [];
   const data = await res.json();
+  try {
+    const firstRow = (data.values && data.values[0]) || [];
+    if (firstRow.length > 0) {
+      const hasAdminActionTime = firstRow.some((col: any) => String(col).toLowerCase().includes('adminactiontime') || String(col).toLowerCase().includes('admin action time'));
+      if (!hasAdminActionTime || firstRow.length < PENGAJUAN_HEADERS.length) {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Q1?valueInputOption=USER_ENTERED`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ values: [PENGAJUAN_HEADERS] })
+        });
+      }
+    }
+  } catch (hdrErr) {
+    console.warn('Could not auto-verify Pengajuan headers:', hdrErr);
+  }
   return parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, data.values, mapToBudgetRequest);
 }
 
@@ -992,6 +1012,7 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
       CreatedAt: req.createdAt || nowTimestamp,
       BuktiTransferUrl: req.buktiTransferUrl || '',
       BuktiTransferFileId: req.buktiTransferFileId || '',
+      AdminActionTime: req.adminActionTime || '',
       Timestamp: nowTimestamp
     });
 
@@ -1062,10 +1083,11 @@ export async function updateBudgetRequest(token: string, spreadsheetId: string, 
     CreatedAt: req.createdAt,
     BuktiTransferUrl: req.buktiTransferUrl || '',
     BuktiTransferFileId: req.buktiTransferFileId || '',
+    AdminActionTime: req.adminActionTime || '',
     Timestamp: nowTimestamp
   });
 
-  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A${sheetRowIdx}:P${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A${sheetRowIdx}:Q${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,

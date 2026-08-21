@@ -876,7 +876,9 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                     <span className="font-bold text-slate-800">{adj.userEmail}</span>
                   </div>
                   <p className="text-[10px] text-slate-500">{adj.keterangan}</p>
-                  <span className="text-[9px] text-slate-400 font-mono block">{adj.createdAt || adj.tanggalPemakaian}</span>
+                  <div className="flex items-center gap-2 text-[9px] text-slate-400 font-mono mt-0.5">
+                    <span>Waktu Executed (AdminActionTime): <strong className="text-emerald-700 font-semibold">{adj.adminActionTime || adj.createdAt || adj.tanggalPemakaian}</strong></span>
+                  </div>
                 </div>
                 <div className="text-right shrink-0">
                   <span className={`font-bold font-mono text-xs block ${adj.adminActionAmount > 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
