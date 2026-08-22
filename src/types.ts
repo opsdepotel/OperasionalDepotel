@@ -50,7 +50,6 @@ export interface BudgetRequest {
   buktiTransferFileId?: string;
   adminActionTime?: string;
   tipePengajuan?: string;
-  isOfflinePending?: boolean;
 }
 
 export interface UsageReportItem {
@@ -67,7 +66,6 @@ export interface UsageReportItem {
   adminComment: string;
   updatedAt: string;
   timestamp?: string;
-  isOfflinePending?: boolean;
 }
 
 export interface UserProfile {
@@ -113,7 +111,6 @@ export interface UserActivity {
   aiRecaptureSummary?: string;
   aiRecaptureIndicators?: string; // JSON array or comma-separated string
   aiRecaptureCheckedAt?: string;
-  isOfflinePending?: boolean;
 }
 
 export interface ResetDeviceLog {

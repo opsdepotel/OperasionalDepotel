@@ -37,14 +37,6 @@ import {
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
 import { validateDeviceAccessAndBind } from './lib/deviceUtils';
-import {
-  isOnline,
-  getPendingOfflineActivities,
-  getPendingOfflineBbmRefills,
-  savePendingOfflineActivity,
-  savePendingOfflineBbmRefill,
-  syncPendingOfflineData
-} from './lib/offlineManager';
 
 // Components
 import { Header } from './components/Header';
@@ -165,102 +157,6 @@ export default function App() {
   });
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isTokenExpired, setIsTokenExpired] = useState(false);
-
-  // PWA & Offline states
-  const [isOnlineNet, setIsOnlineNet] = useState<boolean>(isOnline());
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isInstallable, setIsInstallable] = useState<boolean>(false);
-  const [pendingOfflineCount, setPendingOfflineCount] = useState<number>(0);
-  const [isSyncingOffline, setIsSyncingOffline] = useState<boolean>(false);
-  const [offlineSyncNotice, setOfflineSyncNotice] = useState<string | null>(null);
-
-  // Update pending offline items count
-  const updateOfflineCount = () => {
-    const actCount = getPendingOfflineActivities().length;
-    const bbmCount = getPendingOfflineBbmRefills().length;
-    setPendingOfflineCount(actCount + bbmCount);
-  };
-
-  useEffect(() => {
-    updateOfflineCount();
-  }, []);
-
-  // Listen for PWA beforeinstallprompt event
-  useEffect(() => {
-    const handleBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-      setIsInstallable(true);
-    };
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-  }, []);
-
-  const handleInstallPwa = async () => {
-    if (!deferredPrompt) return;
-    deferredPrompt.prompt();
-    const choiceResult = await deferredPrompt.userChoice;
-    if (choiceResult.outcome === 'accepted') {
-      console.log('[PWA] User accepted PWA installation');
-    }
-    setDeferredPrompt(null);
-    setIsInstallable(false);
-  };
-
-  // Sync offline data
-  const handleSyncOfflineData = async () => {
-    if (!token || isTokenExpired || !spreadsheetId) return;
-    setIsSyncingOffline(true);
-    try {
-      const res = await syncPendingOfflineData(token, spreadsheetId, driveFolderId || '');
-      updateOfflineCount();
-      if (res.activitiesSynced > 0 || res.bbmSynced > 0) {
-        const msg = `✓ Sync Berhasil! ${res.activitiesSynced} Log Kegiatan & ${res.bbmSynced} Transaksi BBM Duren Sawit Offline telah ter-upload ke Google Sheets & Drive.`;
-        setOfflineSyncNotice(msg);
-        setTimeout(() => setOfflineSyncNotice(null), 7000);
-        await handleManualRefresh();
-      }
-    } catch (err: any) {
-      console.error('Failed to sync offline data:', err);
-    } finally {
-      setIsSyncingOffline(false);
-    }
-  };
-
-  // Network online/offline listener
-  useEffect(() => {
-    const handleOnline = () => {
-      setIsOnlineNet(true);
-      if (token && !isGoogleTokenExpired() && spreadsheetId) {
-        handleSyncOfflineData();
-      }
-    };
-    const handleOffline = () => {
-      setIsOnlineNet(false);
-    };
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [token, spreadsheetId]);
-
-  // Service Worker Message listener for Web Share Target (e.g. sharing from BRImo)
-  useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      const handleSwMessage = (event: MessageEvent) => {
-        if (event.data?.type === 'DIOMS_SHARED_FILE_RECEIVED') {
-          setOfflineSyncNotice(`📄 Resi/Nota berhasil diterima dari aplikasi lain (${event.data.fileName || 'BRImo'})! Silakan buka Form Pengisian BBM / Laporan Pemakaian.`);
-          setTimeout(() => setOfflineSyncNotice(null), 8000);
-        }
-      };
-      navigator.serviceWorker.addEventListener('message', handleSwMessage);
-      return () => navigator.serviceWorker.removeEventListener('message', handleSwMessage);
-    }
-  }, []);
 
   // Simulation Role Override
   const [activeRole, setActiveRole] = useState<Role>(Role.USER);
@@ -1168,70 +1064,43 @@ export default function App() {
 
   // Workflow Action 1.5: Submit BBM Refill (BBM Duren Sawit)
   const handleBbmRefillSubmit = async (req: BudgetRequest, reportItem: UsageReportItem) => {
-    const isOfflineMode = !navigator.onLine || !token || !spreadsheetId || isTokenExpired;
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
 
-    if (isOfflineMode) {
-      const offlineReq: BudgetRequest = { ...req, isOfflinePending: true };
-      const offlineItem: UsageReportItem = { ...reportItem, isOfflinePending: true };
+    const savedItem = await runGoogleAction<UsageReportItem>(
+      async () => {
+        let finalReportItem = { ...reportItem };
 
-      savePendingOfflineBbmRefill({
-        id: req.id,
-        request: offlineReq,
-        reportItem: offlineItem,
-        createdAt: new Date().toISOString()
-      });
-
-      setRequests(prev => [offlineReq, ...prev]);
-      setUsageItems(prev => [...prev, offlineItem]);
-      updateOfflineCount();
-      alert('✓ Transaksi Pengisian BBM Duren Sawit tersimpan secara Offline di HP Anda! Akan di-upload otomatis ke Google Sheets & Drive saat online.');
-      return;
-    }
-
-    try {
-      const currentToken = token || 'mock_demo_token';
-      const currentSheetId = spreadsheetId || 'mock_sheet_id';
-      let finalReportItem = { ...reportItem };
-
-      if (reportItem.buktiUrl && reportItem.buktiUrl.startsWith('data:')) {
-        if (currentToken !== 'mock_demo_token' && driveFolderId) {
-          try {
-            const uploadRes = await uploadBase64Image(
-              currentToken,
-              driveFolderId,
-              reportItem.buktiUrl,
-              `NOTA_BBM_${req.id}.jpg`
-            );
-            finalReportItem.buktiUrl = uploadRes.viewUrl;
-            finalReportItem.buktiFileId = uploadRes.fileId;
-          } catch (err: any) {
-            console.warn('Gagal unggah foto nota ke Google Drive, menggunakan URL fallback:', err);
+        // Process uploading base64 photo to Google Drive if connected to Google Drive
+        if (reportItem.buktiUrl && reportItem.buktiUrl.startsWith('data:')) {
+          if (currentToken !== 'mock_demo_token' && driveFolderId) {
+            try {
+              const uploadRes = await uploadBase64Image(
+                currentToken,
+                driveFolderId,
+                reportItem.buktiUrl,
+                `NOTA_BBM_${req.id}.jpg`
+              );
+              finalReportItem.buktiUrl = uploadRes.viewUrl;
+              finalReportItem.buktiFileId = uploadRes.fileId;
+            } catch (err: any) {
+              console.warn('Gagal unggah foto nota ke Google Drive, menggunakan URL fallback:', err);
+            }
           }
         }
-      }
 
-      await createBudgetRequest(currentToken, currentSheetId, req);
-      await createUsageItem(currentToken, currentSheetId, finalReportItem);
+        await createBudgetRequest(currentToken, currentSheetId, req);
+        await createUsageItem(currentToken, currentSheetId, finalReportItem);
+        return finalReportItem;
+      },
+      'Gagal menyimpan transaksi BBM Duren Sawit.'
+    );
 
+    if (savedItem !== null) {
       setRequests(prev => [req, ...prev]);
-      setUsageItems(prev => [...prev, finalReportItem]);
-      alert('Penyimpanan transaksi BBM Duren Sawit berhasil!');
-    } catch (err: any) {
-      console.warn('Gagal simpan BBM online, menyimpan secara offline:', err);
-      const offlineReq: BudgetRequest = { ...req, isOfflinePending: true };
-      const offlineItem: UsageReportItem = { ...reportItem, isOfflinePending: true };
-
-      savePendingOfflineBbmRefill({
-        id: req.id,
-        request: offlineReq,
-        reportItem: offlineItem,
-        createdAt: new Date().toISOString()
-      });
-
-      setRequests(prev => [offlineReq, ...prev]);
-      setUsageItems(prev => [...prev, offlineItem]);
-      updateOfflineCount();
-      alert('✓ Koneksi terputus. Transaksi Pengisian BBM Duren Sawit tersimpan secara Offline di HP Anda dan akan disinkronkan otomatis.');
+      setUsageItems(prev => [...prev, savedItem]);
+    } else {
+      throw new Error('Gagal menyimpan transaksi BBM Duren Sawit. Silakan periksa koneksi atau coba lagi.');
     }
   };
 
@@ -1634,104 +1503,61 @@ export default function App() {
     },
     photoFile?: File
   ) => {
+    if (!token || !spreadsheetId) {
+      throw new Error('Koneksi database tidak aktif. Hubungkan Google Account Anda.');
+    }
+
     const rawCoord = (activityData.coordinatesActual || '').trim().toLowerCase();
     const isInvalidGps = !rawCoord || rawCoord.includes('tidak') || rawCoord.includes('belum') || rawCoord.includes('gagal') || rawCoord.includes('error');
     if (isInvalidGps) {
       throw new Error('Data koordinat GPS wajib ada untuk menyimpan Log Kegiatan Harian.');
     }
 
-    // Convert photoFile to Base64 URL for offline or immediate preview
-    let photoBase64 = '';
+    let finalBuktiUrl = '';
+    let finalBuktiFileId = '';
+
     if (photoFile) {
-      const reader = new FileReader();
-      const base64Promise = new Promise<string>((resolve) => {
-        reader.onloadend = () => resolve(reader.result as string);
-      });
-      reader.readAsDataURL(photoFile);
-      photoBase64 = await base64Promise;
+      if (token === 'mock_demo_token') {
+        // Read file as base64 for local preview
+        const reader = new FileReader();
+        const base64Promise = new Promise<string>((resolve) => {
+          reader.onloadend = () => resolve(reader.result as string);
+        });
+        reader.readAsDataURL(photoFile);
+        finalBuktiUrl = await base64Promise;
+      } else {
+        const uploadResult = await uploadReceiptFile(token, driveFolderId, photoFile);
+        finalBuktiUrl = uploadResult.viewUrl;
+        finalBuktiFileId = uploadResult.fileId;
+      }
     }
 
     const todayStr = activityData.tanggal.replace(/-/g, '');
     const randomDigits = Math.floor(1000 + Math.random() * 9000);
     const activityId = `ACT-${todayStr}-${randomDigits}`;
 
-    const userEmailAddr = userProfile?.email || user?.email || 'ops.depotel@gmail.com';
-    const createdAtStr = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-
     const newActivity: UserActivity = {
       id: activityId,
-      userEmail: userEmailAddr,
+      userEmail: userProfile?.email || user?.email || '',
       tanggal: activityData.tanggal,
-      createdAt: createdAtStr,
+      createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
       siteId: activityData.siteId,
       siteName: activityData.siteName,
       coordinatesDb: activityData.coordinatesDb,
       coordinatesActual: activityData.coordinatesActual,
       keterangan: activityData.keterangan,
-      buktiUrl: photoBase64,
+      buktiUrl: finalBuktiUrl,
+      buktiFileId: finalBuktiFileId || undefined,
       indikasiFake: activityData.indikasiFake ?? false,
       fakeReason: activityData.fakeReason || ''
     };
 
-    const isOfflineMode = !navigator.onLine || !token || !spreadsheetId || isTokenExpired;
+    await createUserActivity(token, spreadsheetId, newActivity);
 
-    if (isOfflineMode) {
-      // Save offline
-      newActivity.isOfflinePending = true;
-      savePendingOfflineActivity({
-        id: activityId,
-        activityData,
-        photoBase64Url: photoBase64,
-        userEmail: userEmailAddr,
-        createdAt: createdAtStr
-      });
-      const updatedActs = [newActivity, ...activities];
-      setActivities(updatedActs);
-      localStorage.setItem('op_app_cached_activities', JSON.stringify(updatedActs));
-      updateOfflineCount();
-      alert('✓ Log Kegiatan Hari Ini tersimpan secara Offline di HP Anda! Data akan disinkronkan otomatis ke Google Sheets begitu online.');
-      return;
-    }
-
-    try {
-      let finalBuktiUrl = photoBase64;
-      let finalBuktiFileId = '';
-
-      if (photoFile && token !== 'mock_demo_token' && driveFolderId) {
-        try {
-          const uploadResult = await uploadReceiptFile(token, driveFolderId, photoFile);
-          finalBuktiUrl = uploadResult.viewUrl;
-          finalBuktiFileId = uploadResult.fileId;
-        } catch (upErr) {
-          console.warn('Upload foto ke Google Drive gagal, menggunakan URL fallback:', upErr);
-        }
-      }
-
-      newActivity.buktiUrl = finalBuktiUrl;
-      newActivity.buktiFileId = finalBuktiFileId || undefined;
-
-      await createUserActivity(token, spreadsheetId, newActivity);
-
-      // Refresh activities state
-      const allActs = await fetchUserActivities(token, spreadsheetId);
-      setActivities(allActs);
-      localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
-    } catch (err: any) {
-      console.warn('Gagal simpan online, menyimpan secara offline:', err);
-      newActivity.isOfflinePending = true;
-      savePendingOfflineActivity({
-        id: activityId,
-        activityData,
-        photoBase64Url: photoBase64,
-        userEmail: userEmailAddr,
-        createdAt: createdAtStr
-      });
-      const updatedActs = [newActivity, ...activities];
-      setActivities(updatedActs);
-      localStorage.setItem('op_app_cached_activities', JSON.stringify(updatedActs));
-      updateOfflineCount();
-      alert('✓ Terjadi gangguan koneksi. Log Kegiatan Hari Ini tersimpan secara Offline di HP Anda dan akan disinkronkan otomatis.');
-    }
+    // Refresh activities state
+    const allActs = await fetchUserActivities(token, spreadsheetId);
+    setActivities(allActs);
+    localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
   };
 
   const handleUpdateActivity = async (updatedActivity: UserActivity) => {
@@ -2504,38 +2330,10 @@ export default function App() {
         isTokenExpired={isTokenExpired}
         token={token}
         onRenewToken={handleRenewGoogleToken}
-        isInstallable={isInstallable}
-        onInstallPwa={handleInstallPwa}
-        isOnlineNet={isOnlineNet}
-        pendingOfflineCount={pendingOfflineCount}
-        isSyncingOffline={isSyncingOffline}
-        onSyncOffline={handleSyncOfflineData}
       />
 
       {/* Main Container */}
       <main className="flex-1 p-4 max-w-md mx-auto w-full space-y-4">
-        {/* Offline Sync Notice Banner */}
-        {offlineSyncNotice && (
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl p-3 text-xs font-semibold flex items-center justify-between gap-2 shadow-xs animate-slide-up">
-            <span>{offlineSyncNotice}</span>
-            <button
-              onClick={() => setOfflineSyncNotice(null)}
-              className="text-emerald-700 hover:text-emerald-950 font-bold p-1 cursor-pointer shrink-0"
-            >
-              ✕
-            </button>
-          </div>
-        )}
-
-        {/* Offline Mode Indicator Banner when Offline */}
-        {!isOnlineNet && (
-          <div className="bg-amber-500 text-white rounded-2xl p-3 text-xs font-bold flex items-center justify-between gap-2 shadow-sm animate-pulse">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
-              <span>Mode Offline Aktif (Gunakan Catat Kegiatan Hari Ini & Pengisian BBM Duren Sawit secara Offline)</span>
-            </div>
-          </div>
-        )}
         {/* Error / Token Expired Banner */}
         {error && (
           <div className={`rounded-2xl p-4 text-xs flex flex-col gap-3 animate-slide-up shadow-sm border ${

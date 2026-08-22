@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { UserProfile, Role } from '../types';
-import { Download, CloudUpload } from 'lucide-react';
+import { User } from 'lucide-react';
 
 interface HeaderProps {
   userProfile?: UserProfile | null;
@@ -21,12 +21,6 @@ interface HeaderProps {
   isTokenExpired?: boolean;
   token?: string | null;
   onRenewToken?: () => void;
-  isInstallable?: boolean;
-  onInstallPwa?: () => void;
-  isOnlineNet?: boolean;
-  pendingOfflineCount?: number;
-  isSyncingOffline?: boolean;
-  onSyncOffline?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -35,12 +29,6 @@ export const Header: React.FC<HeaderProps> = ({
   isTokenExpired,
   token,
   onRenewToken,
-  isInstallable,
-  onInstallPwa,
-  isOnlineNet = true,
-  pendingOfflineCount = 0,
-  isSyncingOffline = false,
-  onSyncOffline
 }) => {
   const isGoogleConnected = Boolean(token && !isTokenExpired);
 
@@ -63,50 +51,20 @@ export const Header: React.FC<HeaderProps> = ({
     : `Koneksi Google Terhubung (${userProfile?.email || 'ops.depotel@gmail.com'}). Klik untuk memperbesar logo DIOMS`;
 
   return (
-    <header className="sticky top-0 z-40 bg-white border-b border-slate-100 shadow-sm px-4 py-2">
+    <header className="sticky top-0 z-40 bg-white border-b border-slate-100 shadow-sm px-4 py-2.5">
       <div className="max-w-md mx-auto flex items-center justify-between gap-2">
         {/* Left Side / Brand */}
         <div className="flex items-center gap-2 shrink-0">
           <img 
             src="/DEPOTEL_rounded22.jpg" 
             alt="DEPOTEL Logo" 
-            className="h-7 sm:h-8 w-auto object-contain"
+            className="h-8 w-auto object-contain"
             referrerPolicy="no-referrer"
           />
         </div>
 
-        {/* Right Side Controls */}
-        <div className="flex items-center gap-2">
-          {/* PWA Install Button */}
-          {isInstallable && onInstallPwa && (
-            <button
-              type="button"
-              onClick={onInstallPwa}
-              className="py-1 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all shadow-xs shrink-0 cursor-pointer"
-              title="Install Aplikasi DIOMS ke Layar Utama HP"
-            >
-              <Download className="w-3.5 h-3.5 text-indigo-600 animate-bounce" />
-              <span className="hidden sm:inline">Install App</span>
-            </button>
-          )}
-
-          {/* Pending Offline Sync Button */}
-          {pendingOfflineCount > 0 && onSyncOffline && (
-            <button
-              type="button"
-              onClick={onSyncOffline}
-              disabled={isSyncingOffline || !isOnlineNet || !isGoogleConnected}
-              className={`py-1 px-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-[10px] font-extrabold flex items-center gap-1 transition-all shadow-xs cursor-pointer disabled:opacity-50 shrink-0 ${
-                isSyncingOffline ? 'animate-pulse' : ''
-              }`}
-              title={`${pendingOfflineCount} Data Offline Belum Ter-upload. Klik untuk Sinkronisasi.`}
-            >
-              <CloudUpload className={`w-3 h-3 ${isSyncingOffline ? 'animate-spin' : ''}`} />
-              <span>{pendingOfflineCount} Sync</span>
-            </button>
-          )}
-
-          {/* DIOMS Logo with Google Connection Indicator */}
+        {/* Right Side Controls: DIOMS Logo with Google Connection Indicator */}
+        <div className="flex items-center gap-2.5">
           <button
             type="button"
             onClick={handleLogoClick}
@@ -120,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
             <img 
               src="/DIOMS-1.png" 
               alt="DIOMS Logo" 
-              className="h-7 sm:h-8 w-auto object-contain group-hover:scale-105 transition-transform duration-200" 
+              className="h-8 w-auto object-contain group-hover:scale-105 transition-transform duration-200" 
               referrerPolicy="no-referrer" 
             />
 
