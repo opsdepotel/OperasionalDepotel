@@ -58,7 +58,19 @@ export const savePendingOfflineActivity = (
     current.push(pendingItem);
     localStorage.setItem(PENDING_ACTIVITIES_KEY, JSON.stringify(current));
   } catch (err) {
-    console.error('Failed to save pending offline activity:', err);
+    console.warn('Failed to save pending offline activity to localStorage (Quota exceeded):', err);
+    // If quota exceeded, try stripping heavy base64 strings or keeping the latest 10 items
+    try {
+      const current = getPendingOfflineActivities().slice(-10);
+      const lightweightItem = {
+        ...pendingItem,
+        photoBase64Url: pendingItem.photoBase64Url ? pendingItem.photoBase64Url.slice(0, 15000) : ''
+      };
+      current.push(lightweightItem);
+      localStorage.setItem(PENDING_ACTIVITIES_KEY, JSON.stringify(current));
+    } catch (_) {
+      console.error('Critical quota error saving offline activity');
+    }
   }
 };
 
