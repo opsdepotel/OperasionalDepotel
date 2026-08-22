@@ -35,8 +35,16 @@ import {
   formatDivisiSubDivisi,
   defaultUsers
 } from './lib/googleApi';
-import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory } from './types';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
 import { validateDeviceAccessAndBind } from './lib/deviceUtils';
+import {
+  isOnline,
+  getPendingOfflineActivities,
+  getPendingOfflineBbmRefills,
+  savePendingOfflineActivity,
+  savePendingOfflineBbmRefill,
+  syncPendingOfflineData
+} from './lib/offlineManager';
 
 // Components
 import { Header } from './components/Header';
@@ -157,6 +165,102 @@ export default function App() {
   });
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [isTokenExpired, setIsTokenExpired] = useState(false);
+
+  // PWA & Offline states
+  const [isOnlineNet, setIsOnlineNet] = useState<boolean>(isOnline());
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstallable, setIsInstallable] = useState<boolean>(false);
+  const [pendingOfflineCount, setPendingOfflineCount] = useState<number>(0);
+  const [isSyncingOffline, setIsSyncingOffline] = useState<boolean>(false);
+  const [offlineSyncNotice, setOfflineSyncNotice] = useState<string | null>(null);
+
+  // Update pending offline items count
+  const updateOfflineCount = () => {
+    const actCount = getPendingOfflineActivities().length;
+    const bbmCount = getPendingOfflineBbmRefills().length;
+    setPendingOfflineCount(actCount + bbmCount);
+  };
+
+  useEffect(() => {
+    updateOfflineCount();
+  }, []);
+
+  // Listen for PWA beforeinstallprompt event
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+      setIsInstallable(true);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  }, []);
+
+  const handleInstallPwa = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const choiceResult = await deferredPrompt.userChoice;
+    if (choiceResult.outcome === 'accepted') {
+      console.log('[PWA] User accepted PWA installation');
+    }
+    setDeferredPrompt(null);
+    setIsInstallable(false);
+  };
+
+  // Sync offline data
+  const handleSyncOfflineData = async () => {
+    if (!token || isTokenExpired || !spreadsheetId) return;
+    setIsSyncingOffline(true);
+    try {
+      const res = await syncPendingOfflineData(token, spreadsheetId, driveFolderId || '');
+      updateOfflineCount();
+      if (res.activitiesSynced > 0 || res.bbmSynced > 0) {
+        const msg = `✓ Sync Berhasil! ${res.activitiesSynced} Log Kegiatan & ${res.bbmSynced} Transaksi BBM Duren Sawit Offline telah ter-upload ke Google Sheets & Drive.`;
+        setOfflineSyncNotice(msg);
+        setTimeout(() => setOfflineSyncNotice(null), 7000);
+        await handleManualRefresh();
+      }
+    } catch (err: any) {
+      console.error('Failed to sync offline data:', err);
+    } finally {
+      setIsSyncingOffline(false);
+    }
+  };
+
+  // Network online/offline listener
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnlineNet(true);
+      if (token && !isGoogleTokenExpired() && spreadsheetId) {
+        handleSyncOfflineData();
+      }
+    };
+    const handleOffline = () => {
+      setIsOnlineNet(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, [token, spreadsheetId]);
+
+  // Service Worker Message listener for Web Share Target (e.g. sharing from BRImo)
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      const handleSwMessage = (event: MessageEvent) => {
+        if (event.data?.type === 'DIOMS_SHARED_FILE_RECEIVED') {
+          setOfflineSyncNotice(`📄 Resi/Nota berhasil diterima dari aplikasi lain (${event.data.fileName || 'BRImo'})! Silakan buka Form Pengisian BBM / Laporan Pemakaian.`);
+          setTimeout(() => setOfflineSyncNotice(null), 8000);
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+      return () => navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+    }
+  }, []);
 
   // Simulation Role Override
   const [activeRole, setActiveRole] = useState<Role>(Role.USER);
@@ -917,7 +1021,7 @@ export default function App() {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       itemUid: newRequest.id,
       requestUid: newRequest.id,
-      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      timestamp: formatTimestamp(new Date()),
       actorRole: userProfile?.role || activeRole || Role.USER,
       actorEmail: userProfile?.email || newRequest.userEmail,
       actorNama: userProfile?.nama || userProfile?.email || newRequest.userEmail,
@@ -1064,43 +1168,70 @@ export default function App() {
 
   // Workflow Action 1.5: Submit BBM Refill (BBM Duren Sawit)
   const handleBbmRefillSubmit = async (req: BudgetRequest, reportItem: UsageReportItem) => {
-    const currentToken = token || 'mock_demo_token';
-    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+    const isOfflineMode = !navigator.onLine || !token || !spreadsheetId || isTokenExpired;
 
-    const savedItem = await runGoogleAction<UsageReportItem>(
-      async () => {
-        let finalReportItem = { ...reportItem };
+    if (isOfflineMode) {
+      const offlineReq: BudgetRequest = { ...req, isOfflinePending: true };
+      const offlineItem: UsageReportItem = { ...reportItem, isOfflinePending: true };
 
-        // Process uploading base64 photo to Google Drive if connected to Google Drive
-        if (reportItem.buktiUrl && reportItem.buktiUrl.startsWith('data:')) {
-          if (currentToken !== 'mock_demo_token' && driveFolderId) {
-            try {
-              const uploadRes = await uploadBase64Image(
-                currentToken,
-                driveFolderId,
-                reportItem.buktiUrl,
-                `NOTA_BBM_${req.id}.jpg`
-              );
-              finalReportItem.buktiUrl = uploadRes.viewUrl;
-              finalReportItem.buktiFileId = uploadRes.fileId;
-            } catch (err: any) {
-              console.warn('Gagal unggah foto nota ke Google Drive, menggunakan URL fallback:', err);
-            }
+      savePendingOfflineBbmRefill({
+        id: req.id,
+        request: offlineReq,
+        reportItem: offlineItem,
+        createdAt: new Date().toISOString()
+      });
+
+      setRequests(prev => [offlineReq, ...prev]);
+      setUsageItems(prev => [...prev, offlineItem]);
+      updateOfflineCount();
+      alert('✓ Transaksi Pengisian BBM Duren Sawit tersimpan secara Offline di HP Anda! Akan di-upload otomatis ke Google Sheets & Drive saat online.');
+      return;
+    }
+
+    try {
+      const currentToken = token || 'mock_demo_token';
+      const currentSheetId = spreadsheetId || 'mock_sheet_id';
+      let finalReportItem = { ...reportItem };
+
+      if (reportItem.buktiUrl && reportItem.buktiUrl.startsWith('data:')) {
+        if (currentToken !== 'mock_demo_token' && driveFolderId) {
+          try {
+            const uploadRes = await uploadBase64Image(
+              currentToken,
+              driveFolderId,
+              reportItem.buktiUrl,
+              `NOTA_BBM_${req.id}.jpg`
+            );
+            finalReportItem.buktiUrl = uploadRes.viewUrl;
+            finalReportItem.buktiFileId = uploadRes.fileId;
+          } catch (err: any) {
+            console.warn('Gagal unggah foto nota ke Google Drive, menggunakan URL fallback:', err);
           }
         }
+      }
 
-        await createBudgetRequest(currentToken, currentSheetId, req);
-        await createUsageItem(currentToken, currentSheetId, finalReportItem);
-        return finalReportItem;
-      },
-      'Gagal menyimpan transaksi BBM Duren Sawit.'
-    );
+      await createBudgetRequest(currentToken, currentSheetId, req);
+      await createUsageItem(currentToken, currentSheetId, finalReportItem);
 
-    if (savedItem !== null) {
       setRequests(prev => [req, ...prev]);
-      setUsageItems(prev => [...prev, savedItem]);
-    } else {
-      throw new Error('Gagal menyimpan transaksi BBM Duren Sawit. Silakan periksa koneksi atau coba lagi.');
+      setUsageItems(prev => [...prev, finalReportItem]);
+      alert('Penyimpanan transaksi BBM Duren Sawit berhasil!');
+    } catch (err: any) {
+      console.warn('Gagal simpan BBM online, menyimpan secara offline:', err);
+      const offlineReq: BudgetRequest = { ...req, isOfflinePending: true };
+      const offlineItem: UsageReportItem = { ...reportItem, isOfflinePending: true };
+
+      savePendingOfflineBbmRefill({
+        id: req.id,
+        request: offlineReq,
+        reportItem: offlineItem,
+        createdAt: new Date().toISOString()
+      });
+
+      setRequests(prev => [offlineReq, ...prev]);
+      setUsageItems(prev => [...prev, offlineItem]);
+      updateOfflineCount();
+      alert('✓ Koneksi terputus. Transaksi Pengisian BBM Duren Sawit tersimpan secara Offline di HP Anda dan akan disinkronkan otomatis.');
     }
   };
 
@@ -1121,7 +1252,7 @@ export default function App() {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       itemUid: reviewBudgetReq.id,
       requestUid: reviewBudgetReq.id,
-      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      timestamp: formatTimestamp(new Date()),
       actorRole: userProfile?.role || activeRole || Role.MANAGER,
       actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
       actorNama: userProfile?.nama || userProfile?.email || (activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
@@ -1161,7 +1292,7 @@ export default function App() {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       itemUid: reviewBudgetReq.id,
       requestUid: reviewBudgetReq.id,
-      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      timestamp: formatTimestamp(new Date()),
       actorRole: userProfile?.role || activeRole || Role.MANAGER,
       actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
       actorNama: userProfile?.nama || userProfile?.email || (activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
@@ -1209,7 +1340,7 @@ export default function App() {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       itemUid: transferReq.id,
       requestUid: transferReq.id,
-      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      timestamp: formatTimestamp(new Date()),
       actorRole: userProfile?.role || activeRole || Role.FINANCE,
       actorEmail: userProfile?.email || '',
       actorNama: userProfile?.nama || userProfile?.email || 'Finance',
@@ -1251,7 +1382,7 @@ export default function App() {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
       itemUid: transferReq.id,
       requestUid: transferReq.id,
-      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      timestamp: formatTimestamp(new Date()),
       actorRole: userProfile?.role || activeRole || Role.FINANCE,
       actorEmail: userProfile?.email || '',
       actorNama: userProfile?.nama || userProfile?.email || 'Finance',
@@ -1503,61 +1634,104 @@ export default function App() {
     },
     photoFile?: File
   ) => {
-    if (!token || !spreadsheetId) {
-      throw new Error('Koneksi database tidak aktif. Hubungkan Google Account Anda.');
-    }
-
     const rawCoord = (activityData.coordinatesActual || '').trim().toLowerCase();
     const isInvalidGps = !rawCoord || rawCoord.includes('tidak') || rawCoord.includes('belum') || rawCoord.includes('gagal') || rawCoord.includes('error');
     if (isInvalidGps) {
       throw new Error('Data koordinat GPS wajib ada untuk menyimpan Log Kegiatan Harian.');
     }
 
-    let finalBuktiUrl = '';
-    let finalBuktiFileId = '';
-
+    // Convert photoFile to Base64 URL for offline or immediate preview
+    let photoBase64 = '';
     if (photoFile) {
-      if (token === 'mock_demo_token') {
-        // Read file as base64 for local preview
-        const reader = new FileReader();
-        const base64Promise = new Promise<string>((resolve) => {
-          reader.onloadend = () => resolve(reader.result as string);
-        });
-        reader.readAsDataURL(photoFile);
-        finalBuktiUrl = await base64Promise;
-      } else {
-        const uploadResult = await uploadReceiptFile(token, driveFolderId, photoFile);
-        finalBuktiUrl = uploadResult.viewUrl;
-        finalBuktiFileId = uploadResult.fileId;
-      }
+      const reader = new FileReader();
+      const base64Promise = new Promise<string>((resolve) => {
+        reader.onloadend = () => resolve(reader.result as string);
+      });
+      reader.readAsDataURL(photoFile);
+      photoBase64 = await base64Promise;
     }
 
     const todayStr = activityData.tanggal.replace(/-/g, '');
     const randomDigits = Math.floor(1000 + Math.random() * 9000);
     const activityId = `ACT-${todayStr}-${randomDigits}`;
 
+    const userEmailAddr = userProfile?.email || user?.email || 'ops.depotel@gmail.com';
+    const createdAtStr = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
     const newActivity: UserActivity = {
       id: activityId,
-      userEmail: userProfile?.email || user?.email || '',
+      userEmail: userEmailAddr,
       tanggal: activityData.tanggal,
-      createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      createdAt: createdAtStr,
       siteId: activityData.siteId,
       siteName: activityData.siteName,
       coordinatesDb: activityData.coordinatesDb,
       coordinatesActual: activityData.coordinatesActual,
       keterangan: activityData.keterangan,
-      buktiUrl: finalBuktiUrl,
-      buktiFileId: finalBuktiFileId || undefined,
+      buktiUrl: photoBase64,
       indikasiFake: activityData.indikasiFake ?? false,
       fakeReason: activityData.fakeReason || ''
     };
 
-    await createUserActivity(token, spreadsheetId, newActivity);
+    const isOfflineMode = !navigator.onLine || !token || !spreadsheetId || isTokenExpired;
 
-    // Refresh activities state
-    const allActs = await fetchUserActivities(token, spreadsheetId);
-    setActivities(allActs);
-    localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
+    if (isOfflineMode) {
+      // Save offline
+      newActivity.isOfflinePending = true;
+      savePendingOfflineActivity({
+        id: activityId,
+        activityData,
+        photoBase64Url: photoBase64,
+        userEmail: userEmailAddr,
+        createdAt: createdAtStr
+      });
+      const updatedActs = [newActivity, ...activities];
+      setActivities(updatedActs);
+      localStorage.setItem('op_app_cached_activities', JSON.stringify(updatedActs));
+      updateOfflineCount();
+      alert('✓ Log Kegiatan Hari Ini tersimpan secara Offline di HP Anda! Data akan disinkronkan otomatis ke Google Sheets begitu online.');
+      return;
+    }
+
+    try {
+      let finalBuktiUrl = photoBase64;
+      let finalBuktiFileId = '';
+
+      if (photoFile && token !== 'mock_demo_token' && driveFolderId) {
+        try {
+          const uploadResult = await uploadReceiptFile(token, driveFolderId, photoFile);
+          finalBuktiUrl = uploadResult.viewUrl;
+          finalBuktiFileId = uploadResult.fileId;
+        } catch (upErr) {
+          console.warn('Upload foto ke Google Drive gagal, menggunakan URL fallback:', upErr);
+        }
+      }
+
+      newActivity.buktiUrl = finalBuktiUrl;
+      newActivity.buktiFileId = finalBuktiFileId || undefined;
+
+      await createUserActivity(token, spreadsheetId, newActivity);
+
+      // Refresh activities state
+      const allActs = await fetchUserActivities(token, spreadsheetId);
+      setActivities(allActs);
+      localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
+    } catch (err: any) {
+      console.warn('Gagal simpan online, menyimpan secara offline:', err);
+      newActivity.isOfflinePending = true;
+      savePendingOfflineActivity({
+        id: activityId,
+        activityData,
+        photoBase64Url: photoBase64,
+        userEmail: userEmailAddr,
+        createdAt: createdAtStr
+      });
+      const updatedActs = [newActivity, ...activities];
+      setActivities(updatedActs);
+      localStorage.setItem('op_app_cached_activities', JSON.stringify(updatedActs));
+      updateOfflineCount();
+      alert('✓ Terjadi gangguan koneksi. Log Kegiatan Hari Ini tersimpan secara Offline di HP Anda dan akan disinkronkan otomatis.');
+    }
   };
 
   const handleUpdateActivity = async (updatedActivity: UserActivity) => {
@@ -1865,7 +2039,7 @@ export default function App() {
         id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
         itemUid: req.id,
         requestUid: req.id,
-        timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+        timestamp: formatTimestamp(new Date()),
         actorRole: userProfile?.role || activeRole || Role.USER,
         actorEmail: userProfile?.email || req.userEmail,
         actorNama: userProfile?.nama || userProfile?.email || req.userEmail,
@@ -2330,10 +2504,38 @@ export default function App() {
         isTokenExpired={isTokenExpired}
         token={token}
         onRenewToken={handleRenewGoogleToken}
+        isInstallable={isInstallable}
+        onInstallPwa={handleInstallPwa}
+        isOnlineNet={isOnlineNet}
+        pendingOfflineCount={pendingOfflineCount}
+        isSyncingOffline={isSyncingOffline}
+        onSyncOffline={handleSyncOfflineData}
       />
 
       {/* Main Container */}
       <main className="flex-1 p-4 max-w-md mx-auto w-full space-y-4">
+        {/* Offline Sync Notice Banner */}
+        {offlineSyncNotice && (
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-2xl p-3 text-xs font-semibold flex items-center justify-between gap-2 shadow-xs animate-slide-up">
+            <span>{offlineSyncNotice}</span>
+            <button
+              onClick={() => setOfflineSyncNotice(null)}
+              className="text-emerald-700 hover:text-emerald-950 font-bold p-1 cursor-pointer shrink-0"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Offline Mode Indicator Banner when Offline */}
+        {!isOnlineNet && (
+          <div className="bg-amber-500 text-white rounded-2xl p-3 text-xs font-bold flex items-center justify-between gap-2 shadow-sm animate-pulse">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+              <span>Mode Offline Aktif (Gunakan Catat Kegiatan Hari Ini & Pengisian BBM Duren Sawit secara Offline)</span>
+            </div>
+          </div>
+        )}
         {/* Error / Token Expired Banner */}
         {error && (
           <div className={`rounded-2xl p-4 text-xs flex flex-col gap-3 animate-slide-up shadow-sm border ${
@@ -2452,8 +2654,10 @@ export default function App() {
             profiles={profiles}
             requests={requests}
             usageItems={usageItems}
+            sites={sites}
             googleToken={token!}
             driveFolderId={driveFolderId || ''}
+            histories={itemReviewHistories}
             onClose={() => setActiveView('dashboard')}
             onPreviewDocument={setPreviewDocument}
             onUpdateTransfer={handleUpdateTransferDetails}
@@ -2481,23 +2685,9 @@ export default function App() {
                   <div className="flex items-center gap-3 min-w-0">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!token || isTokenExpired) {
-                          handleRenewGoogleToken();
-                        } else {
-                          setActiveView('profile-settings');
-                        }
-                      }}
-                      title={
-                        !token || isTokenExpired
-                          ? 'Sesi Google Expired! Klik di sini untuk memperbarui koneksi (1-Klik)'
-                          : `Google Connected (${userProfile?.email || 'ops.depotel@gmail.com'}). Klik untuk Pengaturan Profil.`
-                      }
-                      className={`relative w-10 h-10 rounded-xl flex items-center justify-center font-bold font-display text-sm border overflow-visible shrink-0 transition-all cursor-pointer focus:outline-none ${
-                        !token || isTokenExpired
-                          ? 'bg-amber-400 text-amber-950 border-amber-500 animate-pulse ring-2 ring-amber-300 ring-offset-1 hover:bg-amber-500'
-                          : 'bg-emerald-500 text-white border-emerald-600 shadow-xs hover:bg-emerald-600'
-                      }`}
+                      onClick={() => setActiveView('profile-settings')}
+                      title={`Pengaturan Profil (${userProfile?.nama || userProfile?.email || 'User'}). Klik untuk Pengaturan Profil.`}
+                      className="relative w-10 h-10 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center font-bold font-display text-sm overflow-hidden shrink-0 transition-all cursor-pointer hover:bg-slate-200 focus:outline-none shadow-xs"
                     >
                       {userProfile?.fotoProfile ? (
                         <img
@@ -2518,13 +2708,6 @@ export default function App() {
                       ) : (
                         userProfile?.email?.charAt(0).toUpperCase() || 'U'
                       )}
-
-                      {/* Status Indicator Dot */}
-                      <span 
-                        className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-white ${
-                          !token || isTokenExpired ? 'bg-amber-600 animate-ping' : 'bg-emerald-300'
-                        }`}
-                      />
                     </button>
                     <div className="min-w-0">
                       <h2 className="font-display font-bold text-slate-800 text-xs truncate max-w-[130px] sm:max-w-[180px]">
@@ -3011,8 +3194,41 @@ export default function App() {
                             >
                               {/* Header card info */}
                               <div>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[9px] font-mono text-slate-400 font-bold">{req.id}</span>
+                                <div className="flex items-center justify-between gap-2 flex-wrap">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[9px] font-mono text-slate-400 font-bold">{req.id}</span>
+                                    {/* Indikator / Badge Notifikasi Baru */}
+                                    {req.status === RequestStatus.REJECTED && (
+                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-full shadow-xs animate-pulse">
+                                        <AlertTriangle className="w-2.5 h-2.5 text-white" />
+                                        BARU: REVISI
+                                      </span>
+                                    )}
+                                    {(req.status === RequestStatus.APPROVED || req.status === RequestStatus.PARTIALLY_APPROVED) && (
+                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-blue-600 text-white px-2 py-0.5 rounded-full shadow-xs">
+                                        <CheckCircle2 className="w-2.5 h-2.5 text-white" />
+                                        BARU: DISETUJUI
+                                      </span>
+                                    )}
+                                    {req.status === RequestStatus.TRANSFERRED && (
+                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-full shadow-xs">
+                                        <CheckCircle2 className="w-2.5 h-2.5 text-white" />
+                                        BARU: DITRANSFER
+                                      </span>
+                                    )}
+                                    {req.status === RequestStatus.REPORTING && hasRejectedItems && (
+                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-full shadow-xs animate-pulse">
+                                        <AlertCircle className="w-2.5 h-2.5 text-white" />
+                                        BARU: ITEM REVISI
+                                      </span>
+                                    )}
+                                    {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER && (
+                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-pink-600 text-white px-2 py-0.5 rounded-full shadow-xs animate-pulse">
+                                        <Coins className="w-2.5 h-2.5 text-white" />
+                                        BARU: TALANGAN
+                                      </span>
+                                    )}
+                                  </div>
                                   <span className={`text-[9px] font-mono font-bold bg-slate-100 border border-slate-200 px-2 py-0.5 rounded ${getStatusTextColor(req.status)}`}>
                                     {getStatusLabel(req.status, req.userEmail)}
                                   </span>
@@ -3173,18 +3389,26 @@ export default function App() {
                                                     <UserCheck className="w-3 h-3 text-slate-500" />
                                                     Manager:
                                                   </span>
-                                                  <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase tracking-wider border ${
+                                                  <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase tracking-wider border flex items-center gap-1 ${
                                                     item.statusManager === ItemStatus.APPROVED
                                                       ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                                                       : item.statusManager === ItemStatus.REJECTED
-                                                      ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                                      ? 'bg-rose-600 text-white border-rose-700 animate-pulse'
                                                       : 'bg-amber-100 text-amber-800 border-amber-300'
                                                   }`}>
-                                                    {item.statusManager === ItemStatus.APPROVED
-                                                      ? 'Disetujui'
-                                                      : item.statusManager === ItemStatus.REJECTED
-                                                      ? 'Ditolak'
-                                                      : 'Menunggu'}
+                                                    {item.statusManager === ItemStatus.APPROVED ? (
+                                                      <>
+                                                        <CheckCircle2 className="w-2.5 h-2.5 shrink-0 text-emerald-600" />
+                                                        <span>Disetujui</span>
+                                                      </>
+                                                    ) : item.statusManager === ItemStatus.REJECTED ? (
+                                                      <>
+                                                        <AlertTriangle className="w-2.5 h-2.5 shrink-0 text-white" />
+                                                        <span>BARU: REVISI</span>
+                                                      </>
+                                                    ) : (
+                                                      'Menunggu'
+                                                    )}
                                                   </span>
                                                 </div>
                                                 {item.managerComment && (
@@ -3207,18 +3431,26 @@ export default function App() {
                                                     <ShieldCheck className="w-3 h-3 text-slate-500" />
                                                     Finance:
                                                   </span>
-                                                  <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase tracking-wider border ${
+                                                  <span className={`px-1.5 py-0.2 rounded text-[8.5px] font-bold uppercase tracking-wider border flex items-center gap-1 ${
                                                     item.statusAdmin === ItemStatus.APPROVED
                                                       ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                                                       : item.statusAdmin === ItemStatus.REJECTED
-                                                      ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                                      ? 'bg-rose-600 text-white border-rose-700 animate-pulse'
                                                       : 'bg-amber-100 text-amber-800 border-amber-300'
                                                   }`}>
-                                                    {item.statusAdmin === ItemStatus.APPROVED
-                                                      ? 'Disetujui'
-                                                      : item.statusAdmin === ItemStatus.REJECTED
-                                                      ? 'Ditolak'
-                                                      : 'Menunggu'}
+                                                    {item.statusAdmin === ItemStatus.APPROVED ? (
+                                                      <>
+                                                        <CheckCircle2 className="w-2.5 h-2.5 shrink-0 text-emerald-600" />
+                                                        <span>Disetujui</span>
+                                                      </>
+                                                    ) : item.statusAdmin === ItemStatus.REJECTED ? (
+                                                      <>
+                                                        <AlertTriangle className="w-2.5 h-2.5 shrink-0 text-white" />
+                                                        <span>BARU: REVISI</span>
+                                                      </>
+                                                    ) : (
+                                                      'Menunggu'
+                                                    )}
                                                   </span>
                                                 </div>
                                                 {item.adminComment && (

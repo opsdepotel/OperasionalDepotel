@@ -1,0 +1,40 @@
+{
+  "name": "DIOMS - Depotel Integrated Operation Monitoring System",
+  "short_name": "DIOMS",
+  "description": "Depotel Integrated Operation Monitoring System dengan Dukungan Offline Mode & Manajemen Operasional Lapangan",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "/DIOMS-1.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/DIOMS-1.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "share_target": {
+    "action": "/?shared=true",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "photos",
+          "accept": ["image/*", "application/pdf"]
+        }
+      ]
+    }
+  }
+}

@@ -756,7 +756,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENGAJUAN PERLU REVISI</p>
               <div className="flex items-end justify-between mt-2">
                 <span className="text-3xl font-display font-bold text-rose-600">{rejectedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Perlu Revisi</span>
+                {rejectedCount > 0 ? (
+                  <span className="text-[9px] font-extrabold text-white bg-rose-600 px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse flex items-center gap-1 shadow-xs">
+                    <AlertTriangle className="w-2.5 h-2.5 text-white" />
+                    BARU: REVISI ({rejectedCount})
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Perlu Revisi</span>
+                )}
               </div>
             </div>
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Diminta revisi. Klik untuk lihat, revisi & pembatalan</p>
@@ -2608,6 +2615,61 @@ User Agent: ${navigator.userAgent}`;
       .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItem(item))
       .reduce((sum, item) => sum + (item.nominal || 0), 0);
 
+    const parseDateToYYYYMMDD = (dateInput: string | Date | undefined): string => {
+      if (!dateInput) return '';
+      const str = String(dateInput).trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+        return str.substring(0, 10);
+      }
+      if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
+        const parts = str.split('/');
+        const d = parts[0].padStart(2, '0');
+        const m = parts[1].padStart(2, '0');
+        const y = parts[2].substring(0, 4);
+        return `${y}-${m}-${d}`;
+      }
+      const d = new Date(str);
+      if (!isNaN(d.getTime())) {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+      return '';
+    };
+
+    const getTodayStr = () => {
+      try {
+        const jakartaStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+        if (/^\d{4}-\d{2}-\d{2}$/.test(jakartaStr)) return jakartaStr;
+      } catch (e) {}
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const todayStr = getTodayStr();
+
+    const transferredReqsList = requests.filter(r => 
+      !isBbmRequest(r) && 
+      r.status !== RequestStatus.CANCELLED &&
+      (r.adminActionAmount || 0) > 0
+    );
+
+    const todayTransferredReqs = transferredReqsList.filter(r => {
+      const dateAdminActionTime = parseDateToYYYYMMDD(r.adminActionTime);
+      const datePemakaian = parseDateToYYYYMMDD(r.tanggalPemakaian);
+      const dateCreatedAt = parseDateToYYYYMMDD(r.createdAt);
+      const dateTimestamp = parseDateToYYYYMMDD(r.timestamp);
+      if (dateAdminActionTime) {
+        return dateAdminActionTime === todayStr;
+      }
+      return datePemakaian === todayStr || dateCreatedAt === todayStr || dateTimestamp === todayStr;
+    });
+    const todayTransferredCount = todayTransferredReqs.length;
+    const todayTransferredTotal = todayTransferredReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+
     return (
       <div className="space-y-4">
         {/* DIREKTUR TAB SWITCHER */}
@@ -2822,6 +2884,42 @@ User Agent: ${navigator.userAgent}`;
                 <p className="text-[10px] text-slate-400 mt-2 font-medium">Laporan lengkap & ter-closing</p>
               </div>
             </div>
+
+            {/* Kartu DAFTAR TRANSFER - DIREKTUR MONITORING */}
+            {onOpenTransferList && (
+              <div 
+                onClick={onOpenTransferList}
+                id="direktur-transfer-list-card"
+                className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md group ${
+                  activeFilter === 'TRANSFER_LIST' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">DAFTAR TRANSFER</p>
+                    <h4 className="font-display font-black text-slate-800 text-xs mt-1 group-hover:text-purple-700 transition-colors">List Transfer UID</h4>
+                  </div>
+                  <span className="text-[9px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                    Eksekutif
+                  </span>
+                </div>
+
+                <div className="flex items-end justify-between mt-3">
+                  <div>
+                    <span className="text-3xl font-display font-bold text-slate-900 block">
+                      {todayTransferredCount} <span className="text-xs text-slate-400 font-normal">UID Hari Ini</span>
+                    </span>
+                    <p className="text-[11px] font-bold text-purple-700 mt-0.5">
+                      Total: {formatIDR(todayTransferredTotal)}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-slate-400 mt-2.5 font-medium border-t border-slate-100 pt-2">
+                  Lihat daftar pengajuan UID yang telah ditransfer dana oleh Finance beserta rincian bukti transfer.
+                </p>
+              </div>
+            )}
 
             {/* Kartu Activity User - DIREKTUR */}
             {(() => {

@@ -5,7 +5,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile, ItemReviewHistory } from '../types';
+import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile, ItemReviewHistory, formatTimestamp } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
 import { ZoomableImage } from './ZoomableImage';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
@@ -395,7 +395,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         throw new Error('Bukti atau Nota pembayaran wajib diupload.');
       }
 
-      const timestamp = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+      const timestamp = formatTimestamp(new Date());
 
       if (editingItem) {
         // Update existing item
@@ -710,16 +710,30 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                     <div className="text-right">
                       <span className="text-xs font-bold text-slate-700 block">{formatIDR(item.nominal)}</span>
-                      {/* Status indicator badge */}
-                      <span className={`inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5 ${
-                        isApproved
-                          ? 'bg-emerald-50 text-emerald-600'
-                          : isRejected
-                          ? 'bg-red-50 text-red-600'
-                          : 'bg-amber-50 text-amber-600'
-                      }`}>
-                        {isApproved ? 'Selesai disetujui' : isRejected ? 'Butuh Revisi' : 'Proses Review'}
-                      </span>
+                      {/* Status indicator badge with Baru notification highlight */}
+                      <div className="flex flex-col items-end gap-1 mt-1">
+                        {isRejected ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full bg-rose-600 text-white shadow-xs animate-pulse">
+                            <AlertCircle className="w-3 h-3 text-white" />
+                            BARU: REVISI
+                          </span>
+                        ) : isApproved ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-600 text-white shadow-xs">
+                            <CheckCircle2 className="w-3 h-3 text-white" />
+                            BARU: DISETUJUI
+                          </span>
+                        ) : item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.PENDING ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full bg-blue-600 text-white shadow-xs">
+                            <CheckCircle2 className="w-3 h-3 text-white" />
+                            BARU: DISETUJUI MANAGER
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                            <Clock className="w-3 h-3 text-amber-500" />
+                            Proses Review
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 

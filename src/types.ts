@@ -50,6 +50,7 @@ export interface BudgetRequest {
   buktiTransferFileId?: string;
   adminActionTime?: string;
   tipePengajuan?: string;
+  isOfflinePending?: boolean;
 }
 
 export interface UsageReportItem {
@@ -66,6 +67,7 @@ export interface UsageReportItem {
   adminComment: string;
   updatedAt: string;
   timestamp?: string;
+  isOfflinePending?: boolean;
 }
 
 export interface UserProfile {
@@ -111,6 +113,7 @@ export interface UserActivity {
   aiRecaptureSummary?: string;
   aiRecaptureIndicators?: string; // JSON array or comma-separated string
   aiRecaptureCheckedAt?: string;
+  isOfflinePending?: boolean;
 }
 
 export interface ResetDeviceLog {
@@ -141,4 +144,61 @@ export interface ItemReviewHistory {
   buktiFileId?: string;
   buktiUrl?: string;
 }
+
+/**
+ * Normalizes any date/timestamp string or Date object into uniform YYYY-MM-DD HH:mm:ss format
+ */
+export function formatTimestamp(tsInput?: string | Date | null): string {
+  if (!tsInput) return '';
+  if (tsInput instanceof Date) {
+    if (isNaN(tsInput.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${tsInput.getFullYear()}-${pad(tsInput.getMonth() + 1)}-${pad(tsInput.getDate())} ${pad(tsInput.getHours())}:${pad(tsInput.getMinutes())}:${pad(tsInput.getSeconds())}`;
+  }
+
+  const str = String(tsInput).trim();
+  if (!str) return '';
+
+  // 1. If string is already in YYYY-MM-DD HH:mm:ss format
+  if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(str)) {
+    return str;
+  }
+
+  // 2. Direct Date parsing (e.g. ISO strings)
+  const dDirect = new Date(str);
+  if (!isNaN(dDirect.getTime())) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${dDirect.getFullYear()}-${pad(dDirect.getMonth() + 1)}-${pad(dDirect.getDate())} ${pad(dDirect.getHours())}:${pad(dDirect.getMinutes())}:${pad(dDirect.getSeconds())}`;
+  }
+
+  // 3. Handle YYYY-MM-DD HH:mm:ss without space or ISO format
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    const d = new Date(str.replace(' ', 'T'));
+    if (!isNaN(d.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+  }
+
+  // 4. Handle DD/MM/YYYY or D/M/YYYY, HH.mm.ss or HH:mm:ss (id-ID locale strings)
+  const match = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[,\s]+(\d{1,2})[\.:](\d{1,2})(?:[\.:](\d{1,2}))?)?/);
+  if (match) {
+    const [, day, month, year, hour = '0', min = '0', sec = '0'] = match;
+    const d = new Date(
+      parseInt(year, 10),
+      parseInt(month, 10) - 1,
+      parseInt(day, 10),
+      parseInt(hour, 10),
+      parseInt(min, 10),
+      parseInt(sec, 10)
+    );
+    if (!isNaN(d.getTime())) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+  }
+
+  return str;
+}
+
 

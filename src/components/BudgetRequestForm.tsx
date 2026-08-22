@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef } from 'react';
-import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus } from '../types';
+import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus, formatTimestamp } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles,
@@ -204,11 +204,11 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         managerActionAmount: 0,
         managerComment: '',
         adminActionAmount: 0,
-        createdAt: initialRequest?.createdAt || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+        createdAt: initialRequest?.createdAt || formatTimestamp(new Date())
       };
 
       if (isTalangan && !initialRequest && selectedFile) {
-        const timestamp = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+        const timestamp = formatTimestamp(new Date());
         firstItem = {
           id: `ITEM-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
           requestId: uid,

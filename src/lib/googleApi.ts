@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory } from '../types';
+import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from '../types';
 
 const originalFetch = window.fetch;
 async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
@@ -377,7 +377,7 @@ function mapToItemReviewHistory(row: Record<string, any>): ItemReviewHistory {
     id: String(row.HistoryID || row.historyId || row.id || ''),
     itemUid: String(row.ItemUID || row.itemUid || ''),
     requestUid: String(row.RequestUID || row.requestUid || ''),
-    timestamp: ts,
+    timestamp: formatTimestamp(ts),
     actorRole: String(row.ActorRole || row.actorRole || ''),
     actorEmail: String(row.ActorEmail || row.actorEmail || ''),
     actorNama: String(row.ActorNama || row.actorNama || ''),
@@ -993,7 +993,7 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     
     req.id = finalUid; // Save back to the request object so caller knows the final unique UID
 
-    const nowTimestamp = req.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+    const nowTimestamp = req.timestamp ? formatTimestamp(req.timestamp) : formatTimestamp(new Date());
     req.timestamp = nowTimestamp;
 
     const rowData = objectToRow(PENGAJUAN_HEADERS, {
@@ -1063,7 +1063,7 @@ export async function updateBudgetRequest(token: string, spreadsheetId: string, 
     throw new Error(`Data pengajuan dengan UID ${req.id} tidak ditemukan.`);
   }
 
-  const nowTimestamp = req.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  const nowTimestamp = req.timestamp ? formatTimestamp(req.timestamp) : formatTimestamp(new Date());
   req.timestamp = nowTimestamp;
 
   const sheetRowIdx = rowIdx + 1; // 1-indexed for spreadsheet
@@ -1112,7 +1112,7 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
     return;
   }
 
-  const nowTimestamp = item.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  const nowTimestamp = item.timestamp ? formatTimestamp(item.timestamp) : formatTimestamp(new Date());
   item.timestamp = nowTimestamp;
 
   const rowData = objectToRow(LAPORAN_HEADERS, {
@@ -1172,7 +1172,7 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
     throw new Error(`Data item laporan dengan ItemUID ${item.id} tidak ditemukan.`);
   }
 
-  const nowTimestamp = item.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  const nowTimestamp = item.timestamp ? formatTimestamp(item.timestamp) : formatTimestamp(new Date());
   item.timestamp = nowTimestamp;
 
   const sheetRowIdx = rowIdx + 1;

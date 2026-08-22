@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { UserProfile, Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
+import { UserProfile, Role, BudgetRequest, UsageReportItem, ItemReviewHistory, SiteInfo, RequestStatus, ItemStatus } from '../types';
 import { ArrowLeft, User, Search, CreditCard, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Eye, Calendar, Clock } from 'lucide-react';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 
@@ -12,8 +12,10 @@ interface TransferListPanelProps {
   profiles: UserProfile[];
   requests: BudgetRequest[];
   usageItems: UsageReportItem[];
+  sites?: SiteInfo[];
   googleToken: string;
   driveFolderId: string;
+  histories?: ItemReviewHistory[];
   onClose: () => void;
   onPreviewDocument?: (doc: { url: string; fileId?: string; title: string }) => void;
   onUpdateTransfer?: (requestId: string, adminComment: string, file: File | null) => Promise<void>;
@@ -24,8 +26,10 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
   profiles,
   requests,
   usageItems,
+  sites = [],
   googleToken,
   driveFolderId,
+  histories = [],
   onClose,
   onPreviewDocument,
   onUpdateTransfer,
@@ -103,6 +107,109 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
 
   const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
   const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+
+  // Parse Site ID and match database for multi-site vertical list
+  const parseSiteList = (rawSiteId: string, sitesList: SiteInfo[] = []) => {
+    if (!rawSiteId || !rawSiteId.trim()) return [];
+
+    const rawUpper = rawSiteId.trim().toUpperCase();
+    if (rawUpper === 'DUREN-SAWIT' || rawUpper === 'DURENSAWIT') {
+      return [{ id: 'DUREN-SAWIT', name: 'Depot / Pos Utama' }];
+    }
+
+    const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
+    const regexMatches = rawSiteId.match(siteIdRegex) || [];
+    const uniqueRegexMatches = Array.from(new Set(regexMatches.map(m => m.trim().toUpperCase())));
+
+    let tokensToProcess: string[] = [];
+
+    if (uniqueRegexMatches.length > 0) {
+      tokensToProcess = uniqueRegexMatches;
+    } else {
+      const splitTokens = rawSiteId
+        .split(/[,;\/\n\r|+]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const tokenSet = new Set<string>();
+      splitTokens.forEach(t => tokenSet.add(t.toUpperCase()));
+      tokensToProcess = Array.from(tokenSet);
+    }
+
+    if (tokensToProcess.length === 0) {
+      tokensToProcess = [rawSiteId.trim()];
+    }
+
+    return tokensToProcess.map(token => {
+      const cleanId = token.toUpperCase().trim();
+      const found = sitesList.find(s => 
+        s.siteId.toUpperCase().trim() === cleanId || 
+        s.siteId.toUpperCase().replaceAll('-', '').trim() === cleanId.replaceAll('-', '')
+      );
+
+      if (found) {
+        return { 
+          id: found.siteId, 
+          name: found.siteName 
+        };
+      }
+
+      if (cleanId === 'DUREN-SAWIT' || cleanId === 'DURENSAWIT') {
+        return { 
+          id: 'DUREN-SAWIT', 
+          name: 'Depot / Pos Utama' 
+        };
+      }
+
+      if (rawSiteId.includes('-')) {
+        const lineMatch = rawSiteId
+          .split(/[\n\r,;]+/)
+          .find(l => l.toUpperCase().includes(cleanId));
+        if (lineMatch && lineMatch.includes('-')) {
+          const parts = lineMatch.split('-');
+          const idPart = parts[0].trim().toUpperCase();
+          const namePart = parts.slice(1).join('-').trim();
+          if (idPart === cleanId && namePart) {
+            return { id: idPart, name: namePart };
+          }
+        }
+      }
+
+      return { 
+        id: token, 
+        name: null 
+      };
+    });
+  };
+
+  // Helper to extract approval time from supervisor (Manager / Direktur)
+  const getApprovalTimeInfo = (req: BudgetRequest) => {
+    const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
+    const defaultSupervisor = (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Direktur' : 'Manager';
+
+    if (histories && histories.length > 0) {
+      const approvalLog = histories.find(h =>
+        (h.requestUid === req.id || h.itemUid === req.id) &&
+        (h.actionType === 'APPROVAL_MANAGER' || h.actionType === 'APPROVAL_DIREKTUR' || h.actionType === 'REVISI_MANAGER' || h.actionType === 'REVISI_DIREKTUR')
+      );
+      if (approvalLog && approvalLog.timestamp) {
+        const supervisor = (approvalLog.actionType === 'APPROVAL_DIREKTUR' || approvalLog.actionType === 'REVISI_DIREKTUR' || approvalLog.actorRole === Role.DIREKTUR) ? 'Direktur' : 'Manager';
+        return {
+          supervisor,
+          time: approvalLog.timestamp
+        };
+      }
+    }
+
+    if (req.managerActionAmount > 0 || req.adminActionAmount > 0 || req.status === RequestStatus.APPROVED || req.status === RequestStatus.TRANSFERRED || req.status === RequestStatus.REPORTING || req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REVIEW_MANAGER || req.status === RequestStatus.CLOSED) {
+      return {
+        supervisor: defaultSupervisor,
+        time: req.createdAt || req.timestamp || '-'
+      };
+    }
+
+    return null;
+  };
 
   // Filter transferred requests (only UID requests with adminActionAmount > 0)
   const transferredRequests = useMemo(() => {
@@ -312,11 +419,40 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
               {requesterProfile?.nama?.charAt(0).toUpperCase() || selectedRequest.userEmail.charAt(0).toUpperCase()}
             </div>
             <div>
-              <h3 className="font-bold text-xs">{requesterProfile?.nama || requesterProfile?.userId || selectedRequest.userEmail}</h3>
-              <p className="text-[10px] text-slate-400 font-mono">{selectedRequest.userEmail}</p>
-              <p className="text-[9px] text-slate-300 font-medium mt-0.5">
-                UID: <strong className="text-indigo-400 font-mono">{selectedRequest.id}</strong> | Site: <strong className="text-slate-200">{selectedRequest.siteId}</strong> | Divisi: {formatDivisiSubDivisi(requesterProfile?.divisi, requesterProfile?.subDivisi)}
+              <h3 className="font-bold text-xs">{requesterProfile?.nama || selectedRequest.userEmail}</h3>
+              <p className="text-[10px] text-slate-300 font-semibold mt-0.5">
+                Divisi: <strong className="text-white">{formatDivisiSubDivisi(requesterProfile?.divisi, requesterProfile?.subDivisi)}</strong>
               </p>
+              <p className="text-[9px] text-indigo-400 font-mono mt-0.5">
+                UID: {selectedRequest.id}
+              </p>
+            </div>
+          </div>
+
+          {/* Vertical Site Section */}
+          <div className="space-y-1 text-left">
+            <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider text-left">
+              Site / Lokasi:
+            </span>
+            <div className="bg-slate-900/90 border border-slate-800 text-slate-200 text-[10px] p-2.5 rounded-xl text-left w-full space-y-1.5 leading-relaxed">
+              {parseSiteList(selectedRequest.siteId, sites).length > 0 ? (
+                parseSiteList(selectedRequest.siteId, sites).map((item, idx) => (
+                  <div key={idx} className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-mono font-bold text-indigo-300 bg-indigo-950 px-1.5 py-0.5 rounded border border-indigo-800">
+                      {item.id}
+                    </span>
+                    {item.name && (
+                      <span className="text-slate-300 font-normal">
+                        - {item.name}
+                      </span>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="font-mono text-slate-300">
+                  {selectedRequest.siteId || '-'}
+                </div>
+              )}
             </div>
           </div>
 
@@ -340,12 +476,30 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
               </span>
             </div>
           </div>
-          <div className="text-[9px] text-slate-400 leading-relaxed bg-slate-950 p-2 rounded-xl border border-slate-800/80 flex items-center justify-between flex-wrap gap-2">
-            <span className="truncate max-w-[280px]">Keterangan Pengajuan: <strong>{selectedRequest.keterangan}</strong></span>
-            <span className={`font-mono font-bold shrink-0 ${sisaSaldo === 0 ? 'text-emerald-400' : sisaSaldo > 0 ? 'text-blue-400' : 'text-rose-400'}`}>
-              Sisa: {formatIDR(sisaSaldo)}
+          <div className="space-y-1.5 text-left">
+            <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">
+              Keterangan:
             </span>
+            <div className="bg-slate-900/90 border border-slate-800 text-slate-200 text-[10px] p-2.5 rounded-xl whitespace-pre-wrap break-words leading-relaxed">
+              {selectedRequest.keterangan || '-'}
+            </div>
+            <div className="flex items-center justify-between text-[9px] text-slate-400 bg-slate-950 p-2 rounded-xl border border-slate-800/80">
+              <span>Sisa Saldo Operasional:</span>
+              <span className={`font-mono font-bold shrink-0 ${sisaSaldo === 0 ? 'text-emerald-400' : sisaSaldo > 0 ? 'text-blue-400' : 'text-rose-400'}`}>
+                {formatIDR(sisaSaldo)}
+              </span>
+            </div>
           </div>
+          {(() => {
+            const approvalInfo = getApprovalTimeInfo(selectedRequest);
+            if (!approvalInfo || !approvalInfo.time) return null;
+            return (
+              <div className="text-[9px] text-indigo-300 bg-indigo-950/60 p-2 rounded-xl border border-indigo-800/60 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span>Waktu Persetujuan {approvalInfo.supervisor}: <strong>{approvalInfo.time}</strong></span>
+              </div>
+            );
+          })()}
           {selectedRequest.adminActionTime && (
             <div className="text-[9px] text-emerald-300 bg-emerald-950/60 p-2 rounded-xl border border-emerald-800/60 flex items-center gap-1.5">
               <Clock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
@@ -681,9 +835,8 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
                           {req.id}
                         </span>
                       </div>
-                      <p className="text-[9px] text-slate-400 font-mono mt-0.5">{req.userEmail}</p>
-                      <p className="text-[9px] text-slate-500 font-medium mt-1">
-                        Site: <strong className="text-slate-700">{req.siteId || '-'}</strong> | Divisi: <strong className="text-slate-700">{formatDivisiSubDivisi(requesterProfile?.divisi, requesterProfile?.subDivisi)}</strong>
+                      <p className="text-[10px] text-slate-600 font-semibold mt-1">
+                        Divisi: <strong className="text-slate-800">{formatDivisiSubDivisi(requesterProfile?.divisi, requesterProfile?.subDivisi)}</strong>
                       </p>
                     </div>
                   </div>
@@ -699,20 +852,62 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-100 space-y-2 text-[10px] text-slate-500 font-medium">
-                  <div>
-                    <span className="block truncate text-slate-600">
-                      Keterangan: <strong className="text-slate-700">{req.keterangan}</strong>
+                <div className="pt-2 border-t border-slate-100 space-y-2 text-[10px] text-slate-500 font-medium text-left">
+                  {/* Site Section - Vertical Layout */}
+                  <div className="space-y-1 text-left">
+                    <span className="text-[9px] font-bold text-slate-500 block uppercase tracking-wider text-left">
+                      Site / Lokasi:
                     </span>
-                    <span className="text-slate-400 text-[9px] font-mono mt-0.5 block">
+                    <div className="bg-slate-50 border border-slate-200/90 text-slate-700 text-[10px] p-2.5 rounded-xl text-left w-full space-y-1.5 leading-relaxed font-normal shadow-2xs">
+                      {parseSiteList(req.siteId, sites).length > 0 ? (
+                        parseSiteList(req.siteId, sites).map((item, idx) => (
+                          <div key={idx} className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100/80">
+                              {item.id}
+                            </span>
+                            {item.name && (
+                              <span className="text-slate-600 font-normal">
+                                - {item.name}
+                              </span>
+                            )}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="font-mono text-slate-600">
+                          {req.siteId || '-'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-1 text-left">
+                    <span className="text-[9px] font-bold text-slate-500 block uppercase tracking-wider text-left">
+                      Keterangan:
+                    </span>
+                    <div className="bg-slate-50 border border-slate-200/90 text-slate-700 text-[10px] p-2 rounded-xl whitespace-pre-wrap break-words leading-relaxed font-normal shadow-2xs text-left w-full">
+                      {req.keterangan || '-'}
+                    </div>
+                  </div>
+
+                  <div className="space-y-0.5 text-left">
+                    <span className="text-slate-400 text-[9px] font-mono block">
                       {(() => {
                         const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
                         const supervisor = (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Direktur' : 'Manager';
                         return `Disetujui ${supervisor}:`;
                       })()} <strong className="text-blue-600">{formatIDR(req.managerActionAmount)}</strong>
                     </span>
+                    {(() => {
+                      const approvalInfo = getApprovalTimeInfo(req);
+                      if (!approvalInfo || !approvalInfo.time) return null;
+                      return (
+                        <span className="text-indigo-600 text-[9px] font-mono block">
+                          Waktu Persetujuan {approvalInfo.supervisor}: <strong className="text-indigo-700">{approvalInfo.time}</strong>
+                        </span>
+                      );
+                    })()}
                     {req.adminActionTime && (
-                      <span className="text-emerald-600 text-[9px] font-mono mt-0.5 block">
+                      <span className="text-emerald-600 text-[9px] font-mono block">
                         Waktu Transfer: <strong className="text-emerald-700">{req.adminActionTime}</strong>
                       </span>
                     )}

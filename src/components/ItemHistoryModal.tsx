@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { UsageReportItem, ItemReviewHistory, Role, ItemStatus } from '../types';
+import { UsageReportItem, ItemReviewHistory, Role, ItemStatus, formatTimestamp } from '../types';
 import { ZoomableImage } from './ZoomableImage';
 import {
   X, History, CheckCircle2, AlertTriangle, Edit3, PlusCircle,
@@ -343,7 +343,7 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
                       <div className="flex flex-col items-start gap-1">
                         <div className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono">
                           <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                          <span>{log.timestamp}</span>
+                          <span>{formatTimestamp(log.timestamp)}</span>
                         </div>
                         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
                           <User className="w-3.5 h-3.5 text-slate-400 shrink-0" />

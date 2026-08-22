@@ -272,10 +272,24 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
           return (
             <div key={item.id} className="border border-slate-100 bg-white rounded-xl p-3 space-y-3 shadow-sm">
               <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-[10px] text-slate-400 font-bold block">ITEM #{idx + 1}</span>
-                  <h4 className="text-xs font-bold text-slate-800">{item.keterangan}</h4>
-                  <p className="text-[10px] text-slate-500 font-medium">Tanggal: {item.tanggalPenggunaan} | Nominal: <strong>{formatIDR(item.nominal)}</strong></p>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-bold block">ITEM #{idx + 1}</span>
+                    <h4 className="text-xs font-bold text-slate-800">{item.keterangan}</h4>
+                    <p className="text-[10px] text-slate-500 font-medium">Tanggal: {item.tanggalPenggunaan} | Nominal: <strong>{formatIDR(item.nominal)}</strong></p>
+                  </div>
+                  {/* Status Badge Indikator Baru */}
+                  {(item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED) ? (
+                    <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-full shadow-xs animate-pulse shrink-0">
+                      <AlertTriangle className="w-2.5 h-2.5 text-white" />
+                      BARU: REVISI
+                    </span>
+                  ) : (item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED) ? (
+                    <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-full shadow-xs shrink-0">
+                      <CheckCircle2 className="w-2.5 h-2.5 text-white" />
+                      BARU: DISETUJUI
+                    </span>
+                  ) : null}
                 </div>
               </div>
 

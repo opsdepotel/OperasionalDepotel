@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, RequestStatus } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles } from 'lucide-react';
+import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles, CloudUpload } from 'lucide-react';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture } from '../lib/aiRecapture';
 import { ZoomableImage } from './ZoomableImage';
@@ -617,11 +617,18 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-1 shrink-0">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-lg text-[10px] font-bold">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                        <span>Selesai</span>
-                      </span>
+                    <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+                      {req.isOfflinePending ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-[10px] font-extrabold animate-pulse">
+                          <CloudUpload className="w-3 h-3 text-amber-700" />
+                          <span>Pending Sync (Offline)</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200/60 rounded-lg text-[10px] font-bold">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span>Selesai</span>
+                        </span>
+                      )}
                     </div>
                   </div>
 

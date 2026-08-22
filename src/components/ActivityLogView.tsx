@@ -1384,7 +1384,15 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         <div className="flex items-start gap-2">
                           <User className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
                           <div className="flex flex-col items-start gap-0.5">
-                            <span className="text-sm font-bold text-slate-800">{userName}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-sm font-bold text-slate-800">{userName}</span>
+                              {act.isOfflinePending && (
+                                <span className="text-[9px] font-extrabold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded flex items-center gap-1 animate-pulse">
+                                  <UploadCloud className="w-2.5 h-2.5 text-amber-700" />
+                                  <span>Pending Sync (Offline)</span>
+                                </span>
+                              )}
+                            </div>
                             {formattedDivisi && formattedDivisi !== '-' && (
                               <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">
                                 {formattedDivisi}

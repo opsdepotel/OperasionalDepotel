@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { UserProfile, Role, BudgetRequest, ResetDeviceLog } from '../types';
+import { UserProfile, Role, BudgetRequest, ResetDeviceLog, formatTimestamp } from '../types';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel, Smartphone, RotateCcw, CheckCircle2, History, FileSpreadsheet, Clock, Tag } from 'lucide-react';
 
@@ -614,7 +614,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                     </div>
                     <div className="flex items-center gap-1 text-[10px] text-slate-400 shrink-0 font-medium">
                       <Clock className="w-3 h-3 text-slate-400" />
-                      <span>{log.timestamp}</span>
+                      <span>{formatTimestamp(log.timestamp)}</span>
                     </div>
                   </div>
 
