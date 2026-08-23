@@ -1,31 +1,30 @@
-const CACHE_NAME = 'dioms-pwa-v1';
-const STATIC_ASSETS = [
+const CACHE_NAME = 'dioms-depotel-v1';
+const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/DIOMS-icon192.png',
+  '/DIOMS-icon512.png',
   '/DIOMS-1.png',
   '/DEPOTEL_rounded22.jpg'
 ];
 
-// Install Event - Pre-cache core app shell
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS).catch((err) => {
-        console.warn('[PWA SW] Pre-caching partial failure:', err);
+      return cache.addAll(ASSETS_TO_CACHE).catch((err) => {
+        console.warn('Pre-caching assets warning:', err);
       });
     }).then(() => self.skipWaiting())
   );
 });
 
-// Activate Event - Clean up old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
-            console.log('[PWA SW] Deleting old cache:', cache);
             return caches.delete(cache);
           }
         })
@@ -34,100 +33,77 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch Event - Handle offline requests & Web Share Target
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  // Handle Web Share Target POST request (e.g. sharing receipt from BRImo or Gallery)
-  if (event.request.method === 'POST' && url.pathname.includes('/?shared=true')) {
+  // Handle PWA Web Share Target POST request
+  if (event.request.method === 'POST' && event.request.url.includes('/finance-share-target')) {
     event.respondWith(
       (async () => {
         try {
           const formData = await event.request.formData();
-          const photo = formData.get('photos');
-          const title = formData.get('title') || '';
-          const text = formData.get('text') || '';
-
-          if (photo && photo instanceof File) {
-            // Store shared file in IndexedDB or temporary Cache
-            const cache = await caches.open('dioms-shared-files');
-            const response = new Response(photo, {
-              headers: {
-                'content-type': photo.type,
-                'x-file-name': encodeURIComponent(photo.name),
-                'x-file-title': encodeURIComponent(title || text)
-              }
+          const file = formData.get('bukti_transfer') || formData.get('file');
+          if (file) {
+            const db = await new Promise((resolve, reject) => {
+              const req = indexedDB.open('DIOMS_SHARE_DB', 1);
+              req.onupgradeneeded = (e) => {
+                const database = e.target.result;
+                if (!database.objectStoreNames.contains('shared_receipts')) {
+                  database.createObjectStore('shared_receipts', { keyPath: 'id' });
+                }
+              };
+              req.onsuccess = () => resolve(req.result);
+              req.onerror = () => reject(req.error);
             });
-            await cache.put('/shared-incoming-receipt', response);
 
-            // Notify all open clients about the received share
-            const allClients = await self.clients.matchAll({ type: 'window' });
-            for (const client of allClients) {
-              client.postMessage({
-                type: 'DIOMS_SHARED_FILE_RECEIVED',
-                fileName: photo.name,
-                fileType: photo.type
-              });
-            }
+            const record = {
+              id: 'share_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+              blob: file,
+              fileName: file.name || `shared_receipt_${Date.now()}.jpg`,
+              mimeType: file.type || 'image/jpeg',
+              timestamp: Date.now(),
+            };
+
+            await new Promise((resolve, reject) => {
+              const tx = db.transaction(['shared_receipts'], 'readwrite');
+              const store = tx.objectStore('shared_receipts');
+              const putReq = store.put(record);
+              putReq.onsuccess = () => resolve();
+              putReq.onerror = () => reject(putReq.error);
+            });
           }
         } catch (err) {
-          console.error('[PWA SW] Error handling shared file:', err);
+          console.error('Service Worker Share Target handling error:', err);
         }
-        // Redirect to main app page after share
-        return Response.redirect('/?shared_success=true', 303);
+        return Response.redirect('/?shared_receipt=1', 303);
       })()
     );
     return;
   }
 
-  // Skip non-GET requests for standard caching
+  // Ignore non-GET requests or API calls
   if (event.request.method !== 'GET') return;
+  if (event.request.url.includes('/api/')) return;
+  if (event.request.url.includes('google.com') || event.request.url.includes('googleapis.com')) return;
 
-  // Navigation requests (HTML pages) -> Network first, fallback to cached index.html
-  if (event.request.mode === 'navigate') {
-    event.respondWith(
-      fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseToCache = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
-          }
-          return networkResponse;
-        })
-        .catch(async () => {
-          const cachedIndex = await caches.match('/index.html') || await caches.match('/');
-          if (cachedIndex) return cachedIndex;
-          return new Response('<h1>DIOMS Mode Offline</h1><p>Aplikasi sedang offline. Silakan sambungkan kembali koneksi internet Anda.</p>', {
-            headers: { 'Content-Type': 'text/html' }
-          });
-        })
-    );
-    return;
-  }
-
-  // Static assets (images, js, css) -> Cache first or Stale-While-Revalidate
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        // Fetch background update for cache freshness
-        fetch(event.request).then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
-          }
-        }).catch(() => {});
-        return cachedResponse;
-      }
-
-      return fetch(event.request).then((networkResponse) => {
-        if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
-          return networkResponse;
+    fetch(event.request)
+      .then((networkResponse) => {
+        if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
+          const responseToCache = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
         }
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseToCache));
         return networkResponse;
-      }).catch((err) => {
-        console.warn('[PWA SW] Fetch failed for:', event.request.url, err);
-      });
-    })
+      })
+      .catch(() => {
+        return caches.match(event.request).then((cachedResponse) => {
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          if (event.request.mode === 'navigate') {
+            return caches.match('/index.html');
+          }
+        });
+      })
   );
 });

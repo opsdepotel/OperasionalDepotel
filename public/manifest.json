@@ -1,28 +1,34 @@
 {
-  "name": "DIOMS - Depotel Integrated Operation Monitoring System",
-  "short_name": "DIOMS",
-  "description": "Depotel Integrated Operation Monitoring System dengan Dukungan Offline Mode & Manajemen Operasional Lapangan",
+  "short_name": "DIOMS Depotel",
+  "name": "Operasional Depotel",
+  "description": "Aplikasi Manajemen Operasional Depotel (DIOMS)",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#f8fafc",
-  "theme_color": "#4f46e5",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
   "icons": [
     {
-      "src": "/DIOMS-1.png",
-      "sizes": "192x192",
+      "src": "/DIOMS-icon192.png",
       "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/DIOMS-icon512.png",
+      "type": "image/png",
+      "sizes": "512x512",
       "purpose": "any maskable"
     },
     {
       "src": "/DIOMS-1.png",
-      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "sizes": "512x512"
     }
   ],
   "share_target": {
-    "action": "/?shared=true",
+    "action": "/finance-share-target",
     "method": "POST",
     "enctype": "multipart/form-data",
     "params": {
@@ -31,8 +37,8 @@
       "url": "url",
       "files": [
         {
-          "name": "photos",
-          "accept": ["image/*", "application/pdf"]
+          "name": "bukti_transfer",
+          "accept": ["image/*"]
         }
       ]
     }

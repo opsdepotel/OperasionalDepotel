@@ -24,7 +24,7 @@ interface TransferModalProps {
   request: BudgetRequest;
   requesterName?: string;
   profiles?: UserProfile[];
-  onTransfer: (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string) => Promise<void>;
+  onTransfer: (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string, customAdminActionTime?: string) => Promise<void>;
   onReject?: (reason: string) => Promise<void>;
   histories?: ItemReviewHistory[];
   onClose: () => void;
@@ -32,6 +32,9 @@ interface TransferModalProps {
   driveFolderId: string | null;
   onAuthError?: () => void;
   approvedUsageAmount?: number;
+  initialFile?: File | null;
+  initialOcrDate?: string;
+  initialOcrAmount?: number;
 }
 
 export const TransferModal: React.FC<TransferModalProps> = ({
@@ -45,7 +48,10 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   googleToken,
   driveFolderId,
   onAuthError,
-  approvedUsageAmount = 0
+  approvedUsageAmount = 0,
+  initialFile = null,
+  initialOcrDate = '',
+  initialOcrAmount = 0
 }) => {
   const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
   const isRequesterManagerOrFinance = requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE;
@@ -57,16 +63,19 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   const [activeMode, setActiveMode] = useState<'TRANSFER' | 'REVISE'>('TRANSFER');
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
-  const [transferredAmount, setTransferredAmount] = useState(
-    isFinalTalanganTransfer ? String(approvedUsageAmount) : String(request.managerActionAmount)
-  );
+  const initialAmountValue = initialOcrAmount > 0
+    ? String(initialOcrAmount)
+    : (isFinalTalanganTransfer ? String(approvedUsageAmount) : String(request.managerActionAmount));
+
+  const [transferredAmount, setTransferredAmount] = useState(initialAmountValue);
+  const [ocrDate, setOcrDate] = useState<string>(initialOcrDate || '');
   const [adminComment, setAdminComment] = useState(request.adminComment || '');
   const [revisionReason, setRevisionReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // File Upload State
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(initialFile || null);
   const [showCameraStream, setShowCameraStream] = useState(false);
 
   // Refs for upload/capture
@@ -163,7 +172,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         finalBuktiFileId = uploadResult.fileId;
       }
 
-      await onTransfer(amt, finalBuktiUrl, finalBuktiFileId, adminComment.trim());
+      await onTransfer(amt, finalBuktiUrl, finalBuktiFileId, adminComment.trim(), ocrDate || undefined);
     } catch (err: any) {
       const isAuthError = err.message && (
         err.message.includes('401') ||

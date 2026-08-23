@@ -263,6 +263,180 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
     }
   });
 
+  // AI Transfer Receipt OCR Endpoint
+  app.post('/api/ai/ocr-transfer-receipt', async (req, res) => {
+    try {
+      const { imageBase64, imageUrl, fileId } = req.body;
+
+      if (!imageBase64 && !imageUrl && !fileId) {
+        return res.status(400).json({
+          error: 'Parameter gambar (imageBase64, imageUrl, atau fileId) wajib disertakan.',
+        });
+      }
+
+      let base64Data = '';
+      let mimeType = 'image/jpeg';
+
+      if (imageBase64) {
+        if (imageBase64.startsWith('data:')) {
+          const parts = imageBase64.split(',');
+          const mimeMatch = parts[0].match(/:(.*?);/);
+          if (mimeMatch) mimeType = mimeMatch[1];
+          base64Data = parts[1];
+        } else {
+          base64Data = imageBase64;
+        }
+      } else {
+        const fetched = await fetchImageAsBase64(imageUrl || fileId);
+        base64Data = fetched.base64;
+        mimeType = fetched.mimeType;
+      }
+
+      const ai = getGenAI();
+
+      const currentYear = new Date().getFullYear();
+      const prompt = `Anda adalah sistem OCR cerdas khusus analisis resi bukti transfer bank & e-wallet Indonesia (seperti BRImo, BCA Mobile, Mandiri Livin, BNI Mobile, QRIS, Dana, GoPay, OVO, ShopeePay, dll).
+
+Tugas Anda:
+Analisis foto/skrinsut resi bukti transfer terlampir, lalu ekstrak informasi berikut secara tepat dan terstruktur:
+
+1. **tanggalTransaksi**: Tanggal terjadinya transaksi transfer dalam format YYYY-MM-DD. Jika tanggal pada resi menggunakan format Indonesia (misal 22/08/2026 atau 22 Ags 2026), ubah ke YYYY-MM-DD. Jika tidak tertera tahun, asumsi tahun ${currentYear}.
+2. **nominalTransaksi**: Nominal total jumlah uang yang ditransfer dalam bentuk ANGKA BULAT SAJA (misal: 1500000, tanpa titik/koma/simbol Rp).
+3. **catatan**: Catatan, berita transfer, ID transaksi, atau keterangan transaksi jika ada pada resi (contoh: "Operasional Site A", "Ref 123", dll). Jika tidak ada, isi string kosong "".
+4. **namaTujuan**: Nama lengkap pemilik rekening penerima / nama tujuan transfer (contoh: "BUDI SANTOSO", "PT DEPOTEL"). Jika tidak ada, isi string kosong "".
+5. **bankPenerima**: Nama bank atau e-wallet penerima/tujuan (contoh: "BRI", "BCA", "MANDIRI", "BNI", "DANA"). Jika tidak ada, isi string kosong "".
+6. **noReferensi**: Nomor referensi unik, No. Ref, ID Transaksi bank dari resi jika ada.
+
+Berikan analisis dalam format JSON murni.`;
+
+      // Candidate models ordered from fastest to fallback models
+      const candidateModels = [
+        'gemini-3.7-flash',
+        'gemini-3.1-flash-lite',
+        'gemini-flash-latest',
+        'gemini-2.5-flash',
+      ];
+
+      let response: any = null;
+      let lastModelError: any = null;
+
+      for (const modelName of candidateModels) {
+        let attempts = 0;
+        const maxAttempts = 2;
+
+        while (attempts < maxAttempts) {
+          try {
+            attempts++;
+            response = await ai.models.generateContent({
+              model: modelName,
+              contents: {
+                parts: [
+                  {
+                    inlineData: {
+                      data: base64Data,
+                      mimeType: mimeType || 'image/jpeg',
+                    },
+                  },
+                  {
+                    text: prompt,
+                  },
+                ],
+              },
+              config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.OBJECT,
+                  properties: {
+                    tanggalTransaksi: {
+                      type: Type.STRING,
+                      description: 'Tanggal transaksi dalam format YYYY-MM-DD (contoh: 2026-08-22)',
+                    },
+                    nominalTransaksi: {
+                      type: Type.NUMBER,
+                      description: 'Nominal transfer murni dalam angka bulat (contoh: 1500000)',
+                    },
+                    catatan: {
+                      type: Type.STRING,
+                      description: 'Catatan, berita, atau keterangan transfer dari resi',
+                    },
+                    namaTujuan: {
+                      type: Type.STRING,
+                      description: 'Nama rekening penerima atau tujuan transfer',
+                    },
+                    bankPenerima: {
+                      type: Type.STRING,
+                      description: 'Nama bank atau provider e-wallet penerima',
+                    },
+                    noReferensi: {
+                      type: Type.STRING,
+                      description: 'Nomor referensi atau ID transaksi bank dari resi',
+                    },
+                  },
+                  required: ['tanggalTransaksi', 'nominalTransaksi', 'catatan', 'namaTujuan'],
+                },
+              },
+            });
+
+            if (response && response.text) {
+              break;
+            }
+          } catch (modelErr: any) {
+            lastModelError = modelErr;
+            const errMsg = String(modelErr?.message || '');
+            const isTransientOrQuota =
+              errMsg.includes('503') ||
+              errMsg.includes('UNAVAILABLE') ||
+              errMsg.includes('high demand') ||
+              errMsg.includes('429') ||
+              errMsg.includes('RESOURCE_EXHAUSTED') ||
+              errMsg.includes('quota');
+
+            if (isTransientOrQuota && attempts < maxAttempts) {
+              await new Promise((r) => setTimeout(r, 1200));
+            } else {
+              break; // Try next model candidate
+            }
+          }
+        }
+
+        if (response && response.text) {
+          break;
+        }
+      }
+
+      if (!response || !response.text) {
+        throw lastModelError || new Error('Gagal memproses OCR resi dengan AI.');
+      }
+
+      const resultText = response.text || '{}';
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(resultText);
+      } catch {
+        parsedResult = {
+          tanggalTransaksi: new Date().toISOString().split('T')[0],
+          nominalTransaksi: 0,
+          catatan: '',
+          namaTujuan: '',
+          bankPenerima: '',
+          noReferensi: '',
+        };
+      }
+
+      return res.json({
+        success: true,
+        data: parsedResult,
+      });
+    } catch (error: any) {
+      console.error('Error in ocr-transfer-receipt:', error);
+      let userFacingError = error.message || 'Gagal membaca data resi transfer dengan AI.';
+      return res.status(500).json({
+        success: false,
+        error: userFacingError,
+      });
+    }
+  });
+
   // Vite middleware setup
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

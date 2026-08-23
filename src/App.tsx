@@ -59,6 +59,9 @@ import { FinancialReportsModal } from './components/FinancialReportsModal';
 import { ItemHistoryModal } from './components/ItemHistoryModal';
 import { UserDashboardPreviewModal } from './components/UserDashboardPreviewModal';
 import { GoogleConnectionModal } from './components/GoogleConnectionModal';
+import { PwaInstallBanner } from './components/PwaInstallBanner';
+import { FinanceSharedReceiptModal, OcrReceiptData } from './components/FinanceSharedReceiptModal';
+import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt } from './lib/sharedReceiptStorage';
 
 // Icons
 import {
@@ -237,6 +240,37 @@ export default function App() {
   const [closedDivisiFilter, setClosedDivisiFilter] = useState<string>('ALL');
   const [closedStartDateFilter, setClosedStartDateFilter] = useState<string>('');
   const [closedEndDateFilter, setClosedEndDateFilter] = useState<string>('');
+
+  // PWA Share Target states for received receipts
+  const [pendingSharedRecord, setPendingSharedRecord] = useState<SharedReceiptRecord | null>(null);
+  const [sharedOcrPrefill, setSharedOcrPrefill] = useState<{ file: File; ocrData: OcrReceiptData } | null>(null);
+
+  // Check for received shared receipts from IndexedDB
+  useEffect(() => {
+    let isMounted = true;
+    const checkSharedReceipts = async () => {
+      try {
+        const record = await getLatestSharedReceipt();
+        if (isMounted && record) {
+          setPendingSharedRecord(record);
+        }
+      } catch (err) {
+        console.error('Error checking IndexedDB for shared receipts:', err);
+      }
+    };
+
+    checkSharedReceipts();
+
+    // Listen for window focus or visibility change
+    const handleFocus = () => {
+      checkSharedReceipts();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
 
   // Trigger loading & initialization
   useEffect(() => {
@@ -1188,13 +1222,19 @@ export default function App() {
   };
 
   // Workflow Action 3: Admin Transfer Funds
-  const handleAdminTransfer = async (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string) => {
+  const handleAdminTransfer = async (
+    transferredAmount: number,
+    buktiUrl: string,
+    buktiFileId: string,
+    adminComment?: string,
+    customAdminActionTime?: string
+  ) => {
     if (!token || !spreadsheetId || !transferReq) return;
 
     const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.id.startsWith('BBMDS') || transferReq.id.startsWith('BBM_DurenSawit') || transferReq.tipePengajuan === 'DANA_TALANGAN' || transferReq.keterangan.startsWith('[DANA TALANGAN]');
     const isPendingTalanganTransfer = transferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
 
-    const nowActionTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+    const nowActionTime = customAdminActionTime || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
     const updated: BudgetRequest = {
       ...transferReq,
       status: (isReqTalangan && isPendingTalanganTransfer) ? RequestStatus.CLOSED : RequestStatus.TRANSFERRED,
@@ -2316,6 +2356,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
+      <PwaInstallBanner />
       <Header
         userProfile={userProfile}
         role={activeRole}
@@ -2642,6 +2683,24 @@ export default function App() {
                   />
                 )}
 
+                {pendingSharedRecord && (
+                  <FinanceSharedReceiptModal
+                    activeRole={activeRole}
+                    sharedRecord={pendingSharedRecord}
+                    requests={requests}
+                    profiles={profiles}
+                    onSwitchToFinanceRole={() => {
+                      setActiveRole(Role.FINANCE);
+                    }}
+                    onSelectCandidate={(candidateReq, file, ocrData) => {
+                      setSharedOcrPrefill({ file, ocrData });
+                      setTransferReq(candidateReq);
+                      setPendingSharedRecord(null);
+                    }}
+                    onClose={() => setPendingSharedRecord(null)}
+                  />
+                )}
+
                 {transferReq && (
                   <TransferModal
                     request={transferReq}
@@ -2650,7 +2709,10 @@ export default function App() {
                     onTransfer={handleAdminTransfer}
                     onReject={handleRejectTransfer}
                     histories={itemReviewHistories}
-                    onClose={() => setTransferReq(null)}
+                    onClose={() => {
+                      setTransferReq(null);
+                      setSharedOcrPrefill(null);
+                    }}
                     googleToken={token!}
                     driveFolderId={driveFolderId}
                     onAuthError={handleGoogleAuthError}
@@ -2659,6 +2721,9 @@ export default function App() {
                         .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
                         .reduce((sum, item) => sum + item.nominal, 0)
                     }
+                    initialFile={sharedOcrPrefill?.file}
+                    initialOcrDate={sharedOcrPrefill?.ocrData?.tanggalTransaksi}
+                    initialOcrAmount={sharedOcrPrefill?.ocrData?.nominalTransaksi}
                   />
                 )}
 
