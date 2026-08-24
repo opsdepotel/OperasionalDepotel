@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone } from 'lucide-react';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
@@ -399,99 +399,128 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [isFetchingGps, setIsFetchingGps] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
 
-  // Canvas utility to apply watermark to captured photo
+  // Canvas utility to apply watermark to captured photo with downscaling and JPEG compression to prevent OOM crash
   const applyWatermarkToImage = (
     file: File,
     textLines: string[]
   ): Promise<File> => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (event) => {
         const img = new Image();
         img.onload = () => {
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(file);
-            return;
-          }
+          try {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              resolve(file);
+              return;
+            }
 
-          canvas.width = img.width;
-          canvas.height = img.height;
+            // Downscale image if dimensions exceed MAX_DIMENSION (1600px)
+            // This prevents canvas allocation memory crash (OOM) on mobile devices while keeping image crisp
+            const MAX_DIMENSION = 1600;
+            let targetWidth = img.width;
+            let targetHeight = img.height;
 
-          // Draw the original image first
-          ctx.drawImage(img, 0, 0);
-
-          // Calculate font size dynamically based on image dimensions
-          const minDimension = Math.min(img.width, img.height);
-          const fontSize = Math.max(16, Math.floor(minDimension * 0.035)); // 3.5% of min dimension
-          ctx.font = `bold ${fontSize}px sans-serif`;
-
-          // Spacing config
-          const marginX = fontSize;
-          const lineHeight = fontSize * 1.35;
-          const totalHeight = textLines.length * lineHeight;
-          const marginY = fontSize * 1.2;
-
-          // Determine start y-position (top left)
-          const startY = marginY + fontSize;
-
-          // Calculate the maximum width of the text lines for background rect
-          let maxLineWidth = 0;
-          textLines.forEach(line => {
-            const width = ctx.measureText(line).width;
-            if (width > maxLineWidth) maxLineWidth = width;
-          });
-
-          // Draw translucent dark background for absolute text readability
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-          ctx.fillRect(
-            marginX - 12,
-            marginY,
-            maxLineWidth + 24,
-            totalHeight + fontSize * 0.4 + 8
-          );
-
-          // Draw orange-yellow left accent bar
-          ctx.fillStyle = '#f59e0b'; // Amber-500
-          ctx.fillRect(
-            marginX - 12,
-            marginY,
-            4,
-            totalHeight + fontSize * 0.4 + 8
-          );
-
-          // Reset fill style to white for text drawing
-          ctx.fillStyle = '#ffffff';
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-          ctx.shadowBlur = 6;
-
-          // Render each line of watermark text
-          textLines.forEach((line, index) => {
-            ctx.fillText(line, marginX, startY + (index * lineHeight));
-          });
-
-          // Convert back to File blob
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                const watermarkedFile = new File([blob], file.name, {
-                  type: file.type,
-                  lastModified: Date.now()
-                });
-                resolve(watermarkedFile);
+            if (targetWidth > MAX_DIMENSION || targetHeight > MAX_DIMENSION) {
+              if (targetWidth > targetHeight) {
+                targetHeight = Math.round((targetHeight * MAX_DIMENSION) / targetWidth);
+                targetWidth = MAX_DIMENSION;
               } else {
-                resolve(file);
+                targetWidth = Math.round((targetWidth * MAX_DIMENSION) / targetHeight);
+                targetHeight = MAX_DIMENSION;
               }
-            },
-            file.type,
-            0.9 // High quality compression
-          );
+            }
+
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+
+            // Draw the resized original image first
+            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+            // Calculate font size dynamically based on target image dimensions
+            const minDimension = Math.min(targetWidth, targetHeight);
+            const fontSize = Math.max(14, Math.floor(minDimension * 0.035)); // 3.5% of min dimension
+            ctx.font = `bold ${fontSize}px sans-serif`;
+
+            // Spacing config
+            const marginX = fontSize;
+            const lineHeight = fontSize * 1.35;
+            const totalHeight = textLines.length * lineHeight;
+            const marginY = fontSize * 1.2;
+
+            // Determine start y-position (top left)
+            const startY = marginY + fontSize;
+
+            // Calculate the maximum width of the text lines for background rect
+            let maxLineWidth = 0;
+            textLines.forEach(line => {
+              const width = ctx.measureText(line).width;
+              if (width > maxLineWidth) maxLineWidth = width;
+            });
+
+            // Draw translucent dark background for absolute text readability
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+            ctx.fillRect(
+              marginX - 12,
+              marginY,
+              maxLineWidth + 24,
+              totalHeight + fontSize * 0.4 + 8
+            );
+
+            // Draw orange-yellow left accent bar
+            ctx.fillStyle = '#f59e0b'; // Amber-500
+            ctx.fillRect(
+              marginX - 12,
+              marginY,
+              4,
+              totalHeight + fontSize * 0.4 + 8
+            );
+
+            // Reset fill style to white for text drawing
+            ctx.fillStyle = '#ffffff';
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+            ctx.shadowBlur = 6;
+
+            // Render each line of watermark text
+            textLines.forEach((line, index) => {
+              ctx.fillText(line, marginX, startY + (index * lineHeight));
+            });
+
+            // Convert back to compressed JPEG File blob
+            canvas.toBlob(
+              (blob) => {
+                if (blob) {
+                  const cleanName = file.name ? file.name.replace(/\.[^/.]+$/, "") : "kegiatan";
+                  const watermarkedFile = new File([blob], `${cleanName}_wm.jpg`, {
+                    type: 'image/jpeg',
+                    lastModified: Date.now()
+                  });
+                  resolve(watermarkedFile);
+                } else {
+                  console.warn('canvas.toBlob returned null, falling back to original file');
+                  resolve(file);
+                }
+              },
+              'image/jpeg',
+              0.82 // 82% JPEG compression gives crisp readability & minimal file size (~200KB)
+            );
+          } catch (err) {
+            console.error('Error processing watermark on canvas:', err);
+            resolve(file); // Graceful fallback
+          }
         };
-        img.onerror = () => reject(new Error('Gagal memproses gambar.'));
+        img.onerror = (e) => {
+          console.error('Error loading image for watermark:', e);
+          resolve(file);
+        };
         img.src = event.target?.result as string;
       };
-      reader.onerror = () => reject(new Error('Gagal membaca file gambar.'));
+      reader.onerror = (e) => {
+        console.error('Error reading image file:', e);
+        resolve(file);
+      };
       reader.readAsDataURL(file);
     });
   };
@@ -1059,20 +1088,33 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200/80 rounded-xl">
-                    <div className="relative flex items-center justify-center w-8 h-8 rounded-full bg-red-500 text-white shrink-0 shadow-xs animate-pulse">
-                      <MapPin className="w-4.5 h-4.5 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-red-900">GPS Belum Tersedia</span>
-                        <span className="text-[10px] font-bold px-2 py-0.5 bg-red-100 text-red-800 rounded-md">
-                          Terkunci
-                        </span>
+                  <div className="flex flex-col gap-2 p-3 bg-red-50 border border-red-200/80 rounded-xl">
+                    <div className="flex items-center gap-3">
+                      <div className="relative flex items-center justify-center w-8 h-8 rounded-full bg-red-500 text-white shrink-0 shadow-xs animate-pulse">
+                        <MapPin className="w-4.5 h-4.5 text-white" />
                       </div>
-                      <p className="text-[10px] text-red-700 font-medium mt-0.5 leading-relaxed">
-                        {gpsError || 'Aplikasi terus mengecek data GPS. Mohon aktifkan izin lokasi / GPS pada HP Anda.'}
-                      </p>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-red-900">GPS Belum Tersedia</span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 bg-red-100 text-red-800 rounded-md">
+                            Terkunci
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-red-700 font-medium mt-0.5 leading-relaxed">
+                          {gpsError || 'Aplikasi terus mengecek data GPS. Mohon aktifkan izin lokasi / GPS pada HP Anda.'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-red-200/60 mt-1">
+                      <button
+                        type="button"
+                        onClick={handleGetGps}
+                        disabled={isFetchingGps}
+                        className="text-[11px] font-bold bg-white text-red-700 hover:bg-red-100/60 px-2.5 py-1 rounded-lg border border-red-200 flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isFetchingGps ? 'animate-spin' : ''}`} />
+                        <span>Coba Ambil Ulang GPS</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1159,8 +1201,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                       <span className="text-xs font-bold text-slate-400">Buka Kamera HP (Terkunci)</span>
                       <span className="text-[10px] text-slate-400 mt-1.5 font-medium text-center px-4 leading-relaxed">
                         {!isGpsReady ? (
-                          <span className="text-red-600 font-bold">
-                            Data lokasi GPS belum tersedia. Mohon aktifkan GPS dan tunggu hingga icon berubah hijau.
+                          <span className="text-red-600 font-bold block">
+                            Data lokasi GPS belum tersedia. Klik "Coba Ambil Ulang GPS" atau aktifkan izin lokasi di browser Anda.
                           </span>
                         ) : (
                           <span>
@@ -1172,7 +1214,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                   ) : isMobileUser ? (
                     <label className="cursor-pointer flex flex-col items-center justify-center py-5 w-full">
                       <Camera className="w-8 h-8 text-indigo-500 mb-2 animate-pulse" />
-                      <span className="text-xs font-bold text-slate-700">Buka Kamera HP (Wajib Kamera)</span>
+                      <span className="text-xs font-bold text-slate-700">Buka Kamera HP (Wajib Kamera Direct)</span>
                       <span className="text-[10px] text-slate-400 mt-1 font-medium">Pengguna Wajib Mobile wajib memotret kegiatan harian langsung dari Kamera HP</span>
                       <input
                         type="file"

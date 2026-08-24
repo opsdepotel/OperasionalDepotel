@@ -2155,12 +2155,10 @@ export default function App() {
               r.status !== RequestStatus.REVIEW_MANAGER &&
               r.status !== RequestStatus.REVIEW_ADMIN) return false;
         } else if (activeRole === Role.MANAGER) {
+          if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
           if (reqItems.length === 0) return false;
-          const hasRejectedItem = reqItems.some(i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED);
-          if (r.status === RequestStatus.REVIEW_MANAGER) return true;
-          if (r.status === RequestStatus.REPORTING && !hasRejectedItem) return true;
-          return false;
+          return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
         } else if (activeRole === Role.FINANCE) {
           if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);

@@ -1084,15 +1084,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
 
     // Request Stats for Manager's Team
-    const teamPendingAppr = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL).length;
-    const teamUnderReview = managerReqs.filter(r => {
-      const reqItems = usageItems.filter(item => item.requestId === r.id);
-      if (reqItems.length === 0) return false;
-      const hasRejectedItem = reqItems.some(i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED);
-      if (r.status === RequestStatus.REVIEW_MANAGER) return true;
-      if (r.status === RequestStatus.REPORTING && !hasRejectedItem) return true;
-      return false;
-    }).length;
+    const teamPendingAppr = pendingBudgetReview;
+    const teamUnderReview = pendingReportReview;
 
     return (
       <div className="space-y-4">
