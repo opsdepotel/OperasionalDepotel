@@ -166,7 +166,8 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-lg p-5 animate-slide-up space-y-4">
+    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 space-y-4 my-auto">
       {/* Title */}
       <div className="flex items-center justify-between pb-2 border-b border-slate-100">
         <div>
@@ -452,6 +453,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
           onClose={() => setShowHistoryModal(false)}
         />
       )}
+      </div>
     </div>
   );
 };

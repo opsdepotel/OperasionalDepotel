@@ -117,8 +117,8 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-start justify-center p-2 sm:p-4 pt-2 sm:pt-4 overflow-y-auto animate-fade-in">
-      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-0 max-h-[94vh] flex flex-col">
+    <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+      <div className="bg-white rounded-2xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
         {/* Header - Font diperkecil 1 tingkat & dijadikan 1 baris */}
         <div className="bg-gradient-to-r from-blue-700 via-indigo-700 to-indigo-800 text-white p-3.5 sm:p-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2.5 min-w-0">

@@ -1341,8 +1341,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       {/* ----------------- POPUP MODAL BUKTI PREVIEW ----------------- */}
       {previewItem && (
-        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[10000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
@@ -1507,8 +1507,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       {/* Activities Popup Modal */}
       {viewingActivityItem && (
-        <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[10000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up my-auto">
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
@@ -1759,7 +1759,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         });
 
         return (
-          <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] z-[70] flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[10000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
             <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4 my-auto">
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
