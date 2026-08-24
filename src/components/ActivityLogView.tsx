@@ -6,7 +6,37 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone, Wifi, WifiOff, CloudOff, Send, Trash2, CheckCircle2, HardDrive } from 'lucide-react';
+
+export interface OfflineActivityItem {
+  id: string;
+  timestamp: string;
+  tanggal: string;
+  siteId: string;
+  siteName: string;
+  coordinatesDb: string;
+  coordinatesActual: string;
+  keterangan: string;
+  indikasiFake?: boolean;
+  fakeReason?: string;
+  photoDataUrl: string;
+  photoFileName: string;
+  userEmail: string;
+  userName: string;
+}
+
+function dataURLtoFile(dataurl: string, filename: string): File {
+  const arr = dataurl.split(',');
+  const mimeMatch = arr[0].match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new File([u8arr], filename, { type: mime });
+}
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
@@ -122,6 +152,146 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [showAddForm, setShowAddForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Network connection status
+  const [isOnline, setIsOnline] = useState<boolean>(() => typeof navigator !== 'undefined' ? navigator.onLine : true);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Offline Activities Queue
+  const [offlineQueue, setOfflineQueue] = useState<OfflineActivityItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('op_app_offline_activities');
+      return saved ? JSON.parse(saved) : [];
+    } catch (err) {
+      console.error('Failed to parse offline activities:', err);
+      return [];
+    }
+  });
+
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+
+  // Save Offline Item
+  const saveOfflineActivity = async (
+    data: {
+      tanggal: string;
+      siteId: string;
+      siteName: string;
+      coordinatesDb: string;
+      coordinatesActual: string;
+      keterangan: string;
+      indikasiFake?: boolean;
+      fakeReason?: string;
+    },
+    photoBlobOrUrl: File | string
+  ) => {
+    let dataUrl = '';
+    let fileName = 'kegiatan_offline.jpg';
+
+    if (typeof photoBlobOrUrl === 'string') {
+      dataUrl = photoBlobOrUrl;
+    } else {
+      fileName = photoBlobOrUrl.name || 'kegiatan_offline.jpg';
+      dataUrl = await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(photoBlobOrUrl);
+      });
+    }
+
+    const newItem: OfflineActivityItem = {
+      id: `OFFLINE-ACT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+      tanggal: data.tanggal,
+      siteId: data.siteId,
+      siteName: data.siteName,
+      coordinatesDb: data.coordinatesDb,
+      coordinatesActual: data.coordinatesActual,
+      keterangan: data.keterangan,
+      indikasiFake: data.indikasiFake,
+      fakeReason: data.fakeReason,
+      photoDataUrl: dataUrl,
+      photoFileName: fileName,
+      userEmail: userEmail || userProfile?.email || '',
+      userName: userProfile?.nama || userEmail || 'User'
+    };
+
+    const updated = [newItem, ...offlineQueue];
+    setOfflineQueue(updated);
+    localStorage.setItem('op_app_offline_activities', JSON.stringify(updated));
+    return newItem;
+  };
+
+  // Sync Offline Queue
+  const syncOfflineActivities = async () => {
+    if (offlineQueue.length === 0 || isSyncing) return;
+    setIsSyncing(true);
+    setSyncNotice(null);
+
+    let successCount = 0;
+    const remaining = [...offlineQueue];
+
+    for (let i = offlineQueue.length - 1; i >= 0; i--) {
+      const item = offlineQueue[i];
+      try {
+        const photoFile = dataURLtoFile(item.photoDataUrl, item.photoFileName);
+        await onSaveActivity(
+          {
+            tanggal: item.tanggal,
+            siteId: item.siteId,
+            siteName: item.siteName,
+            coordinatesDb: item.coordinatesDb,
+            coordinatesActual: item.coordinatesActual,
+            keterangan: item.keterangan,
+            indikasiFake: item.indikasiFake,
+            fakeReason: item.fakeReason
+          },
+          photoFile
+        );
+
+        const idx = remaining.findIndex(q => q.id === item.id);
+        if (idx !== -1) {
+          remaining.splice(idx, 1);
+        }
+        successCount++;
+      } catch (err: any) {
+        console.error('Failed to sync offline activity item:', item.id, err);
+        setSyncNotice(`Sebagian data belum disinkronkan. Akan dicoba kembali saat terhubung internet.`);
+        break;
+      }
+    }
+
+    setOfflineQueue(remaining);
+    localStorage.setItem('op_app_offline_activities', JSON.stringify(remaining));
+    setIsSyncing(false);
+
+    if (successCount > 0) {
+      setSyncNotice(`${successCount} Laporan Kegiatan telah berhasil disinkronkan.`);
+    }
+  };
+
+  // Auto sync when connection returns
+  useEffect(() => {
+    if (isOnline && offlineQueue.length > 0 && !isSyncing) {
+      syncOfflineActivities();
+    }
+  }, [isOnline]);
+
+  const handleDeleteOfflineDraft = (id: string) => {
+    const updated = offlineQueue.filter(q => q.id !== id);
+    setOfflineQueue(updated);
+    localStorage.setItem('op_app_offline_activities', JSON.stringify(updated));
+  };
   const [selectedPhotoActivity, setSelectedPhotoActivity] = useState<UserActivity | null>(null);
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
   const [selectedOriginalUrl, setSelectedOriginalUrl] = useState<string | null>(null);
@@ -814,7 +984,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         formOpenPositionRef.current
       );
 
-      await onSaveActivity({
+      const actPayload = {
         tanggal: getTodayStr(), // System date for real-time tracking
         siteId: finalSiteId,
         siteName: finalSiteName,
@@ -823,22 +993,74 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         keterangan: keterangan.trim(),
         indikasiFake: fakeCheck.isFake,
         fakeReason: fakeCheck.reason
-      }, photoFile);
+      };
 
-      // Reset form
-      setSelectedSiteId('');
-      setSiteName('');
-      setCoordinatesDb('');
-      setCoordinatesActual('');
-      setGpsAccuracy(null);
-      setGpsAddress('');
-      setKeterangan('');
-      setOriginalPhotoFile(null);
-      setPhotoFile(null);
-      setPhotoPreview(null);
-      setShowAddForm(false);
-      formOpenPositionRef.current = null;
-      formOpenedTimeRef.current = null;
+      if (!isOnline) {
+        await saveOfflineActivity(actPayload, photoPreview || photoFile);
+        setSelectedSiteId('');
+        setSiteName('');
+        setCoordinatesDb('');
+        setCoordinatesActual('');
+        setGpsAccuracy(null);
+        setGpsAddress('');
+        setKeterangan('');
+        setOriginalPhotoFile(null);
+        setPhotoFile(null);
+        setPhotoPreview(null);
+        setShowAddForm(false);
+        formOpenPositionRef.current = null;
+        formOpenedTimeRef.current = null;
+        setSyncNotice('Laporan tersimpan di perangkat. Akan otomatis dikirim saat jaringan internet kembali terhubung.');
+        return;
+      }
+
+      try {
+        await onSaveActivity(actPayload, photoFile);
+        
+        // Reset form
+        setSelectedSiteId('');
+        setSiteName('');
+        setCoordinatesDb('');
+        setCoordinatesActual('');
+        setGpsAccuracy(null);
+        setGpsAddress('');
+        setKeterangan('');
+        setOriginalPhotoFile(null);
+        setPhotoFile(null);
+        setPhotoPreview(null);
+        setShowAddForm(false);
+        formOpenPositionRef.current = null;
+        formOpenedTimeRef.current = null;
+      } catch (err: any) {
+        const errStr = (err.message || String(err)).toLowerCase();
+        const isNetworkErr = !navigator.onLine || 
+          errStr.includes('fetch') || 
+          errStr.includes('network') || 
+          errStr.includes('offline') || 
+          errStr.includes('koneksi') ||
+          errStr.includes('failed') ||
+          errStr.includes('timeout');
+
+        if (isNetworkErr) {
+          await saveOfflineActivity(actPayload, photoPreview || photoFile);
+          setSelectedSiteId('');
+          setSiteName('');
+          setCoordinatesDb('');
+          setCoordinatesActual('');
+          setGpsAccuracy(null);
+          setGpsAddress('');
+          setKeterangan('');
+          setOriginalPhotoFile(null);
+          setPhotoFile(null);
+          setPhotoPreview(null);
+          setShowAddForm(false);
+          formOpenPositionRef.current = null;
+          formOpenedTimeRef.current = null;
+          setSyncNotice('Laporan tersimpan di perangkat. Akan otomatis dikirim saat jaringan internet kembali terhubung.');
+        } else {
+          setErrorMsg(err.message || 'Gagal menyimpan kegiatan.');
+        }
+      }
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal menyimpan kegiatan.');
     } finally {
@@ -961,8 +1183,29 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     return 0;
   };
 
+  // Map offline queue items into UserActivity format
+  const offlineMappedActivities: (UserActivity & { isOfflineDraft?: boolean; offlineId?: string })[] = offlineQueue.map(q => ({
+    id: q.id,
+    userEmail: q.userEmail,
+    userName: q.userName,
+    tanggal: q.tanggal,
+    createdAt: q.timestamp,
+    siteId: q.siteId,
+    siteName: q.siteName,
+    coordinatesDb: q.coordinatesDb,
+    coordinatesActual: q.coordinatesActual,
+    keterangan: q.keterangan,
+    buktiUrl: q.photoDataUrl,
+    indikasiFake: q.indikasiFake,
+    fakeReason: q.fakeReason,
+    isOfflineDraft: true,
+    offlineId: q.id
+  }));
+
+  const allCombinedActivities = [...offlineMappedActivities, ...activities];
+
   // Filter activities based on Role & Filter selections and sort newest first
-  const filteredActivities = activities
+  const filteredActivities = allCombinedActivities
     .filter(act => {
       const actEmail = act.userEmail.toLowerCase();
       const actProf = profiles.find(p => p.email.toLowerCase() === actEmail);
@@ -1293,10 +1536,104 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           Dashboard
         </button>
         <h1 className="font-display font-bold text-slate-900 text-sm tracking-tight">Log Kegiatan Harian</h1>
-        <div className="w-16"></div> {/* Spacer for symmetry */}
+        
+        {/* Network Status Badge */}
+        <div className="flex items-center gap-1 text-[10px] font-bold">
+          {isOnline ? (
+            <span className="flex items-center gap-1 text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full" title="Terhubung ke Internet">
+              <Wifi className="w-3 h-3 text-emerald-600" />
+              Online
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-full animate-pulse" title="Koneksi Internet Terputus">
+              <WifiOff className="w-3 h-3 text-amber-600" />
+              Offline
+            </span>
+          )}
+        </div>
       </div>
 
-      <div className="max-w-md mx-auto p-4 space-y-6">
+      <div className="max-w-md mx-auto p-4 space-y-4">
+        
+        {/* Sync Toast Notice */}
+        {syncNotice && (
+          <div className="bg-indigo-900 text-white rounded-2xl p-3.5 shadow-md flex items-start justify-between gap-2 text-xs font-medium animate-fadeIn">
+            <div className="flex items-start gap-2">
+              <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <span className="leading-relaxed">{syncNotice}</span>
+            </div>
+            <button
+              onClick={() => setSyncNotice(null)}
+              className="text-indigo-300 hover:text-white text-xs font-bold p-1 shrink-0 cursor-pointer"
+            >
+              ×
+            </button>
+          </div>
+        )}
+
+        {/* Offline Queue Control Card */}
+        {offlineQueue.length > 0 && (
+          <div className="bg-gradient-to-br from-amber-50 via-orange-50 to-amber-100/60 rounded-2xl border border-amber-300 p-4 shadow-sm space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500 text-white rounded-xl shadow-xs shrink-0">
+                  <HardDrive className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-amber-950 text-xs tracking-tight">
+                    Laporan Belum Disinkronkan ({offlineQueue.length})
+                  </h3>
+                  <p className="text-[10px] text-amber-800/90 font-medium leading-relaxed mt-0.5">
+                    Laporan telah tersimpan di perangkat dan akan dikirim otomatis saat koneksi internet terhubung.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* List of pending items */}
+            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+              {offlineQueue.map((item) => (
+                <div key={item.id} className="bg-white/90 border border-amber-200 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs shadow-2xs">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-slate-800 truncate text-[11px]">{item.siteName || item.siteId}</span>
+                      <span className="text-[9px] font-mono text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{item.tanggal}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600 truncate mt-0.5">{item.keterangan}</p>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteOfflineDraft(item.id)}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
+                    title="Hapus Laporan Ini"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="pt-1 flex items-center gap-2">
+              <button
+                onClick={syncOfflineActivities}
+                disabled={isSyncing || !isOnline}
+                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed active:scale-[0.98]"
+              >
+                {isSyncing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Menyinkronkan Laporan...
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-4 h-4" />
+                    {!isOnline ? 'Internet Terputus (Menunggu Koneksi)' : 'Sinkronkan Sekarang'}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        )}
         
         {/* Filter Panel */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3.5">
@@ -1419,7 +1756,21 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                 const formattedDivisi = formatDivisiSubDivisi(actProf?.divisi, actProf?.subDivisi);
 
                 return (
-                  <div key={act.id} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col" id={`activity-card-${act.id}`}>
+                  <div key={act.id} className={`bg-white rounded-2xl border ${act.isOfflineDraft ? 'border-amber-400 ring-2 ring-amber-200/60' : 'border-slate-200'} shadow-sm overflow-hidden flex flex-col`} id={`activity-card-${act.id}`}>
+                    {act.isOfflineDraft && (
+                      <div className="bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-bold px-3 py-1.5 flex items-center justify-between border-b border-amber-600">
+                        <span className="flex items-center gap-1.5">
+                          <WifiOff className="w-3.5 h-3.5 text-amber-100" />
+                          BELUM DISINKRONKAN
+                        </span>
+                        <button
+                          onClick={() => handleDeleteOfflineDraft(act.offlineId || act.id)}
+                          className="text-amber-100 hover:text-white bg-amber-600/60 hover:bg-amber-700/80 px-2 py-0.5 rounded transition-colors cursor-pointer text-[9px]"
+                        >
+                          Hapus
+                        </button>
+                      </div>
+                    )}
                     <div className="p-4 space-y-2.5">
                       {/* User Badge Info Header */}
                       <div className="flex items-start justify-between border-b border-slate-100 pb-2 mb-1">

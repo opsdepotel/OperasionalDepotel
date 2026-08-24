@@ -696,7 +696,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             }`}
           >
             <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">BELUM DILAPORKAN</p>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">SUDAH DITRANSFER</p>
               <div className="flex items-end justify-between mt-2">
                 <span className="text-3xl font-display font-bold text-slate-900">{notReportedCount} <span className="text-xs text-slate-400 font-normal">UID</span></span>
                 <span className="text-[9px] font-bold text-cyan-700 bg-cyan-50 px-2 py-0.5 rounded-md uppercase tracking-wider border border-cyan-200/60">Siap Lapor</span>

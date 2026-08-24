@@ -4,15 +4,16 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, SiteInfo } from '../types';
+import { BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, SiteInfo, UserProfile } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Fuel, Calendar, MapPin, Coins, FileText, Camera, RefreshCw, CheckCircle2, AlertCircle, X, ExternalLink } from 'lucide-react';
+import { Fuel, Calendar, MapPin, Coins, FileText, Camera, RefreshCw, CheckCircle2, AlertCircle, X, ExternalLink, UploadCloud } from 'lucide-react';
 
 interface BbmRefillModalProps {
   userEmail: string;
   managerEmail: string;
   defaultSiteId?: string;
   sites?: SiteInfo[];
+  userProfile?: UserProfile;
   onSubmit: (req: BudgetRequest, reportItem: UsageReportItem) => Promise<void>;
   onClose: () => void;
 }
@@ -22,9 +23,15 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
   managerEmail,
   defaultSiteId = '',
   sites = [],
+  userProfile,
   onSubmit,
   onClose
 }) => {
+  const isMobileUser = userProfile?.mobile === true ||
+    String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
+    String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
+    String(userProfile?.mobile).trim() === '1';
+
   // System date calculation
   const todayDate = new Date();
   const tanggal = todayDate.toISOString().split('T')[0];
@@ -54,6 +61,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,8 +109,10 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
       setIsCameraActive(true);
     } catch (err: any) {
       console.warn('Camera access error:', err);
-      setCameraError('Gagal mengakses kamera secara langsung. Silakan gunakan tombol pengambil foto kamera bawaan HP/device.');
+      setCameraError('Akses kamera langsung tidak tersedia. Mengalihkan ke Kamera Bawaan HP...');
       setIsCameraActive(false);
+      // Fallback directly to native camera input
+      fileInputRef.current?.click();
     }
   };
 
@@ -137,14 +147,43 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     }
   };
 
-  // Handle camera input file fallback (with capture="environment")
+  // Handle camera/file input fallback with auto-compression
   const handleFileCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
         if (typeof reader.result === 'string') {
-          setPhotoDataUrl(reader.result);
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+            const maxDim = 1600;
+            if (width > maxDim || height > maxDim) {
+              if (width > height) {
+                height = Math.round((height * maxDim) / width);
+                width = maxDim;
+              } else {
+                width = Math.round((width * maxDim) / height);
+                height = maxDim;
+              }
+            }
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(img, 0, 0, width, height);
+              const compressedUrl = canvas.toDataURL('image/jpeg', 0.82);
+              setPhotoDataUrl(compressedUrl);
+            } else {
+              setPhotoDataUrl(reader.result as string);
+            }
+          };
+          img.onerror = () => {
+            setPhotoDataUrl(reader.result as string);
+          };
+          img.src = reader.result;
         }
       };
       reader.readAsDataURL(file);
@@ -405,24 +444,14 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
             <label className="block text-xs font-bold text-slate-700 mb-1.5 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <Camera className="w-3.5 h-3.5 text-amber-600" />
-                <span>Photo Nota BBM (Hanya Kamera)</span>
+                <span>Photo Nota BBM</span>
               </span>
-              {photoDataUrl && (
+              {photoDataUrl ? (
                 <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" /> Foto Terverifikasi
                 </span>
-              )}
+              ) : null}
             </label>
-
-            {/* Hidden native input with capture="environment" for direct mobile camera access */}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleFileCapture}
-              className="hidden"
-            />
 
             {/* Photo Captured Preview */}
             {photoDataUrl ? (
@@ -438,73 +467,67 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
                     onClick={() => {
                       setPhotoDataUrl(null);
                       if (fileInputRef.current) fileInputRef.current.value = '';
+                      if (galleryInputRef.current) galleryInputRef.current.value = '';
                     }}
-                    className="px-3.5 py-1.5 bg-white/90 hover:bg-white text-slate-800 font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5"
+                    className="px-3.5 py-1.5 bg-white/90 hover:bg-white text-slate-800 font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-1.5 cursor-pointer"
                   >
                     <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
                     Ambil Foto Ulang
                   </button>
                 </div>
               </div>
-            ) : isCameraActive ? (
-              /* Live Camera Stream Container */
-              <div className="relative rounded-2xl overflow-hidden border border-slate-800 bg-black">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-52 object-cover"
-                />
-                
-                {/* Camera Overlay Controls */}
-                <div className="absolute bottom-3 inset-x-3 flex items-center justify-between">
-                  <button
-                    type="button"
-                    onClick={toggleFacingMode}
-                    className="p-2 bg-slate-900/80 hover:bg-slate-900 text-white rounded-xl text-xs font-bold transition-all backdrop-blur-xs border border-white/10"
-                    title="Ganti Kamera"
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={capturePhoto}
-                    className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shadow-lg transition-all flex items-center gap-2"
-                  >
-                    <Camera className="w-4 h-4" />
-                    Ambil Foto Nota
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={stopCamera}
-                    className="p-2 bg-slate-900/80 hover:bg-slate-900 text-red-400 rounded-xl text-xs font-bold transition-all backdrop-blur-xs border border-white/10"
-                    title="Tutup Kamera"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
+            ) : isMobileUser ? (
+              /* Wajib Mobile User - Only Native Camera allowed */
+              <div>
+                <label className="w-full border-2 border-dashed border-amber-300/80 hover:border-amber-500 bg-amber-50/50 hover:bg-amber-50/90 rounded-2xl p-5 text-center cursor-pointer transition-all active:scale-[0.99] group flex flex-col items-center justify-center block">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center mb-2 shadow-xs group-hover:scale-105 group-hover:bg-amber-500 group-hover:text-white transition-all">
+                    <Camera className="w-6 h-6" />
+                  </div>
+                  <p className="text-xs font-bold text-slate-800 group-hover:text-amber-900 transition-colors">
+                    Buka Kamera HP
+                  </p>
+                  <p className="text-[10px] text-amber-700/80 mt-1 font-medium">
+                    Pengguna Wajib Mobile
+                  </p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileCapture}
+                    className="hidden"
+                  />
+                </label>
               </div>
             ) : (
-              /* Initial Camera Trigger Options - Clickable Card */
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-amber-300/80 hover:border-amber-500 bg-amber-50/50 hover:bg-amber-50/90 rounded-2xl p-6 text-center cursor-pointer transition-all active:scale-[0.99] group"
-              >
-                <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 mx-auto flex items-center justify-center mb-2.5 shadow-xs group-hover:scale-105 group-hover:bg-amber-500 group-hover:text-white transition-all">
-                  <Camera className="w-6 h-6" />
-                </div>
-                <p className="text-xs font-bold text-slate-800 group-hover:text-amber-900 transition-colors">
-                  Ambil Foto Nota BBM
-                </p>
+              /* Non-Wajib Mobile User - Option for Native Camera or Gallery Upload */
+              <div className="grid grid-cols-2 gap-2.5">
+                <label className="p-4 bg-amber-50/80 hover:bg-amber-100/80 text-amber-800 border border-amber-200/80 rounded-2xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-xs font-bold cursor-pointer active:scale-[0.99] group">
+                  <Camera className="w-6 h-6 text-amber-600 mb-0.5 group-hover:scale-110 transition-transform" />
+                  <span>Kamera Bawaan HP</span>
+                  <span className="text-[9px] font-normal text-amber-700/80">Foto Langsung</span>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleFileCapture}
+                    className="hidden"
+                  />
+                </label>
 
-                {cameraError && (
-                  <p className="text-[10px] text-amber-700 font-medium mt-2 leading-relaxed">
-                    {cameraError}
-                  </p>
-                )}
+                <label className="p-4 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 hover:border-indigo-200 rounded-2xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-xs font-bold text-slate-600 cursor-pointer active:scale-[0.99] group">
+                  <UploadCloud className="w-6 h-6 text-indigo-500 mb-0.5 group-hover:scale-110 transition-transform" />
+                  <span>Upload Galeri</span>
+                  <span className="text-[9px] font-normal text-slate-400">Pilih Berkas</span>
+                  <input
+                    ref={galleryInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileCapture}
+                    className="hidden"
+                  />
+                </label>
               </div>
             )}
           </div>

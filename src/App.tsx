@@ -3728,7 +3728,7 @@ export default function App() {
                                   {/* MANAGER ACTIONS */}
                                   {activeRole === Role.MANAGER && (
                                     <>
-                                      {req.status === RequestStatus.PENDING_APPROVAL && (
+                                      {dashboardTab !== 'SUBMISSION' && req.status === RequestStatus.PENDING_APPROVAL && (
                                         <div className="flex gap-1.5 flex-wrap">
                                           {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? (
                                             <button
@@ -4085,6 +4085,7 @@ export default function App() {
           managerEmail={userProfile.managerEmail}
           defaultSiteId={userProfile.divisi || 'DUREN-SAWIT'}
           sites={sites}
+          userProfile={userProfile}
           onSubmit={handleBbmRefillSubmit}
           onClose={() => setIsBbmModalOpen(false)}
         />
