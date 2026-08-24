@@ -1704,8 +1704,22 @@ export async function fetchSites(token: string, spreadsheetId: string): Promise<
 
     console.log(`Berhasil memuat ${sitesList.length} site dari Google Sheet.`);
     return sitesList;
-  } catch (err) {
-    console.error('Error fetching SiteID sheet:', err);
+  } catch (err: any) {
+    console.warn('Kendala membaca sheet SiteID dari Google Sheet, mencoba menggunakan data cache lokal:', err?.message || err);
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem('op_app_cached_sites');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            console.log(`Fallback: Memuat ${parsed.length} SiteID dari cache lokal.`);
+            return parsed;
+          }
+        }
+      }
+    } catch (cacheErr) {
+      // Ignore cache parse error
+    }
     return [];
   }
 }

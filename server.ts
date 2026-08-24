@@ -115,11 +115,9 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
 
       // Candidate models for multimodal vision analysis in order of priority & high rate limits
       const candidateModels = [
-        'gemini-flash-latest',
-        'gemini-3.1-flash-lite',
         'gemini-2.5-flash',
+        'gemini-flash-latest',
         'gemini-3.7-flash',
-        'gemini-2.5-pro',
       ];
       let response: any = null;
       let lastModelError: any = null;
@@ -256,6 +254,16 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
         }
       }
 
+      if (
+        userFacingError.includes('429') ||
+        userFacingError.toLowerCase().includes('quota exceeded') ||
+        userFacingError.includes('RESOURCE_EXHAUSTED') ||
+        userFacingError.toLowerCase().includes('rate limit')
+      ) {
+        userFacingError =
+          'Batas kuota gratis (Rate Limit 429) API Gemini tercapai. Silakan tunggu sekitar 30–45 detik lalu coba lagi.';
+      }
+
       return res.status(500).json({
         success: false,
         error: userFacingError,
@@ -301,20 +309,21 @@ Tugas Anda:
 Analisis foto/skrinsut resi bukti transfer terlampir, lalu ekstrak informasi berikut secara tepat dan terstruktur:
 
 1. **tanggalTransaksi**: Tanggal terjadinya transaksi transfer dalam format YYYY-MM-DD. Jika tanggal pada resi menggunakan format Indonesia (misal 22/08/2026 atau 22 Ags 2026), ubah ke YYYY-MM-DD. Jika tidak tertera tahun, asumsi tahun ${currentYear}.
-2. **nominalTransaksi**: Nominal total jumlah uang yang ditransfer dalam bentuk ANGKA BULAT SAJA (misal: 1500000, tanpa titik/koma/simbol Rp).
-3. **catatan**: Catatan, berita transfer, ID transaksi, atau keterangan transaksi jika ada pada resi (contoh: "Operasional Site A", "Ref 123", dll). Jika tidak ada, isi string kosong "".
-4. **namaTujuan**: Nama lengkap pemilik rekening penerima / nama tujuan transfer (contoh: "BUDI SANTOSO", "PT DEPOTEL"). Jika tidak ada, isi string kosong "".
-5. **bankPenerima**: Nama bank atau e-wallet penerima/tujuan (contoh: "BRI", "BCA", "MANDIRI", "BNI", "DANA"). Jika tidak ada, isi string kosong "".
-6. **noReferensi**: Nomor referensi unik, No. Ref, ID Transaksi bank dari resi jika ada.
+2. **waktuTransaksi**: Jam dan menit terjadinya transaksi jika ada pada resi (contoh: "14:30:25" atau "08:15"). Jika tidak ada, isi string kosong "".
+3. **tanggalWaktuFormatted**: Tanggal dan waktu lengkap transfer sesuai resi (contoh: "22/08/2026, 14.30.25" atau "2026-08-22 14:30:25"). Jika waktu tidak ada, isi dengan tanggal saja.
+4. **nominalTransaksi**: Nominal total jumlah uang yang ditransfer dalam bentuk ANGKA BULAT SAJA (misal: 1500000, tanpa titik/koma/simbol Rp).
+5. **catatan**: Catatan, berita transfer, ID transaksi, atau keterangan transaksi jika ada pada resi (contoh: "Operasional Site A", "Ref 123", dll). Jika tidak ada, isi string kosong "".
+6. **namaTujuan**: Nama lengkap pemilik rekening penerima / nama tujuan transfer (contoh: "BUDI SANTOSO", "PT DEPOTEL"). Jika tidak ada, isi string kosong "".
+7. **bankPenerima**: Nama bank atau e-wallet penerima/tujuan (contoh: "BRI", "BCA", "MANDIRI", "BNI", "DANA"). Jika tidak ada, isi string kosong "".
+8. **noReferensi**: Nomor referensi unik, No. Ref, ID Transaksi bank dari resi jika ada.
 
 Berikan analisis dalam format JSON murni.`;
 
-      // Candidate models ordered from fastest to fallback models
+      // Candidate models ordered from primary to fallback models
       const candidateModels = [
-        'gemini-3.7-flash',
-        'gemini-3.1-flash-lite',
-        'gemini-flash-latest',
         'gemini-2.5-flash',
+        'gemini-flash-latest',
+        'gemini-3.7-flash',
       ];
 
       let response: any = null;
@@ -350,6 +359,14 @@ Berikan analisis dalam format JSON murni.`;
                     tanggalTransaksi: {
                       type: Type.STRING,
                       description: 'Tanggal transaksi dalam format YYYY-MM-DD (contoh: 2026-08-22)',
+                    },
+                    waktuTransaksi: {
+                      type: Type.STRING,
+                      description: 'Jam/waktu transaksi jika tertera pada resi (contoh: 14:30:25 atau 08:15)',
+                    },
+                    tanggalWaktuFormatted: {
+                      type: Type.STRING,
+                      description: 'Tanggal dan waktu gabungan sesuai resi (contoh: 22/08/2026, 14.30.25 atau 2026-08-22 14:30:25)',
                     },
                     nominalTransaksi: {
                       type: Type.NUMBER,
@@ -408,10 +425,15 @@ Berikan analisis dalam format JSON murni.`;
         throw lastModelError || new Error('Gagal memproses OCR resi dengan AI.');
       }
 
-      const resultText = response.text || '{}';
+      const resultText = (response.text || '{}').trim();
+      let cleanText = resultText;
+      if (cleanText.startsWith('```')) {
+        cleanText = cleanText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+      }
+
       let parsedResult;
       try {
-        parsedResult = JSON.parse(resultText);
+        parsedResult = JSON.parse(cleanText);
       } catch {
         parsedResult = {
           tanggalTransaksi: new Date().toISOString().split('T')[0],
@@ -430,11 +452,49 @@ Berikan analisis dalam format JSON murni.`;
     } catch (error: any) {
       console.error('Error in ocr-transfer-receipt:', error);
       let userFacingError = error.message || 'Gagal membaca data resi transfer dengan AI.';
+      if (typeof userFacingError === 'string' && userFacingError.includes('{')) {
+        try {
+          const jsonMatch = userFacingError.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed?.error?.message) {
+              userFacingError = parsed.error.message;
+            }
+          }
+        } catch {
+          // keep original
+        }
+      }
+
+      // Format quota / rate limit errors into clear user-friendly Indonesian
+      if (
+        userFacingError.includes('429') ||
+        userFacingError.toLowerCase().includes('quota exceeded') ||
+        userFacingError.includes('RESOURCE_EXHAUSTED') ||
+        userFacingError.toLowerCase().includes('rate limit')
+      ) {
+        userFacingError =
+          'Batas kuota gratis (Rate Limit 429) API Gemini tercapai. Silakan tunggu sekitar 30–45 detik lalu klik tombol "Coba Lagi OCR".';
+      }
+
       return res.status(500).json({
         success: false,
         error: userFacingError,
       });
     }
+  });
+
+  // Express JSON Error Handler Middleware for /api routes
+  app.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error('API Error Middleware caught error:', err);
+    let message = err?.message || 'Terjadi kesalahan internal pada server.';
+    if (err?.type === 'entity.too.large') {
+      message = 'Ukuran berkas gambar terlalu besar untuk diproses server.';
+    }
+    res.status(err?.status || 500).json({
+      success: false,
+      error: message,
+    });
   });
 
   // Vite middleware setup

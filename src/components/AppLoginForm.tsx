@@ -16,6 +16,7 @@ interface AppLoginFormProps {
   onLoginWithCredentials?: (userId: string, password: string, onError: (msg: string) => void) => void;
   externalError?: string | null;
   onClearExternalError?: () => void;
+  hasSharedReceipt?: boolean;
 }
 
 export const AppLoginForm: React.FC<AppLoginFormProps> = ({
@@ -25,7 +26,8 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   onResetGoogle,
   onLoginWithCredentials,
   externalError,
-  onClearExternalError
+  onClearExternalError,
+  hasSharedReceipt
 }) => {
   const [rememberMe, setRememberMe] = useState<boolean>(() => {
     return localStorage.getItem('op_app_remember_me') === 'true';
@@ -128,6 +130,17 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           Masuk menggunakan User ID &amp; Password Anda
         </p>
       </div>
+
+      {hasSharedReceipt && (
+        <div className="bg-blue-50 border border-blue-200 text-blue-900 rounded-2xl p-3.5 text-xs space-y-1 shadow-sm animate-pulse">
+          <div className="font-bold flex items-center gap-1.5 text-blue-800">
+            <span>📌 Bukti Transfer Diterima dari Share!</span>
+          </div>
+          <p className="text-[11px] text-blue-700 leading-relaxed">
+            Gambar resi telah disimpan. Silakan login menggunakan akun <strong>Finance</strong> untuk memproses OCR &amp; pencocokan transaksi otomatis.
+          </p>
+        </div>
+      )}
 
       <form onSubmit={handleLogin} className="space-y-4">
         {error && (

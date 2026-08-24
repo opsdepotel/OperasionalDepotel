@@ -16,7 +16,9 @@ import {
   CheckCircle2,
   AlertTriangle,
   History,
-  RotateCcw
+  RotateCcw,
+  Calendar,
+  Sparkles
 } from 'lucide-react';
 import { uploadReceiptFile } from '../lib/googleApi';
 
@@ -348,6 +350,18 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         {/* Mode: TRANSFER */}
         {activeMode === 'TRANSFER' && (
           <>
+            {(initialFile || initialOcrAmount > 0 || initialOcrDate) && (
+              <div className="bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-xl p-3 text-xs flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-bold text-indigo-950">Data Terisi Otomatis dari Share Nota (Brimo)</p>
+                  <p className="text-[11px] text-indigo-800 leading-relaxed">
+                    Nominal (<strong>{formatIDR(transferredAmount)}</strong>) dan bukti transfer telah terisi otomatis hasil pembacaan OCR AI.
+                  </p>
+                </div>
+              </div>
+            )}
+
             {(!isTalangan || isFinalTalanganTransfer) ? (
               <div className="space-y-3">
                 {isFinalTalanganTransfer ? (

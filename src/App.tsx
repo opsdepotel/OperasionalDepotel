@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
 import { initAuth, googleSignIn, logout, isGoogleTokenExpired } from './lib/firebase';
@@ -60,8 +60,8 @@ import { ItemHistoryModal } from './components/ItemHistoryModal';
 import { UserDashboardPreviewModal } from './components/UserDashboardPreviewModal';
 import { GoogleConnectionModal } from './components/GoogleConnectionModal';
 import { PwaInstallBanner } from './components/PwaInstallBanner';
-import { FinanceSharedReceiptModal, OcrReceiptData } from './components/FinanceSharedReceiptModal';
-import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt } from './lib/sharedReceiptStorage';
+import { FinanceSharedReceiptModal } from './components/FinanceSharedReceiptModal';
+import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt, clearAllSharedReceipts } from './lib/sharedReceiptStorage';
 
 // Icons
 import {
@@ -69,7 +69,7 @@ import {
   RefreshCw, FileSpreadsheet, Eye, Search, AlertTriangle, Check, CreditCard,
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight, Edit2,
   Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel, X,
-  Settings, LogOut, ShieldCheck, History, UserCheck
+  Settings, LogOut, ShieldCheck, History, UserCheck, ShieldAlert, Share2, UploadCloud
 } from 'lucide-react';
 
 export default function App() {
@@ -158,11 +158,26 @@ export default function App() {
       return [];
     }
   });
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
+    try {
+      const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
+      if (savedUserId) {
+        const cachedProfsStr = localStorage.getItem('op_app_cached_profiles');
+        const candidateProfiles: UserProfile[] = cachedProfsStr ? JSON.parse(cachedProfsStr) : defaultUsers;
+        const matched = candidateProfiles.find(
+          p => p.userId?.toLowerCase() === savedUserId.toLowerCase() || p.email?.toLowerCase() === savedUserId.toLowerCase()
+        );
+        if (matched) return matched;
+      }
+    } catch (e) {
+      console.warn('Gagal memuat sesi user profile dari localStorage:', e);
+    }
+    return null;
+  });
   const [isTokenExpired, setIsTokenExpired] = useState(false);
 
   // Simulation Role Override
-  const [activeRole, setActiveRole] = useState<Role>(Role.USER);
+  const [activeRole, setActiveRole] = useState<Role>(() => userProfile?.role || Role.USER);
 
   // Navigation / Views
   const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'transfer-list' | 'profile-settings' | 'activities'>('dashboard');
@@ -243,16 +258,51 @@ export default function App() {
 
   // PWA Share Target states for received receipts
   const [pendingSharedRecord, setPendingSharedRecord] = useState<SharedReceiptRecord | null>(null);
-  const [sharedOcrPrefill, setSharedOcrPrefill] = useState<{ file: File; ocrData: OcrReceiptData } | null>(null);
+  const [sharedFilePrefill, setSharedFilePrefill] = useState<{ file: File; recordId?: string } | null>(null);
+  const [shareAccessDeniedModal, setShareAccessDeniedModal] = useState<{
+    open: boolean;
+    userName: string;
+    userRole: string;
+  } | null>(null);
 
   // Check for received shared receipts from IndexedDB
   useEffect(() => {
     let isMounted = true;
     const checkSharedReceipts = async () => {
       try {
+        if (typeof window !== 'undefined' && window.location.search.includes('shared_receipt=1')) {
+          window.history.replaceState({}, '', window.location.pathname);
+        }
         const record = await getLatestSharedReceipt();
-        if (isMounted && record) {
-          setPendingSharedRecord(record);
+        if (!isMounted) return;
+
+        if (record) {
+          if (userProfile) {
+            // User IS ALREADY LOGGED IN: Check if userID has Role Finance
+            if (userProfile.role === Role.FINANCE) {
+              setPendingSharedRecord(record);
+              if (activeRole !== Role.FINANCE) {
+                setActiveRole(Role.FINANCE);
+              }
+              setDashboardTab('APPROVAL');
+              setStatusFilter('APPROVED');
+              setActiveView('dashboard');
+            } else {
+              // User IS LOGGED IN, BUT DOES NOT HAVE ROLE FINANCE -> Cancel process & show notification
+              setPendingSharedRecord(null);
+              await deleteSharedReceipt(record.id);
+              setShareAccessDeniedModal({
+                open: true,
+                userName: userProfile.nama || userProfile.userId || userProfile.email,
+                userRole: userProfile.role,
+              });
+            }
+          } else {
+            // User IS NOT LOGGED IN YET: Keep record so AppLoginForm prompts to log in as Role Finance
+            setPendingSharedRecord(record);
+          }
+        } else {
+          setPendingSharedRecord(null);
         }
       } catch (err) {
         console.error('Error checking IndexedDB for shared receipts:', err);
@@ -270,7 +320,7 @@ export default function App() {
       isMounted = false;
       window.removeEventListener('focus', handleFocus);
     };
-  }, []);
+  }, [userProfile, activeRole]);
 
   // Trigger loading & initialization
   useEffect(() => {
@@ -351,6 +401,43 @@ export default function App() {
         console.warn('Google API returned 401 Unauthorized. Sesi token Google expired.');
         await handleGoogleAuthError();
       } else {
+        const hasCachedProfiles = !!localStorage.getItem('op_app_cached_profiles');
+        if (hasCachedProfiles && (err.message?.includes('Gagal terhubung') || err.message?.includes('Failed to fetch') || err.message?.includes('timeout') || err.message?.includes('SiteID'))) {
+          console.warn('Google API network/CORS issue, restoring cached data from localStorage...');
+          try {
+            const cachedReqs = JSON.parse(localStorage.getItem('op_app_cached_requests') || '[]');
+            const cachedItems = JSON.parse(localStorage.getItem('op_app_cached_usage_items') || '[]');
+            const cachedProfs = JSON.parse(localStorage.getItem('op_app_cached_profiles') || '[]');
+            const cachedSites = JSON.parse(localStorage.getItem('op_app_cached_sites') || '[]');
+            const cachedActs = JSON.parse(localStorage.getItem('op_app_cached_activities') || '[]');
+            const cachedLogs = JSON.parse(localStorage.getItem('op_app_cached_reset_device_logs') || '[]');
+            const cachedHist = JSON.parse(localStorage.getItem('op_app_cached_item_review_histories') || '[]');
+
+            if (cachedProfs.length > 0) {
+              setRequests(cachedReqs);
+              setUsageItems(cachedItems);
+              setProfiles(cachedProfs);
+              setSites(cachedSites);
+              setActivities(cachedActs);
+              setResetDeviceLogs(cachedLogs);
+              setItemReviewHistories(cachedHist);
+
+              const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
+              if (savedUserId) {
+                const matchedUser = cachedProfs.find((u: any) => u.userId?.toLowerCase() === savedUserId.toLowerCase() || u.email?.toLowerCase() === savedUserId.toLowerCase());
+                if (matchedUser) {
+                  setUserProfile(matchedUser);
+                  setActiveRole(matchedUser.role);
+                }
+              }
+
+              setError('Koneksi ke Google API terganggu. Aplikasi berjalan menggunakan data lokal (Offline). Anda dapat menekan tombol "Coba Sinkron Ulang" saat koneksi terhubung.');
+              return;
+            }
+          } catch (restoreErr) {
+            console.error('Gagal memuat cache lokal:', restoreErr);
+          }
+        }
         setError(err.message || 'Gagal menginisialisasi Google Workspace.');
       }
     } finally {
@@ -416,11 +503,11 @@ export default function App() {
       }
 
       // If the user is already logged in, keep their active session and update with the latest data
-      const savedUserId = sessionStorage.getItem('op_app_logged_in_user_id');
-      const activeUserProf = userProfile || (savedUserId ? allProfs.find(p => p.userId?.toLowerCase() === savedUserId.toLowerCase()) : null);
+      const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
+      const activeUserProf = userProfile || (savedUserId ? allProfs.find(p => p.userId?.toLowerCase() === savedUserId.toLowerCase() || p.email?.toLowerCase() === savedUserId.toLowerCase()) : null);
       if (activeUserProf) {
         const updatedProfile = allProfs.find(
-          p => p.userId?.toLowerCase() === activeUserProf.userId?.toLowerCase()
+          p => p.userId?.toLowerCase() === activeUserProf.userId?.toLowerCase() || p.email?.toLowerCase() === activeUserProf.email?.toLowerCase()
         );
         if (updatedProfile) {
           setUserProfile(updatedProfile);
@@ -590,6 +677,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('op_app_logged_in_user_id');
     sessionStorage.removeItem('op_app_logged_in_user_id');
     setUserProfile(null);
     setActiveView('dashboard');
@@ -597,6 +685,7 @@ export default function App() {
 
   const handleResetGoogleConnection = async () => {
     await logout();
+    localStorage.removeItem('op_app_logged_in_user_id');
     sessionStorage.removeItem('op_app_logged_in_user_id');
     setUser(null);
     setToken(null);
@@ -610,13 +699,38 @@ export default function App() {
     setActiveView('dashboard');
   };
 
-  const handleAppLoginSuccess = (profile: UserProfile) => {
+  const handleAppLoginSuccess = async (profile: UserProfile) => {
     setUserProfile(profile);
     if (profile.userId) {
+      localStorage.setItem('op_app_logged_in_user_id', profile.userId);
       sessionStorage.setItem('op_app_logged_in_user_id', profile.userId);
     }
-    setActiveRole(profile.role);
-    setActiveView('dashboard');
+
+    if (pendingSharedRecord) {
+      if (profile.role === Role.FINANCE) {
+        setActiveRole(Role.FINANCE);
+        setDashboardTab('APPROVAL');
+        setStatusFilter('APPROVED');
+        setActiveView('dashboard');
+      } else {
+        // User logged in, but does NOT have Role Finance! Cancel share process & notify user
+        const recordToDelete = pendingSharedRecord;
+        setPendingSharedRecord(null);
+        if (recordToDelete?.id) {
+          await deleteSharedReceipt(recordToDelete.id);
+        }
+        setActiveRole(profile.role);
+        setActiveView('dashboard');
+        setShareAccessDeniedModal({
+          open: true,
+          userName: profile.nama || profile.userId || profile.email,
+          userRole: profile.role,
+        });
+      }
+    } else {
+      setActiveRole(profile.role);
+      setActiveView('dashboard');
+    }
   };
 
   const handleAppLoginWithCredentials = async (
@@ -1271,6 +1385,11 @@ export default function App() {
       (isReqTalangan && isPendingTalanganTransfer) ? 'Gagal memproses transfer dana talangan.' : 'Gagal memproses transfer anggaran.'
     );
     if (success !== null) {
+      if (sharedFilePrefill?.recordId) {
+        await deleteSharedReceipt(sharedFilePrefill.recordId);
+      }
+      await clearAllSharedReceipts();
+      setSharedFilePrefill(null);
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setTransferReq(null);
       await handleManualRefresh();
@@ -1311,6 +1430,11 @@ export default function App() {
       'Gagal meminta revisi pengajuan anggaran.'
     );
     if (success !== null) {
+      if (sharedFilePrefill?.recordId) {
+        await deleteSharedReceipt(sharedFilePrefill.recordId);
+      }
+      await clearAllSharedReceipts();
+      setSharedFilePrefill(null);
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setTransferReq(null);
       await handleManualRefresh();
@@ -2375,36 +2499,64 @@ export default function App() {
 
       {/* Main Container */}
       <main className="flex-1 p-4 max-w-md mx-auto w-full space-y-4">
-        {/* Error / Token Expired Banner */}
+        {/* Error / Token Expired / Offline Banner */}
         {error && (
           <div className={`rounded-2xl p-4 text-xs flex flex-col gap-3 animate-slide-up shadow-sm border ${
             isTokenExpired || error.toLowerCase().includes('sesi google') || error.includes('401')
               ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : error.toLowerCase().includes('offline') || error.toLowerCase().includes('luring')
+              ? 'bg-blue-50 border-blue-200 text-blue-900'
               : 'bg-red-50 border-red-150 text-red-700'
           }`}>
             <div className="flex items-start gap-2.5">
               <AlertCircle className={`w-4.5 h-4.5 shrink-0 mt-0.5 ${
                 isTokenExpired || error.toLowerCase().includes('sesi google') || error.includes('401')
                   ? 'text-amber-600'
+                  : error.toLowerCase().includes('offline') || error.toLowerCase().includes('luring')
+                  ? 'text-blue-600'
                   : 'text-red-500'
               }`} />
               <div className="flex-1">
                 <p className="font-bold text-slate-800">
-                  {isTokenExpired || error.toLowerCase().includes('sesi google') ? 'Sesi Google Expired (1 Jam)' : 'Terjadi Kesalahan'}
+                  {isTokenExpired || error.toLowerCase().includes('sesi google')
+                    ? 'Sesi Google Expired (1 Jam)'
+                    : error.toLowerCase().includes('offline') || error.toLowerCase().includes('luring')
+                    ? 'Mode Luring (Offline Cache)'
+                    : 'Terjadi Kendala Koneksi API'}
                 </p>
                 <p className="text-[11px] text-slate-600 mt-0.5 leading-relaxed">{error}</p>
               </div>
             </div>
-            {(isTokenExpired || error.toLowerCase().includes('sesi google') || error.includes('401')) && (
-              <button
-                onClick={handleRenewGoogleToken}
-                disabled={isLoading}
-                className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                <span>Perbarui Sesi Google (1-Klik Connect)</span>
-              </button>
-            )}
+
+            <div className="flex flex-col sm:flex-row gap-2 pt-1">
+              {(isTokenExpired || error.toLowerCase().includes('sesi google') || error.includes('401')) ? (
+                <button
+                  onClick={handleRenewGoogleToken}
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                  <span>Perbarui Sesi Google (1-Klik Connect)</span>
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={handleManualRefresh}
+                    disabled={isLoading}
+                    className="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                    <span>Coba Sinkron Ulang</span>
+                  </button>
+                  <button
+                    onClick={() => setError(null)}
+                    className="py-2 px-3 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-medium rounded-xl text-xs transition-all cursor-pointer"
+                  >
+                    Tutup Peringatan
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -2418,6 +2570,7 @@ export default function App() {
             onLoginWithCredentials={handleAppLoginWithCredentials}
             externalError={loginRejectError}
             onClearExternalError={() => setLoginRejectError(null)}
+            hasSharedReceipt={!!pendingSharedRecord}
           />
         ) : activeView === 'setup-profile' ? (
           <ProfileSetup
@@ -2691,14 +2844,66 @@ export default function App() {
                     profiles={profiles}
                     onSwitchToFinanceRole={() => {
                       setActiveRole(Role.FINANCE);
+                      setDashboardTab('APPROVAL');
+                      setStatusFilter('APPROVED');
+                      setActiveView('dashboard');
                     }}
-                    onSelectCandidate={(candidateReq, file, ocrData) => {
-                      setSharedOcrPrefill({ file, ocrData });
+                    onSelectCandidate={(candidateReq, file) => {
+                      setSharedFilePrefill({ file, recordId: pendingSharedRecord?.id });
                       setTransferReq(candidateReq);
                       setPendingSharedRecord(null);
                     }}
-                    onClose={() => setPendingSharedRecord(null)}
+                    onClose={async () => {
+                      if (pendingSharedRecord?.id) {
+                        await deleteSharedReceipt(pendingSharedRecord.id);
+                      }
+                      await clearAllSharedReceipts();
+                      setPendingSharedRecord(null);
+                    }}
                   />
+                )}
+
+                {shareAccessDeniedModal?.open && (
+                  <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+                    <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden my-auto p-5 space-y-4">
+                      <div className="flex items-center gap-3 text-red-600">
+                        <div className="w-10 h-10 rounded-xl bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
+                          <ShieldAlert className="w-5 h-5 text-red-600" />
+                        </div>
+                        <div>
+                          <h3 className="font-bold text-slate-900 text-sm">Akses Ditolak - Share Bukti Transfer</h3>
+                          <p className="text-[11px] text-slate-500">Khusus Pengguna dengan Role Finance</p>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs space-y-1.5">
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span className="text-[11px] font-medium">User ID / Akun:</span>
+                          <span className="font-bold text-slate-800">{shareAccessDeniedModal.userName}</span>
+                        </div>
+                        <div className="flex justify-between items-center text-slate-600">
+                          <span className="text-[11px] font-medium">Role Akun Anda:</span>
+                          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
+                            {shareAccessDeniedModal.userRole}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-3 text-xs leading-relaxed space-y-1">
+                        <p className="font-semibold text-red-900">⚠️ Proses Share Dibatalkan</p>
+                        <p className="text-[11px] text-red-700">
+                          Bukti transfer yang dikirim via Share hanya dapat diproses oleh pengguna dengan <strong>Role Finance</strong>. Karena akun Anda (<strong>{shareAccessDeniedModal.userName}</strong>) tidak memiliki kewenangan Role Finance, pemrosesan resi ini dibatalkan secara otomatis.
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={() => setShareAccessDeniedModal(null)}
+                        className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-sm"
+                      >
+                        Mengerti &amp; Tutup
+                      </button>
+                    </div>
+                  </div>
                 )}
 
                 {transferReq && (
@@ -2709,9 +2914,13 @@ export default function App() {
                     onTransfer={handleAdminTransfer}
                     onReject={handleRejectTransfer}
                     histories={itemReviewHistories}
-                    onClose={() => {
+                    onClose={async () => {
+                      if (sharedFilePrefill?.recordId) {
+                        await deleteSharedReceipt(sharedFilePrefill.recordId);
+                      }
+                      await clearAllSharedReceipts();
                       setTransferReq(null);
-                      setSharedOcrPrefill(null);
+                      setSharedFilePrefill(null);
                     }}
                     googleToken={token!}
                     driveFolderId={driveFolderId}
@@ -2721,9 +2930,7 @@ export default function App() {
                         .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
                         .reduce((sum, item) => sum + item.nominal, 0)
                     }
-                    initialFile={sharedOcrPrefill?.file}
-                    initialOcrDate={sharedOcrPrefill?.ocrData?.tanggalTransaksi}
-                    initialOcrAmount={sharedOcrPrefill?.ocrData?.nominalTransaksi}
+                    initialFile={sharedFilePrefill?.file}
                   />
                 )}
 
@@ -2845,7 +3052,7 @@ export default function App() {
                 {/* Request Listing Container */}
                 {!reviewBudgetReq && !reviewReportReq && !transferReq && (
                   <div className="space-y-3 pt-2 bg-white border border-slate-200 rounded-2xl p-5 shadow-sm">
-                    <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100 flex-wrap gap-2">
                       <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                         Daftar Pengajuan: <span className="text-indigo-600 font-bold">
                           {statusFilter === 'DIREKTUR_APPROVAL' ? 'Alur Persetujuan Direktur (Tinjau Anggaran)' :

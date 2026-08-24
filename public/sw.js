@@ -40,7 +40,16 @@ self.addEventListener('fetch', (event) => {
       (async () => {
         try {
           const formData = await event.request.formData();
-          const file = formData.get('bukti_transfer') || formData.get('file');
+          let file = null;
+
+          // Search all formData fields for any file object
+          for (const [key, value] of formData.entries()) {
+            if (value && typeof value === 'object' && (value instanceof File || value.size > 0)) {
+              file = value;
+              break;
+            }
+          }
+
           if (file) {
             const db = await new Promise((resolve, reject) => {
               const req = indexedDB.open('DIOMS_SHARE_DB', 1);
