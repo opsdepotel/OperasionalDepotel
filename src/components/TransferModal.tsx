@@ -194,23 +194,26 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 space-y-4 my-auto">
-      {/* Title */}
-      <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-        <div>
-          <h2 className="font-display font-bold text-slate-800 text-sm">
-            {isFinalTalanganTransfer ? 'Proses Transfer Dana Talangan (Reimbursement)' : 'Proses Transfer Anggaran'}
-          </h2>
-          <p className="text-[10px] text-slate-400">Role: Finance</p>
+    <div className="fixed inset-0 z-[100] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[92vh] sm:max-h-[88vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-auto">
+        {/* Title / Header */}
+        <div className="flex items-center justify-between p-4 sm:p-5 pb-3 border-b border-slate-100 shrink-0 bg-white">
+          <div>
+            <h2 className="font-display font-bold text-slate-800 text-sm sm:text-base">
+              {isFinalTalanganTransfer ? 'Proses Transfer Dana Talangan (Reimbursement)' : 'Proses Transfer Anggaran'}
+            </h2>
+            <p className="text-[10px] sm:text-[11px] text-slate-400 font-semibold">Role: Finance</p>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-xs font-bold text-slate-400 hover:text-slate-600 px-2.5 py-1.5 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer shrink-0"
+          >
+            Tutup
+          </button>
         </div>
-        <button
-          onClick={onClose}
-          className="text-xs font-semibold text-slate-400 hover:text-slate-600 px-2 py-1 rounded-lg hover:bg-slate-50 cursor-pointer"
-        >
-          Tutup
-        </button>
-      </div>
+
+        {/* Scrollable Content Body */}
+        <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
 
       {/* Info card */}
       <div className="bg-slate-50 rounded-xl p-3.5 space-y-2 text-xs text-slate-600">
@@ -514,6 +517,8 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           </>
         )}
       </form>
+        </div>
+      </div>
 
       {/* History Approval Popup Modal */}
       {showHistoryModal && (
@@ -536,7 +541,6 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           onClose={() => setShowHistoryModal(false)}
         />
       )}
-      </div>
     </div>
   );
 };

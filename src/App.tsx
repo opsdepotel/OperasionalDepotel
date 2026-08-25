@@ -2795,257 +2795,7 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* Action Modals */}
-                {reviewBudgetReq && (
-                  <ReviewBudgetModal
-                    request={reviewBudgetReq}
-                    requesterName={profiles.find(p => p.email.toLowerCase() === reviewBudgetReq.userEmail.toLowerCase())?.nama || reviewBudgetReq.userEmail}
-                    profiles={profiles}
-                    sites={sites}
-                    histories={itemReviewHistories}
-                    onApprove={handleReviewBudget}
-                    onReject={handleRejectBudget}
-                    onClose={() => setReviewBudgetReq(null)}
-                  />
-                )}
 
-                {requestHistoryModalItem && (
-                  <ItemHistoryModal
-                    item={requestHistoryModalItem}
-                    histories={itemReviewHistories}
-                    onClose={() => setRequestHistoryModalItem(null)}
-                    onPreviewDocument={setPreviewDocument}
-                  />
-                )}
-
-                {reviewReportReq && (
-                  <ReviewReportModal
-                    request={reviewReportReq}
-                    requesterName={profiles.find(p => p.email.toLowerCase() === reviewReportReq.userEmail.toLowerCase())?.nama || reviewReportReq.userEmail}
-                    items={usageItems}
-                    role={activeRole}
-                    onSubmitReview={handleReviewUsageItems}
-                    onClose={() => setReviewReportReq(null)}
-                    onPreviewDocument={setPreviewDocument}
-                    activities={activities}
-                    profiles={profiles}
-                    requests={requests}
-                    histories={itemReviewHistories}
-                  />
-                )}
-
-                {pendingSharedRecord && (
-                  <FinanceSharedReceiptModal
-                    activeRole={activeRole}
-                    sharedRecord={pendingSharedRecord}
-                    requests={requests}
-                    profiles={profiles}
-                    onSwitchToFinanceRole={() => {
-                      setActiveRole(Role.FINANCE);
-                      setDashboardTab('APPROVAL');
-                      setStatusFilter('APPROVED');
-                      setActiveView('dashboard');
-                    }}
-                    onSelectCandidate={(candidateReq, file) => {
-                      setSharedFilePrefill({ file, recordId: pendingSharedRecord?.id });
-                      setTransferReq(candidateReq);
-                      setPendingSharedRecord(null);
-                    }}
-                    onClose={async () => {
-                      if (pendingSharedRecord?.id) {
-                        await deleteSharedReceipt(pendingSharedRecord.id);
-                      }
-                      await clearAllSharedReceipts();
-                      setPendingSharedRecord(null);
-                    }}
-                  />
-                )}
-
-                {shareAccessDeniedModal?.open && (
-                  <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
-                    <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden my-auto p-5 space-y-4">
-                      <div className="flex items-center gap-3 text-red-600">
-                        <div className="w-10 h-10 rounded-xl bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
-                          <ShieldAlert className="w-5 h-5 text-red-600" />
-                        </div>
-                        <div>
-                          <h3 className="font-bold text-slate-900 text-sm">Akses Ditolak - Share Bukti Transfer</h3>
-                          <p className="text-[11px] text-slate-500">Khusus Pengguna dengan Role Finance</p>
-                        </div>
-                      </div>
-
-                      <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs space-y-1.5">
-                        <div className="flex justify-between items-center text-slate-600">
-                          <span className="text-[11px] font-medium">User ID / Akun:</span>
-                          <span className="font-bold text-slate-800">{shareAccessDeniedModal.userName}</span>
-                        </div>
-                        <div className="flex justify-between items-center text-slate-600">
-                          <span className="text-[11px] font-medium">Role Akun Anda:</span>
-                          <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
-                            {shareAccessDeniedModal.userRole}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-3 text-xs leading-relaxed space-y-1">
-                        <p className="font-semibold text-red-900">⚠️ Proses Share Dibatalkan</p>
-                        <p className="text-[11px] text-red-700">
-                          Bukti transfer yang dikirim via Share hanya dapat diproses oleh pengguna dengan <strong>Role Finance</strong>. Karena akun Anda (<strong>{shareAccessDeniedModal.userName}</strong>) tidak memiliki kewenangan Role Finance, pemrosesan resi ini dibatalkan secara otomatis.
-                        </p>
-                      </div>
-
-                      <button
-                        onClick={() => setShareAccessDeniedModal(null)}
-                        className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-sm"
-                      >
-                        Mengerti &amp; Tutup
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {transferReq && (
-                  <TransferModal
-                    request={transferReq}
-                    requesterName={profiles.find(p => p.email.toLowerCase() === transferReq.userEmail.toLowerCase())?.nama || transferReq.userEmail}
-                    profiles={profiles}
-                    onTransfer={handleAdminTransfer}
-                    onReject={handleRejectTransfer}
-                    histories={itemReviewHistories}
-                    onClose={async () => {
-                      if (sharedFilePrefill?.recordId) {
-                        await deleteSharedReceipt(sharedFilePrefill.recordId);
-                      }
-                      await clearAllSharedReceipts();
-                      setTransferReq(null);
-                      setSharedFilePrefill(null);
-                    }}
-                    googleToken={token!}
-                    driveFolderId={driveFolderId}
-                    onAuthError={handleGoogleAuthError}
-                    approvedUsageAmount={
-                      usageItems
-                        .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
-                        .reduce((sum, item) => sum + item.nominal, 0)
-                    }
-                    initialFile={sharedFilePrefill?.file}
-                  />
-                )}
-
-                {closingConfirmReq && (() => {
-                  const reqItems = usageItems.filter(i => i.requestId === closingConfirmReq.id);
-                  const approvedUsage = reqItems
-                    .filter(i => i.statusAdmin === ItemStatus.APPROVED)
-                    .reduce((sum, i) => sum + i.nominal, 0);
-                  const totalTransfer = parseNumericValue(closingConfirmReq.adminActionAmount || closingConfirmReq.jumlahPengajuan);
-                  const selisih = approvedUsage - totalTransfer;
-
-                  return (
-                    <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
-                      <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up my-auto">
-                        <div className="flex items-center gap-3">
-                          <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">
-                            <ShieldCheck className="w-6 h-6" />
-                          </div>
-                          <div>
-                            <h3 className="text-sm font-bold text-slate-800">Form Closing Laporan Keuangan</h3>
-                            <p className="text-[11px] text-slate-500 font-medium">
-                              UID: <span className="font-mono font-bold text-slate-700">{closingConfirmReq.id}</span> | Pemohon: <span className="font-semibold text-slate-700">{closingConfirmReq.userEmail}</span>
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 space-y-2 text-xs">
-                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Ringkasan Rekonsiliasi Finansial</span>
-                          <div className="grid grid-cols-3 gap-2">
-                            <div className="bg-white p-2.5 rounded-xl border border-slate-150">
-                              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Transfer</span>
-                              <span className="font-bold text-slate-800 text-xs font-display">{formatIDR(totalTransfer)}</span>
-                            </div>
-                            <div className="bg-white p-2.5 rounded-xl border border-slate-150">
-                              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Laporan Disetujui</span>
-                              <span className="font-bold text-emerald-600 text-xs font-display">{formatIDR(approvedUsage)}</span>
-                            </div>
-                            <div className="bg-white p-2.5 rounded-xl border border-slate-150">
-                              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Rekonsiliasi</span>
-                              <span className={`font-bold text-xs font-display ${selisih === 0 ? 'text-emerald-600' : selisih > 0 ? 'text-amber-600' : 'text-blue-600'}`}>
-                                {selisih === 0 ? 'Pas / Clear' : selisih > 0 ? `+${formatIDR(selisih)}` : formatIDR(selisih)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <p className="text-xs text-slate-500 leading-relaxed bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-amber-800">
-                          <strong>Perhatian:</strong> Seluruh item laporan telah disetujui Finance. Melakukan Closing akan secara permanen menyelesaikan UID ini dan menyimpan riwayat transaksi secara final.
-                        </p>
-
-                        <div className="flex gap-3 pt-1">
-                          <button
-                            onClick={() => setClosingConfirmReq(null)}
-                            className="flex-1 py-2.5 px-4 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                          >
-                            Batal
-                          </button>
-                          <button
-                            onClick={async () => {
-                              const req = closingConfirmReq;
-                              setClosingConfirmReq(null);
-                              await handleCloseRequest(req);
-                            }}
-                            className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-100 flex items-center justify-center gap-1.5 cursor-pointer"
-                          >
-                            <ShieldCheck className="w-4 h-4" />
-                            <span>Selesaikan & Form Closing</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {cancelConfirmReq && (
-                  <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
-                    <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up my-auto">
-                      <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600">
-                        <XCircle className="w-6 h-6" />
-                      </div>
-                      <div className="space-y-1.5">
-                        <h3 className="text-sm font-bold text-slate-800">Batalkan Pengajuan UID {cancelConfirmReq.id}?</h3>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                          Apakah Anda yakin ingin membatalkan pengajuan dana ini? Status pengajuan akan diubah secara permanen menjadi <strong>CANCELLED</strong> dan dikecualikan dari seluruh proses operasional aplikasi.
-                        </p>
-                        <div className="bg-slate-50 p-3 rounded-xl text-xs space-y-1 border border-slate-100 mt-2">
-                          <p className="text-slate-700 font-medium">Keterangan: <strong>{cancelConfirmReq.keterangan}</strong></p>
-                          <p className="text-slate-700 font-medium">Nominal: <strong className="text-indigo-600">{formatIDR(cancelConfirmReq.jumlahPengajuan)}</strong></p>
-                          {cancelConfirmReq.managerComment && (
-                            <p className="text-amber-700 font-medium text-[11px] pt-1">
-                              {(() => {
-                                const p = profiles.find(prof => prof.email.trim().toLowerCase() === (cancelConfirmReq?.userEmail || '').trim().toLowerCase());
-                                return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Revisi Direktur:' : 'Catatan Revisi Manager:';
-                              })()} "{cancelConfirmReq.managerComment}"
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex gap-3 pt-2">
-                        <button
-                          type="button"
-                          onClick={() => setCancelConfirmReq(null)}
-                          className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
-                        >
-                          Kembali
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleCancelBudgetRequest(cancelConfirmReq)}
-                          className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-sm"
-                        >
-                          Ya, Batalkan
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
 
                 {/* Request Listing Container */}
                 {!reviewBudgetReq && !reviewReportReq && !transferReq && (
@@ -4213,6 +3963,258 @@ export default function App() {
         errorMessage={error}
         userEmail={user?.email || (userProfile ? userProfile.email : 'ops.depotel@gmail.com')}
       />
+
+      {/* Root Action Modals */}
+      {reviewBudgetReq && (
+        <ReviewBudgetModal
+          request={reviewBudgetReq}
+          requesterName={profiles.find(p => p.email.toLowerCase() === reviewBudgetReq.userEmail.toLowerCase())?.nama || reviewBudgetReq.userEmail}
+          profiles={profiles}
+          sites={sites}
+          histories={itemReviewHistories}
+          onApprove={handleReviewBudget}
+          onReject={handleRejectBudget}
+          onClose={() => setReviewBudgetReq(null)}
+        />
+      )}
+
+      {requestHistoryModalItem && (
+        <ItemHistoryModal
+          item={requestHistoryModalItem}
+          histories={itemReviewHistories}
+          onClose={() => setRequestHistoryModalItem(null)}
+          onPreviewDocument={setPreviewDocument}
+        />
+      )}
+
+      {reviewReportReq && (
+        <ReviewReportModal
+          request={reviewReportReq}
+          requesterName={profiles.find(p => p.email.toLowerCase() === reviewReportReq.userEmail.toLowerCase())?.nama || reviewReportReq.userEmail}
+          items={usageItems}
+          role={activeRole}
+          onSubmitReview={handleReviewUsageItems}
+          onClose={() => setReviewReportReq(null)}
+          onPreviewDocument={setPreviewDocument}
+          activities={activities}
+          profiles={profiles}
+          requests={requests}
+          histories={itemReviewHistories}
+        />
+      )}
+
+      {pendingSharedRecord && (
+        <FinanceSharedReceiptModal
+          activeRole={activeRole}
+          sharedRecord={pendingSharedRecord}
+          requests={requests}
+          profiles={profiles}
+          onSwitchToFinanceRole={() => {
+            setActiveRole(Role.FINANCE);
+            setDashboardTab('APPROVAL');
+            setStatusFilter('APPROVED');
+            setActiveView('dashboard');
+          }}
+          onSelectCandidate={(candidateReq, file) => {
+            setSharedFilePrefill({ file, recordId: pendingSharedRecord?.id });
+            setTransferReq(candidateReq);
+            setPendingSharedRecord(null);
+          }}
+          onClose={async () => {
+            if (pendingSharedRecord?.id) {
+              await deleteSharedReceipt(pendingSharedRecord.id);
+            }
+            await clearAllSharedReceipts();
+            setPendingSharedRecord(null);
+          }}
+        />
+      )}
+
+      {shareAccessDeniedModal?.open && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden my-auto p-5 space-y-4">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="w-10 h-10 rounded-xl bg-red-50 border border-red-200 flex items-center justify-center shrink-0">
+                <ShieldAlert className="w-5 h-5 text-red-600" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Akses Ditolak - Share Bukti Transfer</h3>
+                <p className="text-[11px] text-slate-500">Khusus Pengguna dengan Role Finance</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 rounded-xl p-3 border border-slate-200 text-xs space-y-1.5">
+              <div className="flex justify-between items-center text-slate-600">
+                <span className="text-[11px] font-medium">User ID / Akun:</span>
+                <span className="font-bold text-slate-800">{shareAccessDeniedModal.userName}</span>
+              </div>
+              <div className="flex justify-between items-center text-slate-600">
+                <span className="text-[11px] font-medium">Role Akun Anda:</span>
+                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
+                  {shareAccessDeniedModal.userRole}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-red-50 border border-red-200 text-red-800 rounded-xl p-3 text-xs leading-relaxed space-y-1">
+              <p className="font-semibold text-red-900">⚠️ Proses Share Dibatalkan</p>
+              <p className="text-[11px] text-red-700">
+                Bukti transfer yang dikirim via Share hanya dapat diproses oleh pengguna dengan <strong>Role Finance</strong>. Karena akun Anda (<strong>{shareAccessDeniedModal.userName}</strong>) tidak memiliki kewenangan Role Finance, pemrosesan resi ini dibatalkan secara otomatis.
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShareAccessDeniedModal(null)}
+              className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-sm"
+            >
+              Mengerti &amp; Tutup
+            </button>
+          </div>
+        </div>
+      )}
+
+      {transferReq && (
+        <TransferModal
+          request={transferReq}
+          requesterName={profiles.find(p => p.email.toLowerCase() === transferReq.userEmail.toLowerCase())?.nama || transferReq.userEmail}
+          profiles={profiles}
+          onTransfer={handleAdminTransfer}
+          onReject={handleRejectTransfer}
+          histories={itemReviewHistories}
+          onClose={async () => {
+            if (sharedFilePrefill?.recordId) {
+              await deleteSharedReceipt(sharedFilePrefill.recordId);
+            }
+            await clearAllSharedReceipts();
+            setTransferReq(null);
+            setSharedFilePrefill(null);
+          }}
+          googleToken={token!}
+          driveFolderId={driveFolderId}
+          onAuthError={handleGoogleAuthError}
+          approvedUsageAmount={
+            usageItems
+              .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
+              .reduce((sum, item) => sum + item.nominal, 0)
+          }
+          initialFile={sharedFilePrefill?.file}
+        />
+      )}
+
+      {closingConfirmReq && (() => {
+        const reqItems = usageItems.filter(i => i.requestId === closingConfirmReq.id);
+        const approvedUsage = reqItems
+          .filter(i => i.statusAdmin === ItemStatus.APPROVED)
+          .reduce((sum, i) => sum + i.nominal, 0);
+        const totalTransfer = parseNumericValue(closingConfirmReq.adminActionAmount || closingConfirmReq.jumlahPengajuan);
+        const selisih = approvedUsage - totalTransfer;
+
+        return (
+          <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-[100] animate-fade-in overflow-y-auto">
+            <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up my-auto">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-100 flex items-center justify-center text-emerald-600 shrink-0">
+                  <ShieldCheck className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">Form Closing Laporan Keuangan</h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    UID: <span className="font-mono font-bold text-slate-700">{closingConfirmReq.id}</span> | Pemohon: <span className="font-semibold text-slate-700">{closingConfirmReq.userEmail}</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-150 space-y-2 text-xs">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Ringkasan Rekonsiliasi Finansial</span>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-white p-2.5 rounded-xl border border-slate-150">
+                    <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Transfer</span>
+                    <span className="font-bold text-slate-800 text-xs font-display">{formatIDR(totalTransfer)}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-slate-150">
+                    <span className="text-[9px] text-slate-400 block font-semibold uppercase">Laporan Disetujui</span>
+                    <span className="font-bold text-emerald-600 text-xs font-display">{formatIDR(approvedUsage)}</span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-slate-150">
+                    <span className="text-[9px] text-slate-400 block font-semibold uppercase">Rekonsiliasi</span>
+                    <span className={`font-bold text-xs font-display ${selisih === 0 ? 'text-emerald-600' : selisih > 0 ? 'text-amber-600' : 'text-blue-600'}`}>
+                      {selisih === 0 ? 'Pas / Clear' : selisih > 0 ? `+${formatIDR(selisih)}` : formatIDR(selisih)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-xs text-slate-500 leading-relaxed bg-amber-50/50 p-3 rounded-xl border border-amber-100 text-amber-800">
+                <strong>Perhatian:</strong> Seluruh item laporan telah disetujui Finance. Melakukan Closing akan secara permanen menyelesaikan UID ini dan menyimpan riwayat transaksi secara final.
+              </p>
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  onClick={() => setClosingConfirmReq(null)}
+                  className="flex-1 py-2.5 px-4 border border-slate-150 hover:bg-slate-50 text-slate-600 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={async () => {
+                    const req = closingConfirmReq;
+                    setClosingConfirmReq(null);
+                    await handleCloseRequest(req);
+                  }}
+                  className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-100 flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Selesaikan & Form Closing</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {cancelConfirmReq && (
+        <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-[100] animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up my-auto">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600">
+              <XCircle className="w-6 h-6" />
+            </div>
+            <div className="space-y-1.5">
+              <h3 className="text-sm font-bold text-slate-800">Batalkan Pengajuan UID {cancelConfirmReq.id}?</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Apakah Anda yakin ingin membatalkan pengajuan dana ini? Status pengajuan akan diubah secara permanen menjadi <strong>CANCELLED</strong> dan dikecualikan dari seluruh proses operasional aplikasi.
+              </p>
+              <div className="bg-slate-50 p-3 rounded-xl text-xs space-y-1 border border-slate-100 mt-2">
+                <p className="text-slate-700 font-medium">Keterangan: <strong>{cancelConfirmReq.keterangan}</strong></p>
+                <p className="text-slate-700 font-medium">Nominal: <strong className="text-indigo-600">{formatIDR(cancelConfirmReq.jumlahPengajuan)}</strong></p>
+                {cancelConfirmReq.managerComment && (
+                  <p className="text-amber-700 font-medium text-[11px] pt-1">
+                    {(() => {
+                      const p = profiles.find(prof => prof.email.trim().toLowerCase() === (cancelConfirmReq?.userEmail || '').trim().toLowerCase());
+                      return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Revisi Direktur:' : 'Catatan Revisi Manager:';
+                    })()} "{cancelConfirmReq.managerComment}"
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setCancelConfirmReq(null)}
+                className="flex-1 py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+              >
+                Kembali
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCancelBudgetRequest(cancelConfirmReq)}
+                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-sm"
+              >
+                Ya, Batalkan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
