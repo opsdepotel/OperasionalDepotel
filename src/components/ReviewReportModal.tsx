@@ -405,24 +405,24 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             onClick={() => handleDecisionChange(item.id, ItemStatus.APPROVED)}
-                            className={`py-1.5 px-3 text-xs font-semibold rounded-lg border text-center flex items-center justify-center gap-1.5 transition-all ${
+                            className={`py-1.5 px-3 text-xs font-semibold rounded-lg border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                               decision.status === ItemStatus.APPROVED
-                                ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
-                                : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
+                                ? 'border-emerald-600 bg-emerald-600 text-white font-bold shadow-xs ring-2 ring-emerald-300'
+                                : 'border-emerald-200 bg-emerald-50/90 text-emerald-700 hover:bg-emerald-100 font-semibold'
                             }`}
                           >
-                            <Check className="w-3.5 h-3.5" />
+                            <Check className={`w-3.5 h-3.5 ${decision.status === ItemStatus.APPROVED ? 'text-white' : 'text-emerald-600'}`} />
                             <span>Setujui</span>
                           </button>
                           <button
                             onClick={() => handleDecisionChange(item.id, ItemStatus.REJECTED)}
-                            className={`py-1.5 px-3 text-xs font-semibold rounded-lg border text-center flex items-center justify-center gap-1.5 transition-all ${
+                            className={`py-1.5 px-3 text-xs font-semibold rounded-lg border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                               decision.status === ItemStatus.REJECTED
-                                ? 'border-red-500 bg-red-50 text-red-700 font-bold'
-                                : 'border-slate-150 bg-white text-slate-600 hover:bg-slate-50'
+                                ? 'border-red-600 bg-red-600 text-white font-bold shadow-xs ring-2 ring-red-300'
+                                : 'border-red-200 bg-red-50/90 text-red-700 hover:bg-red-100 font-semibold'
                             }`}
                           >
-                            <X className="w-3.5 h-3.5" />
+                            <X className={`w-3.5 h-3.5 ${decision.status === ItemStatus.REJECTED ? 'text-white' : 'text-red-600'}`} />
                             <span>Revisi</span>
                           </button>
                         </div>

@@ -515,7 +515,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         <div className="bg-white border border-slate-100 p-4 rounded-2xl shadow-sm space-y-2">
           <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 tracking-wider">
             <MapPin className="w-3.5 h-3.5 text-slate-400" />
-            <span>SITE ID / LOKASI TERVERIFIKASI</span>
+            <span>SITE ID / LOKASI</span>
           </div>
           {isMultipleSites ? (
             someFound ? (
@@ -523,10 +523,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 {siteResults.map((res, idx) => (
                   <div key={idx} className="text-xs flex flex-wrap gap-x-1.5 items-baseline">
                     <span className="font-mono font-bold text-slate-700">[{res.id}]:</span>
-                    {res.found ? (
+                    {res.found && (
                       <span className="text-slate-800 font-semibold">{res.siteName}</span>
-                    ) : (
-                      <span className="text-rose-500 italic text-[10px] font-medium">* Site ID tidak ditemukan/tidak terdaftar</span>
                     )}
                   </div>
                 ))}
@@ -536,7 +534,6 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 {siteResults.map((res, idx) => (
                   <div key={idx} className="text-xs flex flex-wrap gap-x-1.5 items-baseline">
                     <span className="font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">[{res.id}]</span>
-                    <span className="text-rose-500 font-medium text-xs">* Site ID tidak ditemukan/tidak terdaftar</span>
                   </div>
                 ))}
               </div>
@@ -556,9 +553,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             ) : (
               request.siteId.trim() && (
                 <div className="pl-5 space-y-1">
-                  <p className="text-xs text-rose-500 font-semibold flex flex-wrap items-center gap-1.5">
+                  <p className="text-xs font-semibold flex flex-wrap items-center gap-1.5">
                     <span className="font-mono font-bold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded text-[11px]">[{siteResults[0]?.id || request.siteId.trim()}]</span>
-                    <span>* Site ID tidak ditemukan/tidak terdaftar</span>
                   </p>
                 </div>
               )
@@ -853,11 +849,11 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                               onClick={() => handleDecisionChange(item.id, ItemStatus.APPROVED)}
                               className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                                 decisions[item.id]?.status === ItemStatus.APPROVED
-                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700 font-bold'
-                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                  ? 'border-emerald-600 bg-emerald-600 text-white font-bold shadow-xs ring-2 ring-emerald-300'
+                                  : 'border-emerald-200 bg-emerald-50/90 text-emerald-700 hover:bg-emerald-100 font-semibold'
                               }`}
                             >
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                              <CheckCircle2 className={`w-3.5 h-3.5 ${decisions[item.id]?.status === ItemStatus.APPROVED ? 'text-white' : 'text-emerald-600'}`} />
                               <span>Setujui</span>
                             </button>
                             <button
@@ -865,11 +861,11 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                               onClick={() => handleDecisionChange(item.id, ItemStatus.REJECTED)}
                               className={`py-1.5 px-3 text-xs font-semibold rounded-xl border text-center flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                                 decisions[item.id]?.status === ItemStatus.REJECTED
-                                  ? 'border-red-500 bg-red-50 text-red-700 font-bold'
-                                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                  ? 'border-red-600 bg-red-600 text-white font-bold shadow-xs ring-2 ring-red-300'
+                                  : 'border-red-200 bg-red-50/90 text-red-700 hover:bg-red-100 font-semibold'
                               }`}
                             >
-                              <XCircle className="w-3.5 h-3.5 text-red-500" />
+                              <XCircle className={`w-3.5 h-3.5 ${decisions[item.id]?.status === ItemStatus.REJECTED ? 'text-white' : 'text-red-600'}`} />
                               <span>Revisi</span>
                             </button>
                           </div>
@@ -948,8 +944,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       </button>
                     </div>
 
-                     {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) and user is not Direktur */}
-                    {role !== Role.DIREKTUR && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+                     {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) and user is User role */}
+                    {role === Role.USER && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
                       <div className="flex items-center gap-2">
                         {isRejected && (
                           <button
@@ -988,8 +984,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         )}
       </div>
 
-      {/* Trigger Button to Open Input Form Modal (Excludes Direktur) */}
-      {role !== Role.DIREKTUR && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+      {/* Trigger Button to Open Input Form Modal (Only for User Role) */}
+      {role === Role.USER && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
         !hasRejectedItems ? (
           <button
             onClick={() => {
