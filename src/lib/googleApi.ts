@@ -738,7 +738,7 @@ export async function fetchBudgetRequests(token: string, spreadsheetId: string):
   if (token === 'mock_demo_token') {
     return getMockData<BudgetRequest[]>('mock_db_pengajuan', defaultRequests);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Z1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
@@ -772,7 +772,7 @@ export async function fetchUsageItems(token: string, spreadsheetId: string): Pro
   if (token === 'mock_demo_token') {
     return getMockData<UsageReportItem[]>('mock_db_laporan', defaultUsageItems);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
@@ -788,7 +788,7 @@ export async function fetchProfiles(token: string, spreadsheetId: string): Promi
   if (token === 'mock_demo_token') {
     return getMockData<UserProfile[]>('mock_db_users', defaultUsers);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
@@ -804,7 +804,7 @@ export async function fetchUserActivities(token: string, spreadsheetId: string):
   if (token === 'mock_demo_token') {
     return getMockData<UserActivity[]>('mock_db_kegiatan', []);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:Z1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
@@ -820,7 +820,7 @@ export async function fetchResetDeviceLogs(token: string, spreadsheetId: string)
   if (token === 'mock_demo_token') {
     return getMockData<ResetDeviceLog[]>('mock_db_reset_device_log', []);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ResetDeviceLog!A1:H1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ResetDeviceLog!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
@@ -836,13 +836,19 @@ export async function fetchItemReviewHistories(token: string, spreadsheetId: str
   if (token === 'mock_demo_token') {
     return getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
   }
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ItemReviewHistory!A1:O2000`, {
+  let res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ItemReviewHistory!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
     throw new Error('[HTTP 401] Request had invalid authentication credentials.');
   }
-  if (!res.ok) return [];
+  if (!res.ok) {
+    // Try ApprovalHistory as sheet name fallback
+    res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ApprovalHistory!A1:Z`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!res.ok) return [];
+  }
   const data = await res.json();
   return parseSheetRows<ItemReviewHistory>(ITEM_REVIEW_HISTORY_HEADERS, data.values, mapToItemReviewHistory);
 }
@@ -1491,7 +1497,7 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
     BuktiUrl: log.buktiUrl || ''
   }));
 
-  const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ItemReviewHistory!A1:append?valueInputOption=USER_ENTERED`, {
+  let appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ItemReviewHistory!A1:append?valueInputOption=USER_ENTERED`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1504,6 +1510,20 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
 
   if (appendRes.status === 401) {
     throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
+
+  if (!appendRes.ok) {
+    // Try ApprovalHistory fallback
+    appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ApprovalHistory!A1:append?valueInputOption=USER_ENTERED`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        values: rowsData
+      })
+    });
   }
 
   if (!appendRes.ok) {

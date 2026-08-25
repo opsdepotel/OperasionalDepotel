@@ -18,7 +18,8 @@ import {
   History,
   RotateCcw,
   Calendar,
-  Sparkles
+  Sparkles,
+  Eye
 } from 'lucide-react';
 import { uploadReceiptFile } from '../lib/googleApi';
 
@@ -29,6 +30,7 @@ interface TransferModalProps {
   onTransfer: (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string, customAdminActionTime?: string) => Promise<void>;
   onReject?: (reason: string) => Promise<void>;
   histories?: ItemReviewHistory[];
+  onPreviewDocument?: (doc: { url: string; fileId?: string; title?: string }) => void;
   onClose: () => void;
   googleToken: string;
   driveFolderId: string | null;
@@ -46,6 +48,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   onTransfer,
   onReject,
   histories = [],
+  onPreviewDocument,
   onClose,
   googleToken,
   driveFolderId,
@@ -65,13 +68,24 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   const [activeMode, setActiveMode] = useState<'TRANSFER' | 'REVISE'>('TRANSFER');
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
+  // Target total amount approved for this request
+  const targetTotal = isTalangan
+    ? (approvedUsageAmount > 0 ? approvedUsageAmount : request.managerActionAmount)
+    : request.managerActionAmount;
+  // Accumulated amount already transferred previously
+  const previousTransferredAmount = request.adminActionAmount || 0;
+  // Remaining amount left to be transferred
+  const remainingAmount = Math.max(0, targetTotal - previousTransferredAmount);
+
   const initialAmountValue = initialOcrAmount > 0
     ? String(initialOcrAmount)
-    : (isFinalTalanganTransfer ? String(approvedUsageAmount) : String(request.managerActionAmount));
+    : (isTalangan 
+        ? (remainingAmount > 0 ? String(remainingAmount) : String(targetTotal))
+        : String(request.managerActionAmount || 0));
 
   const [transferredAmount, setTransferredAmount] = useState(initialAmountValue);
   const [ocrDate, setOcrDate] = useState<string>(initialOcrDate || '');
-  const [adminComment, setAdminComment] = useState(request.adminComment || '');
+  const [adminComment, setAdminComment] = useState('');
   const [revisionReason, setRevisionReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -118,6 +132,18 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     setShowCameraStream(false);
   };
 
+  const handleExecuteClosingOnly = async () => {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      await onTransfer(0, '', '', adminComment.trim() || 'Closing UID Talangan oleh Finance');
+    } catch (err: any) {
+      setError(err.message || 'Gagal melakukan closing UID Talangan.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -143,17 +169,62 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     }
 
     // Mode TRANSFER
-    const amt = isFinalTalanganTransfer ? approvedUsageAmount : (isTalangan ? 0 : parseNumericValue(transferredAmount));
-    if (!isTalangan || isFinalTalanganTransfer) {
+    const amt = parseNumericValue(transferredAmount);
+
+    if (!isTalangan) {
+      // Logic & Validation Khusus Pengajuan Biasa (OP) - Single Transfer
+      if (request.status === RequestStatus.TRANSFERRED) {
+        setError(`Finance tidak bisa melakukan transfer pada UID Pengajuan biasa (${request.id}) yang telah berstatus TRANSFERRED.`);
+        return;
+      }
+
       if (amt <= 0) {
         setError('Nominal transfer harus lebih besar dari Rp 0.');
         return;
       }
-      if (!isTalangan && amt > request.managerActionAmount) {
-        setError(`Nominal transfer tidak boleh melebihi jumlah yang disetujui manager (${formatIDR(request.managerActionAmount)}).`);
+
+      if (request.managerActionAmount > 0 && amt > request.managerActionAmount) {
+        setError(
+          `Nominal transfer (${formatIDR(amt)}) tidak boleh melebihi nominal yang disetujui Manager (${formatIDR(request.managerActionAmount)}).`
+        );
         return;
       }
+
+      if (request.managerActionAmount > 0 && amt < request.managerActionAmount && !adminComment.trim()) {
+        setError(
+          `Karena nominal transfer (${formatIDR(amt)}) kurang dari nominal yang disetujui Manager (${formatIDR(request.managerActionAmount)}), Catatan Finance wajib diisi (misal: penjelasan alasan transfer sebagian/kurang).`
+        );
+        return;
+      }
+
       if (!selectedFile) {
+        setError('Bukti Transfer wajib dilampirkan.');
+        return;
+      }
+    } else {
+      // Logic & Validation Khusus Dana Talangan (OPT / BBMDS) - Multi Transfer & Reimbursement
+      const projectedTotal = previousTransferredAmount + amt;
+
+      if (isFinalTalanganTransfer) {
+        if (remainingAmount > 0 && amt <= 0 && previousTransferredAmount < targetTotal) {
+          setError('Nominal transfer harus lebih besar dari Rp 0.');
+          return;
+        }
+      } else {
+        if (amt <= 0 && previousTransferredAmount < targetTotal) {
+          setError('Nominal transfer harus lebih besar dari Rp 0.');
+          return;
+        }
+      }
+
+      if (targetTotal > 0 && projectedTotal > targetTotal) {
+        setError(
+          `Gagal Transfer: Total akumulasi transfer (${formatIDR(previousTransferredAmount)} + ${formatIDR(amt)} = ${formatIDR(projectedTotal)}) MELEBIHI total nominal disetujui (${formatIDR(targetTotal)}). Sisa maksimal yang dapat ditransfer: ${formatIDR(remainingAmount)}.`
+        );
+        return;
+      }
+
+      if (!selectedFile && remainingAmount > 0 && amt > 0) {
         setError('Bukti Transfer wajib dilampirkan.');
         return;
       }
@@ -164,7 +235,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     let finalBuktiFileId = '';
 
     try {
-      const shouldUpload = (!isTalangan || isFinalTalanganTransfer) && selectedFile;
+      const shouldUpload = selectedFile && (!isTalangan || isFinalTalanganTransfer || amt > 0);
       if (shouldUpload) {
         if (!driveFolderId) {
           throw new Error('ID Folder Google Drive belum terinisialisasi.');
@@ -216,7 +287,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-4">
 
       {/* Info card */}
-      <div className="bg-slate-50 rounded-xl p-3.5 space-y-2 text-xs text-slate-600">
+      <div className="bg-slate-50 rounded-xl p-3.5 space-y-2.5 text-xs text-slate-600 border border-slate-100">
         <div className="grid grid-cols-2 gap-2">
           <div>
             <span className="text-[10px] text-slate-400 block font-semibold">UID Proses</span>
@@ -235,10 +306,27 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               {isFinalTalanganTransfer ? 'Total Reimbursement' : (isRequesterManagerOrFinance ? 'Disetujui Direktur' : 'Disetujui Manager')}
             </span>
             <span className="font-bold text-emerald-600">
-              {formatIDR(isFinalTalanganTransfer ? approvedUsageAmount : request.managerActionAmount)}
+              {formatIDR(targetTotal)}
             </span>
           </div>
         </div>
+
+        {/* Transfer Progress Breakdown (Only for Dana Talangan OPT) */}
+        {isTalangan && (
+          <div className="pt-2 border-t border-slate-200/80 grid grid-cols-2 gap-2 text-[11px]">
+            <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+              <span className="text-[9px] font-bold text-slate-400 uppercase block">Sudah Ditransfer</span>
+              <span className="font-bold text-indigo-600">{formatIDR(previousTransferredAmount)}</span>
+            </div>
+            <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+              <span className="text-[9px] font-bold text-slate-400 uppercase block">Sisa Belum Ditransfer</span>
+              <span className={`font-bold ${remainingAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                {formatIDR(remainingAmount)}
+              </span>
+            </div>
+          </div>
+        )}
+
         {request.managerComment && (
           <div className="pt-2 border-t border-slate-200">
             <span className="text-[10px] text-slate-400 block font-semibold">
@@ -248,6 +336,195 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           </div>
         )}
       </div>
+
+      {/* Previous Transfers List Card (Only for Dana Talangan OPT) */}
+      {isTalangan && previousTransferredAmount > 0 && (
+        <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3.5 space-y-2.5 text-xs">
+          <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
+            <span className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
+              <CreditCard className="w-4 h-4 text-emerald-600" />
+              <span>Riwayat Transfer Sebelumnya</span>
+            </span>
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${remainingAmount <= 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+              {remainingAmount <= 0 ? '100% Lunas' : `Sisa ${formatIDR(remainingAmount)}`}
+            </span>
+          </div>
+
+          {/* Progress bar */}
+          <div className="space-y-1">
+            <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+              <div 
+                className="bg-emerald-500 h-full transition-all duration-300" 
+                style={{ width: `${Math.min(100, Math.round((previousTransferredAmount / Math.max(1, targetTotal)) * 100))}%` }}
+              />
+            </div>
+          </div>
+
+          {/* List of uploaded receipts / transfer logs */}
+          {(() => {
+            const urls = (request.buktiTransferUrl || '').split('||').map(u => u.trim()).filter(Boolean);
+            const fileIds = (request.buktiTransferFileId || '').split('||').map(f => f.trim()).filter(Boolean);
+            const reqId = request.id.trim().toLowerCase();
+            const financeHistories = histories
+              .filter(h => {
+                const hReqId = (h.requestUid || h.itemUid || '').trim().toLowerCase();
+                const reqMatch = hReqId === reqId || (hReqId && (reqId.includes(hReqId) || hReqId.includes(reqId)));
+                if (!reqMatch) return false;
+
+                const roleMatch = (h.actorRole || '').trim().toUpperCase() === 'FINANCE' || h.actionType === 'APPROVAL_FINANCE';
+                const statusMatch = (h.status || '').trim().toUpperCase() === 'TRANSFERRED';
+
+                return roleMatch && statusMatch;
+              })
+              .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+            // Determine transfer item entries directly from ItemReviewHistory
+            const transferItems = (() => {
+              if (financeHistories.length > 0) {
+                return financeHistories.map((hist, idx) => {
+                  const currentUrl = urls[idx];
+                  const url = hist.buktiUrl || currentUrl || '';
+                  const fileId = hist.buktiFileId || fileIds[idx];
+
+                  // 1. Nominal langsung dari kolom Nominal pada tabel database ItemReviewHistory
+                  let amount = hist.nominal ? parseNumericValue(hist.nominal) : 0;
+
+                  // 2. Jika nominal di histori bernilai 0 (data lama), ekstrak dari catatan
+                  if (!amount && hist.catatan) {
+                    const m = hist.catatan.match(/Rp\s*([\d.,]+)/i) || hist.catatan.match(/sebesar\s*([\d.,]+)/i);
+                    if (m && m[1]) {
+                      amount = parseNumericValue(m[1]);
+                    } else {
+                      const digits = hist.catatan.replace(/[^0-9]/g, '');
+                      if (digits && digits.length >= 3) {
+                        amount = parseNumericValue(digits);
+                      }
+                    }
+                  }
+
+                  // 3. Fallback jika nominal masih 0: distribusikan total agar data tidak kosong
+                  const totalAvailable: number = parseNumericValue(request.adminActionAmount) || 
+                                                 parseNumericValue(request.totalDisetujuiAdmin) || 
+                                                 parseNumericValue(request.managerActionAmount) || 0;
+
+                  if (!amount && totalAvailable > 0) {
+                    if (financeHistories.length === 1) {
+                      amount = totalAvailable;
+                    } else {
+                      const knownSum = financeHistories.reduce<number>((sum, h, i) => {
+                        if (i === idx) return sum;
+                        return sum + (h.nominal ? parseNumericValue(h.nominal) : 0);
+                      }, 0);
+
+                      if (knownSum > 0 && totalAvailable > knownSum) {
+                        amount = totalAvailable - knownSum;
+                      } else {
+                        amount = Math.round(totalAvailable / financeHistories.length);
+                      }
+                    }
+                  }
+
+                  return {
+                    historyId: hist.id || '-',
+                    date: hist.timestamp || request.adminActionTime || '-',
+                    amount,
+                    url,
+                    fileId
+                  };
+                });
+              } else {
+                // Fallback jika belum ada log di ItemReviewHistory tetapi URL resi sudah terupload
+                const totalAvailable: number = parseNumericValue(request.adminActionAmount) || 
+                                               parseNumericValue(request.totalDisetujuiAdmin) || 
+                                               parseNumericValue(request.managerActionAmount) || 0;
+
+                return urls.map((url, idx) => ({
+                  historyId: '-',
+                  date: request.adminActionTime || '-',
+                  amount: urls.length > 0 ? Math.round(totalAvailable / urls.length) : totalAvailable,
+                  url,
+                  fileId: fileIds[idx]
+                }));
+              }
+            })();
+
+            if (transferItems.length === 0) return null;
+
+            return (
+              <div className="space-y-2 pt-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Daftar Bukti Transfer ({transferItems.length}):
+                </span>
+                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                  {/* Table Header Columns */}
+                  <div className="grid grid-cols-12 bg-slate-100/80 border-b border-slate-200 px-3 py-2 text-[9.5px] font-bold text-slate-500 uppercase tracking-wider items-center gap-1">
+                    <div className="col-span-1 text-center">NO</div>
+                    <div className="col-span-3">ID</div>
+                    <div className="col-span-3 pl-3">Tanggal Transfer</div>
+                    <div className="col-span-3 text-right pr-1">Nominal</div>
+                    <div className="col-span-2 text-center">Bukti Transfer</div>
+                  </div>
+
+                  {/* Table Rows */}
+                  <div className="divide-y divide-slate-100 max-h-[180px] overflow-y-auto">
+                    {transferItems.map((item, idx) => {
+                      return (
+                        <div key={idx} className="grid grid-cols-12 px-3 py-2 text-xs items-center hover:bg-slate-50/70 transition-colors gap-1">
+                          {/* No */}
+                          <div className="col-span-1 text-center font-bold text-slate-500 text-[11px]">
+                            {idx + 1}
+                          </div>
+
+                          {/* ID */}
+                          <div className="col-span-3 font-mono text-[10px] text-slate-600 truncate font-semibold" title={item.historyId}>
+                            {item.historyId}
+                          </div>
+
+                          {/* Tanggal Transfer */}
+                          <div className="col-span-3 pl-3 font-medium text-slate-700 text-[10px] truncate" title={item.date}>
+                            {item.date}
+                          </div>
+
+                          {/* Nominal Transfer */}
+                          <div className="col-span-3 text-right pr-1 font-extrabold text-emerald-600 text-[11px]">
+                            {item.amount && item.amount > 0 ? formatIDR(item.amount) : '-'}
+                          </div>
+
+                          {/* Lihat Bukti Transfer */}
+                          <div className="col-span-2 flex justify-center">
+                            {item.url ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (onPreviewDocument) {
+                                    onPreviewDocument({
+                                      url: item.url,
+                                      fileId: item.fileId || undefined,
+                                      title: `Bukti Transfer #${idx + 1} (UID: ${request.id})`
+                                    });
+                                  } else {
+                                    window.open(item.url, '_blank');
+                                  }
+                                }}
+                                className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer transition-colors border border-indigo-100 shadow-2xs whitespace-nowrap"
+                              >
+                                <Eye className="w-3 h-3 text-indigo-600 shrink-0" />
+                                <span>Lihat Resi #{idx + 1}</span>
+                              </button>
+                            ) : (
+                              <span className="text-[10px] text-slate-400 italic">-</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Previous Review History Clickable Label */}
       {(() => {
@@ -366,46 +643,77 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               </div>
             )}
 
-            {(!isTalangan || isFinalTalanganTransfer) ? (
-              <div className="space-y-3">
-                {isFinalTalanganTransfer ? (
-                  <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl p-3.5 text-xs space-y-1">
-                    <p className="font-semibold flex items-center gap-1.5 text-emerald-700">
-                      <Coins className="w-4 h-4 text-emerald-600" />
-                      <span>Reimbursement Dana Talangan Pribadi</span>
+            {!isTalangan ? (
+              /* FORM PENGAJUAN BIASA (OP) - SINGLE TRANSFER */
+              <div className="space-y-4">
+                {request.status === RequestStatus.TRANSFERRED && (
+                  <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-3.5 text-xs space-y-1">
+                    <p className="font-bold flex items-center gap-1.5 text-amber-800">
+                      <AlertTriangle className="w-4 h-4 text-amber-600" />
+                      <span>Status Transferred</span>
                     </p>
-                    <p className="text-[10px] text-slate-600 leading-relaxed font-medium">
-                      Total dana talangan yang disetujui untuk di-reimburse adalah <strong>{formatIDR(approvedUsageAmount)}</strong>. Silakan transfer nominal tersebut ke pemohon, lalu unggah bukti transfer di bawah ini untuk menutup (closing) UID ini secara permanen.
+                    <p className="text-[11px] text-amber-800 leading-relaxed font-medium">
+                      UID Pengajuan biasa (<strong>{request.id}</strong>) telah berstatus <strong>TRANSFERRED</strong>. Finance tidak bisa melakukan transfer ulang.
                     </p>
                   </div>
-                ) : (
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-500 mb-1">Nominal Dana Ditransfer (Rupiah)</label>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        value={transferredAmount}
-                        onChange={(e) => setTransferredAmount(e.target.value.replace(/\D/g, ''))}
-                        placeholder="Nominal transfer"
-                        className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                        required
-                      />
-                      <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                    </div>
-                    {transferredAmount && parseNumericValue(transferredAmount) > 0 && (
+                )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-500 mb-1">
+                    Nominal Dana Ditransfer (Rupiah) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={transferredAmount}
+                      onChange={(e) => setTransferredAmount(e.target.value.replace(/\D/g, ''))}
+                      placeholder="Nominal transfer"
+                      disabled={request.status === RequestStatus.TRANSFERRED}
+                      className={`w-full pl-9 pr-3 py-2 text-xs bg-white border rounded-xl focus:ring-1 transition-all outline-none ${
+                        transferredAmount && parseNumericValue(transferredAmount) > request.managerActionAmount && request.managerActionAmount > 0
+                          ? 'border-red-400 focus:border-red-500 focus:ring-red-500/30'
+                          : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500/30'
+                      }`}
+                      required
+                    />
+                    <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                  </div>
+
+                  {transferredAmount && parseNumericValue(transferredAmount) > 0 && (
+                    parseNumericValue(transferredAmount) > request.managerActionAmount && request.managerActionAmount > 0 ? (
+                      <div className="mt-2 p-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-[11px] font-semibold flex items-start gap-2 shadow-2xs">
+                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold text-red-800">Transfer Melebihi Nominal Disetujui Manager!</p>
+                          <p className="text-[10px] text-red-700 mt-0.5 leading-snug">
+                            Nominal transfer (<strong>{formatIDR(transferredAmount)}</strong>) tidak boleh melebihi nominal yang disetujui Manager (<strong>{formatIDR(request.managerActionAmount)}</strong>).
+                          </p>
+                        </div>
+                      </div>
+                    ) : parseNumericValue(transferredAmount) < request.managerActionAmount && request.managerActionAmount > 0 ? (
+                      <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-[11px] font-semibold flex items-start gap-2 shadow-2xs">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold text-amber-900">Transfer Kurang Dari Nominal Disetujui Manager</p>
+                          <p className="text-[10px] text-amber-800 mt-0.5 leading-snug">
+                            Nominal transfer (<strong>{formatIDR(transferredAmount)}</strong>) kurang dari disetujui Manager (<strong>{formatIDR(request.managerActionAmount)}</strong>). <strong>Catatan Finance WAJIB diisi</strong>.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
                       <p className="text-[10px] text-indigo-600 font-semibold mt-1">
                         Format: {formatIDR(transferredAmount)}
                       </p>
-                    )}
-                  </div>
-                )}
+                    )
+                  )}
+                </div>
 
                 {/* Bukti Transfer Upload */}
                 <div className="space-y-2 pt-1">
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    {isFinalTalanganTransfer ? 'Bukti / Nota Transfer Pengembalian Dana (Wajib)' : 'Bukti / Nota Transfer Bank (Wajib)'}
+                    Bukti / Nota Transfer Bank (Wajib)
                   </label>
                   
                   {/* File Status Indicator */}
@@ -451,69 +759,309 @@ export const TransferModal: React.FC<TransferModalProps> = ({
 
                   {/* Capture/Upload Options Panel */}
                   <div className="grid grid-cols-2 gap-2">
-                    {/* Native device camera */}
                     <button
                       type="button"
                       onClick={() => cameraInputRef.current?.click()}
-                      className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                      disabled={request.status === RequestStatus.TRANSFERRED}
+                      className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer disabled:opacity-50"
                     >
                       <Camera className="w-5 h-5 text-indigo-500" />
                       <span>Kamera HP</span>
                     </button>
 
-                    {/* Choose file / gallery */}
                     <button
                       type="button"
                       onClick={() => fileInputRef.current?.click()}
-                      className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                      disabled={request.status === RequestStatus.TRANSFERRED}
+                      className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer disabled:opacity-50"
                     >
                       <UploadCloud className="w-5 h-5 text-indigo-500" />
                       <span>File / Galeri</span>
                     </button>
                   </div>
                 </div>
+
+                {/* Catatan Finance */}
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500">
+                    Catatan Finance{' '}
+                    {parseNumericValue(transferredAmount) < request.managerActionAmount && request.managerActionAmount > 0 ? (
+                      <span className="text-red-500 font-bold">(Wajib - Transfer Kurang dari Disetujui) *</span>
+                    ) : (
+                      <span className="text-slate-400 font-normal">(Opsional)</span>
+                    )}
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={adminComment}
+                    onChange={(e) => setAdminComment(e.target.value)}
+                    disabled={request.status === RequestStatus.TRANSFERRED}
+                    placeholder={
+                      parseNumericValue(transferredAmount) < request.managerActionAmount && request.managerActionAmount > 0
+                        ? "Jelaskan alasan nominal transfer kurang dari nominal yang disetujui Manager..."
+                        : "Tambahkan catatan dari Finance (misal: No. Ref Transfer, Nama Bank, dll)..."
+                    }
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-none disabled:bg-slate-50"
+                  />
+                </div>
+
+                {/* Single Transfer Submit Button for OP */}
+                <button
+                  type="submit"
+                  disabled={
+                    isSubmitting ||
+                    request.status === RequestStatus.TRANSFERRED ||
+                    (request.managerActionAmount > 0 && parseNumericValue(transferredAmount) > request.managerActionAmount) ||
+                    (request.managerActionAmount > 0 && parseNumericValue(transferredAmount) < request.managerActionAmount && !adminComment.trim())
+                  }
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 disabled:shadow-none transition-all cursor-pointer"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>{isSubmitting ? 'Memproses & Mengunggah...' : 'Simpan data dan bukti transfer'}</span>
+                </button>
+              </div>
+            ) : isFinalTalanganTransfer ? (
+              /* FORM FINAL REIMBURSEMENT DANA TALANGAN (OPT) */
+              <div className="space-y-3">
+                <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl p-3.5 text-xs space-y-1">
+                  <p className="font-semibold flex items-center gap-1.5 text-emerald-700">
+                    <Coins className="w-4 h-4 text-emerald-600" />
+                    <span>Reimbursement Dana Talangan Pribadi</span>
+                  </p>
+                  <p className="text-[10px] text-slate-600 leading-relaxed font-medium">
+                    Total reimbursement disetujui: <strong>{formatIDR(approvedUsageAmount || targetTotal)}</strong>. Sisa belum ditransfer: <strong>{formatIDR(remainingAmount)}</strong>. Anda dapat mentransfer seluruhnya atau secara bertahap.
+                  </p>
+                </div>
+
+                {remainingAmount <= 0 && targetTotal > 0 ? (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-xs space-y-3 animate-fade-in">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                        <div>
+                          <h4 className="font-bold text-emerald-950 text-xs">Total Transfer Sesuai Nominal Disetujui (100% Lunas)</h4>
+                          <p className="text-[11px] text-emerald-800">Total Ditransfer: {formatIDR(previousTransferredAmount)} / Total Disetujui: {formatIDR(targetTotal)}</p>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 text-[10px] font-black bg-emerald-700 text-white rounded-lg uppercase tracking-wider">
+                        Siap Closing
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-emerald-900 leading-relaxed">
+                      Seluruh dana yang disetujui telah 100% ditransfer. Klik tombol di bawah ini untuk melakukan <strong>CLOSING UID TALANGAN</strong> dan mengarsipkan transaksi ini.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleExecuteClosingOnly}
+                      disabled={isSubmitting}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-200 transition-all cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>{isSubmitting ? 'Memproses Closing...' : 'LAKUKAN CLOSING UID TALANGAN'}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1">
+                        Nominal Dana Ditransfer (Rupiah) <span className="text-red-500">*</span>
+                      </label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={transferredAmount}
+                          onChange={(e) => setTransferredAmount(e.target.value.replace(/\D/g, ''))}
+                          placeholder="Nominal transfer"
+                          className={`w-full pl-9 pr-3 py-2 text-xs bg-white border rounded-xl focus:ring-1 transition-all outline-none ${
+                            transferredAmount && previousTransferredAmount + parseNumericValue(transferredAmount) > targetTotal && targetTotal > 0
+                              ? 'border-red-400 focus:border-red-500 focus:ring-red-500/30'
+                              : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500/30'
+                          }`}
+                          required
+                        />
+                        <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                      </div>
+                      {transferredAmount && parseNumericValue(transferredAmount) > 0 && (
+                        previousTransferredAmount + parseNumericValue(transferredAmount) > targetTotal && targetTotal > 0 ? (
+                          <div className="mt-2 p-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-[11px] font-semibold flex items-start gap-2 shadow-2xs">
+                            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-bold text-red-800">Transfer Melebihi Total Disetujui!</p>
+                              <p className="text-[10px] text-red-700 mt-0.5 leading-snug">
+                                Total transfer akan menjadi <strong>{formatIDR(previousTransferredAmount + parseNumericValue(transferredAmount))}</strong> (Lalu: {formatIDR(previousTransferredAmount)} + Sekarang: {formatIDR(parseNumericValue(transferredAmount))}), padahal total nominal disetujui adalah <strong>{formatIDR(targetTotal)}</strong>. Sisa maksimal: <strong>{formatIDR(remainingAmount)}</strong>.
+                              </p>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-indigo-600 font-semibold mt-1">
+                            Format: {formatIDR(transferredAmount)}
+                          </p>
+                        )
+                      )}
+                    </div>
+
+                    {/* Notification Banner when total transfer equals total approved nominal */}
+                    {targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) === targetTotal && parseNumericValue(transferredAmount) > 0 && (
+                      <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl p-3.5 text-xs space-y-1.5 animate-fade-in">
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold flex items-center gap-1.5 text-emerald-800">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>OPSI CLOSING DIAKTIFKAN</span>
+                          </p>
+                          <span className="px-2 py-0.5 text-[9.5px] font-black bg-emerald-600 text-white rounded-full uppercase tracking-wider">
+                            CLOSING READY
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-emerald-800 leading-relaxed font-medium">
+                          Total akumulasi transfer (<strong>{formatIDR(targetTotal)}</strong>) sudah <strong>SAMA DENGAN</strong> total nominal disetujui. Mengonfirmasi transfer ini akan melakukan <strong>CLOSING UID TALANGAN</strong> (Status: CLOSED).
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Bukti Transfer Upload */}
+                    <div className="space-y-2 pt-1">
+                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Bukti / Nota Transfer Pengembalian Dana (Wajib)
+                      </label>
+                      
+                      {selectedFile && (
+                        <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 p-3 rounded-xl text-xs flex items-center justify-between">
+                          <div className="flex items-center gap-2 truncate">
+                            <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500 shrink-0" />
+                            <div className="truncate">
+                              <p className="font-bold truncate">{selectedFile.name}</p>
+                              <p className="text-[9px] text-emerald-500 font-mono">{(selectedFile.size / 1024).toFixed(0)} KB</p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedFile(null)}
+                            className="text-[10px] font-bold text-red-500 hover:text-red-700 hover:underline px-2 py-1 bg-red-50 rounded-lg shrink-0 cursor-pointer"
+                          >
+                            Hapus
+                          </button>
+                        </div>
+                      )}
+
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileChange}
+                        accept="image/*,application/pdf"
+                        className="hidden"
+                      />
+                      <input
+                        type="file"
+                        ref={cameraInputRef}
+                        onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            setSelectedFile(e.target.files[0]);
+                          }
+                        }}
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                      />
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => cameraInputRef.current?.click()}
+                          className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                        >
+                          <Camera className="w-5 h-5 text-indigo-500" />
+                          <span>Kamera HP</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer"
+                        >
+                          <UploadCloud className="w-5 h-5 text-indigo-500" />
+                          <span>File / Galeri</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Catatan Finance */}
+                    <div className="space-y-1">
+                      <label className="block text-xs font-semibold text-slate-500">
+                        Catatan Finance <span className="text-slate-400 font-normal">(Opsional)</span>
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={adminComment}
+                        onChange={(e) => setAdminComment(e.target.value)}
+                        placeholder="Tambahkan catatan dari Finance (misal: No. Ref Transfer, Nama Bank, dll)..."
+                        className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-none"
+                      />
+                    </div>
+
+                    {/* Submit Button for Final Reimbursement */}
+                    <button
+                      type="submit"
+                      disabled={isSubmitting || (targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) > targetTotal)}
+                      className={`w-full py-2.5 font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${
+                        targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) === targetTotal
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100'
+                          : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100'
+                      } disabled:bg-slate-300 disabled:shadow-none`}
+                    >
+                      {targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) === targetTotal ? (
+                        <CheckCircle2 className="w-4 h-4" />
+                      ) : (
+                        <CreditCard className="w-4 h-4" />
+                      )}
+                      <span>
+                        {isSubmitting 
+                          ? 'Memproses & Mengunggah...' 
+                          : (targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) === targetTotal
+                              ? 'Kirim Bukti & Closing UID Talangan (Lunas 100%)' 
+                              : 'Kirim Bukti & Selesaikan Reimbursement')}
+                      </span>
+                    </button>
+                  </>
+                )}
               </div>
             ) : (
-              <div className="bg-indigo-50 border border-indigo-100 text-indigo-800 rounded-xl p-3.5 text-xs space-y-1">
-                <p className="font-semibold flex items-center gap-1.5 text-indigo-700">
-                  <Coins className="w-4 h-4 text-indigo-600" />
-                  <span>Konfirmasi Dana Talangan Pribadi</span>
-                </p>
-                <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                  Sistem mencatat transfer sebesar <strong>Rp 0</strong> untuk UID ini karena merupakan Dana Talangan Pribadi. Mengonfirmasi akan mengubah status menjadi <strong>TRANSFERRED</strong> agar pemohon dapat mulai mengunggah nota/bukti pemakaian dana secara bertahap.
-                </p>
+              /* FORM INITIAL DANA TALANGAN (OPT Awal) */
+              <div className="space-y-4">
+                <div className="bg-indigo-50 border border-indigo-100 text-indigo-800 rounded-xl p-3.5 text-xs space-y-1">
+                  <p className="font-semibold flex items-center gap-1.5 text-indigo-700">
+                    <Coins className="w-4 h-4 text-indigo-600" />
+                    <span>Konfirmasi Dana Talangan Pribadi</span>
+                  </p>
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                    Sistem mencatat transfer sebesar <strong>Rp 0</strong> untuk UID ini karena merupakan Dana Talangan Pribadi. Mengonfirmasi akan mengubah status menjadi <strong>TRANSFERRED</strong> agar pemohon dapat mulai mengunggah nota/bukti pemakaian dana secara bertahap.
+                  </p>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block text-xs font-semibold text-slate-500">
+                    Catatan Finance <span className="text-slate-400 font-normal">(Opsional)</span>
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={adminComment}
+                    onChange={(e) => setAdminComment(e.target.value)}
+                    placeholder="Tambahkan catatan dari Finance (misal: No. Ref Transfer, Nama Bank, dll)..."
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-none"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
+                >
+                  <CreditCard className="w-4 h-4" />
+                  <span>{isSubmitting ? 'Memproses...' : 'Konfirmasi & Aktifkan UID'}</span>
+                </button>
               </div>
             )}
-
-            {/* Catatan Finance (Opsional) */}
-            <div className="space-y-1">
-              <label className="block text-xs font-semibold text-slate-500">
-                Catatan Finance <span className="text-slate-400 font-normal">(Opsional)</span>
-              </label>
-              <textarea
-                rows={2}
-                value={adminComment}
-                onChange={(e) => setAdminComment(e.target.value)}
-                placeholder="Tambahkan catatan dari Finance (misal: No. Ref Transfer, Nama Bank, dll)..."
-                className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-none"
-              />
-            </div>
-
-            {/* Transfer Button */}
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
-            >
-              <CreditCard className="w-4 h-4" />
-              <span>
-                {isSubmitting 
-                  ? 'Memproses & Mengunggah...' 
-                  : (isFinalTalanganTransfer 
-                      ? 'Kirim Bukti & Selesaikan Reimbursement' 
-                      : (isTalangan ? 'Konfirmasi & Aktifkan UID' : 'Kirim Bukti & Konfirmasi Transfer'))}
-              </span>
-            </button>
           </>
         )}
       </form>

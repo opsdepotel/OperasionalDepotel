@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile, ItemReviewHistory, formatTimestamp } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
@@ -12,7 +13,7 @@ import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel, Check, ShieldCheck, History
+  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel, Check, ShieldCheck, History, Paperclip
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -71,6 +72,7 @@ interface UsageReportFormProps {
   profiles?: UserProfile[];
   requests?: BudgetRequest[];
   histories?: ItemReviewHistory[];
+  onPreviewDocument?: (doc: { url: string; fileId?: string; title?: string }) => void;
 }
 
 export const UsageReportForm: React.FC<UsageReportFormProps> = ({
@@ -90,7 +92,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   activities = [],
   profiles = [],
   requests = [],
-  histories = []
+  histories = [],
+  onPreviewDocument
 }) => {
   // Extract and match site IDs from request.siteId. Format is "XXXNNN" (3 letters, 3 digits)
   const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
@@ -646,27 +649,53 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       )}
 
       {/* Bukti Transfer / Adjustment Card for CLOSED UIDs */}
-      {request.buktiTransferUrl && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-indigo-800">
-            <CheckCircle2 className="w-5 h-5 text-indigo-600 shrink-0" />
-            <div>
-              <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">BUKTI TRANSFER / PENYESUAIAN</p>
-              <h4 className="text-xs font-bold text-slate-800">Dokumen Penyelesaian Transaksi</h4>
+      {request.buktiTransferUrl && (() => {
+        const urls = request.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean);
+        const fileIds = (request.buktiTransferFileId || '').split('||').map(f => f.trim()).filter(Boolean);
+        if (urls.length === 0) return null;
+
+        return (
+          <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
+            <div className="flex items-center gap-2 text-indigo-800">
+              <CheckCircle2 className="w-5 h-5 text-indigo-600 shrink-0" />
+              <div>
+                <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">BUKTI TRANSFER ({urls.length} RESI)</p>
+                <h4 className="text-xs font-bold text-slate-800">Dokumen Transfer Bank</h4>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {urls.map((url, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    if (onPreviewDocument) {
+                      onPreviewDocument({
+                        url,
+                        fileId: fileIds[idx] || undefined,
+                        title: `Bukti Transfer #${idx + 1} (UID: ${request.id})`
+                      });
+                    } else {
+                      setPreviewActivityPhoto({
+                        url,
+                        fileId: fileIds[idx] || undefined,
+                        title: `Bukti Transfer #${idx + 1} (UID: ${request.id})`
+                      });
+                    }
+                  }}
+                  className="py-2.5 px-3 bg-white hover:bg-indigo-100/70 text-indigo-800 border border-indigo-200/80 font-bold text-xs rounded-xl flex items-center justify-between shadow-2xs transition-all cursor-pointer"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <Paperclip className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span className="truncate">Bukti Transfer #{idx + 1}</span>
+                  </div>
+                  <Eye className="w-3.5 h-3.5 text-indigo-600 shrink-0 ml-1" />
+                </button>
+              ))}
             </div>
           </div>
-          <div>
-            <button
-              type="button"
-              onClick={() => setPreviewRequestProof(true)}
-              className="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>Lihat Bukti Dokumen</span>
-            </button>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Section 1: Item List */}
       <div className="space-y-3">
@@ -706,22 +735,22 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
                     <div className="text-right">
                       <span className="text-xs font-bold text-slate-700 block">{formatIDR(item.nominal)}</span>
-                      {/* Status indicator badge with Baru notification highlight */}
+                      {/* Status indicator badge */}
                       <div className="flex flex-col items-end gap-1 mt-1">
                         {isRejected ? (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full bg-rose-600 text-white shadow-xs animate-pulse">
-                            <AlertCircle className="w-3 h-3 text-white" />
-                            BARU: REVISI
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
+                            <AlertCircle className="w-3 h-3 text-rose-600" />
+                            Revisi
                           </span>
                         ) : isApproved ? (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full bg-emerald-600 text-white shadow-xs">
-                            <CheckCircle2 className="w-3 h-3 text-white" />
-                            BARU: DISETUJUI
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            Disetujui
                           </span>
                         ) : item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.PENDING ? (
-                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold px-2.5 py-0.5 rounded-full bg-blue-600 text-white shadow-xs">
-                            <CheckCircle2 className="w-3 h-3 text-white" />
-                            BARU: DISETUJUI MANAGER
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                            <CheckCircle2 className="w-3 h-3 text-blue-600" />
+                            Disetujui Manager
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
@@ -1336,8 +1365,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       )}
 
       {/* ----------------- POPUP MODAL BUKTI PREVIEW ----------------- */}
-      {previewItem && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[10000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+      {previewItem && createPortal(
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1412,7 +1441,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               </a>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ----------------- POPUP MODAL REQUEST PROOF PREVIEW ----------------- */}
@@ -1502,9 +1532,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       )}
 
       {/* Activities Popup Modal */}
-      {viewingActivityItem && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[10000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-          <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up my-auto">
+      {viewingActivityItem && createPortal(
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up my-auto relative">
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
@@ -1653,12 +1683,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Modal Popup Foto Aktivitas User */}
-      {previewActivityPhoto && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[999] flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+      {previewActivityPhoto && createPortal(
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[100001] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -1746,7 +1777,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       )}
 
       {/* Modal Popup Pengisian BBM Duren Sawit */}
-      {viewingBbmItem && (() => {
+      {viewingBbmItem && createPortal((() => {
         const matchingBbmRequests = (requests || []).filter(r => {
           const isBbm = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
           const isSameUser = r.userEmail.toLowerCase() === viewingBbmItem.userEmail.toLowerCase();
@@ -1755,8 +1786,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         });
 
         return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[10000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-            <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4 my-auto">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+            <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4 my-auto relative">
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2.5">
@@ -1803,8 +1834,10 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
                     {matchingBbmRequests.map((req) => {
                       const matchedUsageItem = (items || []).find(it => it.requestId === req.id || it.id.startsWith(req.id));
-                      const photoUrl = matchedUsageItem?.buktiUrl || req.buktiTransferUrl;
-                      const fileId = matchedUsageItem?.buktiFileId || req.buktiTransferFileId;
+                      const firstBuktiUrl = req.buktiTransferUrl ? req.buktiTransferUrl.split('||')[0].trim() : '';
+                      const firstFileId = req.buktiTransferFileId ? req.buktiTransferFileId.split('||')[0].trim() : '';
+                      const photoUrl = matchedUsageItem?.buktiUrl || firstBuktiUrl;
+                      const fileId = matchedUsageItem?.buktiFileId || firstFileId;
                       
                       let displayImg = '';
                       if (photoUrl) {
@@ -1881,7 +1914,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             </div>
           </div>
         );
-      })()}
+      })(), document.body)}
 
       {/* Item Review History Modal */}
       {historyModalItem && (

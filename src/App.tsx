@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
 import { initAuth, googleSignIn, logout, isGoogleTokenExpired } from './lib/firebase';
@@ -1349,13 +1350,47 @@ export default function App() {
     const isPendingTalanganTransfer = transferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
 
     const nowActionTime = customAdminActionTime || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
+    // 1. Accumulate total transferred amount
+    const prevTransferred = transferReq.adminActionAmount || 0;
+    const updatedTotalTransferred = prevTransferred + transferredAmount;
+
+    // 2. Combine URLs and File IDs
+    const existingUrls = transferReq.buktiTransferUrl ? transferReq.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean) : [];
+    if (buktiUrl) existingUrls.push(buktiUrl);
+    const combinedBuktiUrl = existingUrls.join('||');
+
+    const existingFileIds = transferReq.buktiTransferFileId ? transferReq.buktiTransferFileId.split('||').map(f => f.trim()).filter(Boolean) : [];
+    if (buktiFileId) existingFileIds.push(buktiFileId);
+    const combinedFileId = existingFileIds.join('||');
+
+    // 3. Determine target approved amount for Dana Talangan reimbursement
+    const approvedUsageAmount = usageItems
+      .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
+      .reduce((sum, item) => sum + item.nominal, 0);
+
+    const targetTotal = isReqTalangan
+      ? (approvedUsageAmount > 0 ? approvedUsageAmount : transferReq.managerActionAmount)
+      : transferReq.managerActionAmount;
+
+    // 4. Determine status:
+    // For Dana Talangan, close ONLY if updatedTotalTransferred >= targetTotal (Jumlah Nominal Dana Talangan sama dengan Jumlah Transfer)
+    let nextStatus = RequestStatus.TRANSFERRED;
+    if (isReqTalangan) {
+      if (targetTotal > 0 && updatedTotalTransferred >= targetTotal) {
+        nextStatus = RequestStatus.CLOSED;
+      } else if (isPendingTalanganTransfer) {
+        nextStatus = RequestStatus.PENDING_TALANGAN_TRANSFER;
+      }
+    }
+
     const updated: BudgetRequest = {
       ...transferReq,
-      status: (isReqTalangan && isPendingTalanganTransfer) ? RequestStatus.CLOSED : RequestStatus.TRANSFERRED,
-      adminActionAmount: transferredAmount,
-      buktiTransferUrl: buktiUrl,
-      buktiTransferFileId: buktiFileId,
-      adminComment: adminComment || '',
+      status: nextStatus,
+      adminActionAmount: updatedTotalTransferred,
+      buktiTransferUrl: combinedBuktiUrl,
+      buktiTransferFileId: combinedFileId,
+      adminComment: adminComment || transferReq.adminComment || '',
       adminActionTime: nowActionTime
     };
 
@@ -1368,8 +1403,8 @@ export default function App() {
       actorEmail: userProfile?.email || '',
       actorNama: userProfile?.nama || userProfile?.email || 'Finance',
       actionType: 'APPROVAL_FINANCE',
-      status: 'TRANSFERRED',
-      catatan: adminComment || `Dana ditransfer sebesar ${formatIDR(transferredAmount)}`,
+      status: nextStatus === RequestStatus.CLOSED ? 'CLOSED' : 'TRANSFERRED',
+      catatan: adminComment || (nextStatus === RequestStatus.CLOSED ? 'Closing UID Talangan oleh Finance' : `Transfer #${existingUrls.length} sebesar ${formatIDR(transferredAmount)}`),
       tanggalPenggunaan: transferReq.tanggalPemakaian,
       nominal: transferredAmount,
       keterangan: transferReq.keterangan,
@@ -1895,8 +1930,13 @@ export default function App() {
         throw new Error('ID Folder Google Drive belum terinisialisasi.');
       }
       const uploadResult = await uploadReceiptFile(token, driveFolderId, file);
-      finalBuktiUrl = uploadResult.viewUrl;
-      finalBuktiFileId = uploadResult.fileId;
+      const existingUrls = targetReq.buktiTransferUrl ? targetReq.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean) : [];
+      existingUrls.push(uploadResult.viewUrl);
+      finalBuktiUrl = existingUrls.join('||');
+
+      const existingFileIds = targetReq.buktiTransferFileId ? targetReq.buktiTransferFileId.split('||').map(f => f.trim()).filter(Boolean) : [];
+      existingFileIds.push(uploadResult.fileId);
+      finalBuktiFileId = existingFileIds.join('||');
     }
 
     const updatedReq: BudgetRequest = {
@@ -2627,6 +2667,7 @@ export default function App() {
             profiles={profiles}
             requests={requests}
             histories={itemReviewHistories}
+            onPreviewDocument={setPreviewDocument}
           />
         ) : activeView === 'adjustment' && userProfile ? (
           <AdjustmentPanel
@@ -3015,37 +3056,7 @@ export default function App() {
                                 <div className="flex items-center justify-between gap-2 flex-wrap">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="text-[9px] font-mono text-slate-400 font-bold">{req.id}</span>
-                                    {/* Indikator / Badge Notifikasi Baru */}
-                                    {req.status === RequestStatus.REJECTED && (
-                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-full shadow-xs animate-pulse">
-                                        <AlertTriangle className="w-2.5 h-2.5 text-white" />
-                                        BARU: REVISI
-                                      </span>
-                                    )}
-                                    {(req.status === RequestStatus.APPROVED || req.status === RequestStatus.PARTIALLY_APPROVED) && (
-                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-blue-600 text-white px-2 py-0.5 rounded-full shadow-xs">
-                                        <CheckCircle2 className="w-2.5 h-2.5 text-white" />
-                                        BARU: DISETUJUI
-                                      </span>
-                                    )}
-                                    {req.status === RequestStatus.TRANSFERRED && (
-                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-full shadow-xs">
-                                        <CheckCircle2 className="w-2.5 h-2.5 text-white" />
-                                        BARU: DITRANSFER
-                                      </span>
-                                    )}
-                                    {req.status === RequestStatus.REPORTING && hasRejectedItems && (
-                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-full shadow-xs animate-pulse">
-                                        <AlertCircle className="w-2.5 h-2.5 text-white" />
-                                        BARU: ITEM REVISI
-                                      </span>
-                                    )}
-                                    {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER && (
-                                      <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-pink-600 text-white px-2 py-0.5 rounded-full shadow-xs animate-pulse">
-                                        <Coins className="w-2.5 h-2.5 text-white" />
-                                        BARU: TALANGAN
-                                      </span>
-                                    )}
+                                    {/* Indikator / Badge Notifikasi Baru Removed for cleaner UI */}
                                   </div>
                                   <span className={`text-[9px] font-mono font-bold bg-slate-100 border border-slate-200 px-2 py-0.5 rounded ${getStatusTextColor(req.status)}`}>
                                     {getStatusLabel(req.status, req.userEmail)}
@@ -3099,33 +3110,63 @@ export default function App() {
                                 <div>
                                   <span className="block text-[8px] font-bold text-slate-400 uppercase">Ditransfer</span>
                                   <span className="font-semibold text-indigo-600">
-                                    {[
-                                      RequestStatus.PENDING_APPROVAL, 
-                                      RequestStatus.APPROVED, 
-                                      RequestStatus.PARTIALLY_APPROVED, 
-                                      RequestStatus.PENDING_TALANGAN_TRANSFER,
-                                      RequestStatus.REJECTED
-                                    ].includes(req.status)
-                                      ? '-'
-                                      : formatIDR(req.adminActionAmount)}
+                                    {(req.adminActionAmount && req.adminActionAmount > 0)
+                                      ? formatIDR(req.adminActionAmount)
+                                      : '-'}
                                   </span>
                                 </div>
                               </div>
 
-                              {req.buktiTransferUrl && (
-                                <button 
-                                  type="button"
-                                  onClick={() => setPreviewDocument({
-                                    url: req.buktiTransferUrl!,
-                                    fileId: req.buktiTransferFileId || undefined,
-                                    title: `Bukti Transfer (UID: ${req.id})`
-                                  })}
-                                  className="w-full flex items-center gap-1.5 text-[10px] font-bold text-indigo-600 bg-indigo-50/50 hover:bg-indigo-100/70 p-2 rounded-xl border border-indigo-100/80 transition-colors cursor-pointer text-left"
-                                >
-                                  <Paperclip className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
-                                  <span>Bukti Transfer</span>
-                                </button>
-                              )}
+                              {req.buktiTransferUrl && (() => {
+                                const urls = req.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean);
+                                const fileIds = (req.buktiTransferFileId || '').split('||').map(f => f.trim()).filter(Boolean);
+                                if (urls.length === 0) return null;
+
+                                if (urls.length === 1) {
+                                  return (
+                                    <button 
+                                      type="button"
+                                      onClick={() => setPreviewDocument({
+                                        url: urls[0],
+                                        fileId: fileIds[0] || undefined,
+                                        title: `Bukti Transfer (UID: ${req.id})`
+                                      })}
+                                      className="w-full flex items-center gap-1.5 text-[10px] font-bold text-indigo-600 bg-indigo-50/50 hover:bg-indigo-100/70 p-2 rounded-xl border border-indigo-100/80 transition-colors cursor-pointer text-left"
+                                    >
+                                      <Paperclip className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                                      <span>Bukti Transfer</span>
+                                    </button>
+                                  );
+                                }
+
+                                return (
+                                  <div className="space-y-1">
+                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider block">
+                                      Bukti Transfer ({urls.length} Resi):
+                                    </span>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                      {urls.map((url, idx) => (
+                                        <button 
+                                          key={idx}
+                                          type="button"
+                                          onClick={() => setPreviewDocument({
+                                            url: url,
+                                            fileId: fileIds[idx] || undefined,
+                                            title: `Bukti Transfer #${idx + 1} (UID: ${req.id})`
+                                          })}
+                                          className="flex items-center justify-between text-[10px] font-bold text-indigo-600 bg-indigo-50/50 hover:bg-indigo-100/70 p-2 rounded-xl border border-indigo-100/80 transition-colors cursor-pointer text-left truncate"
+                                        >
+                                          <div className="flex items-center gap-1.5 truncate">
+                                            <Paperclip className="w-3.5 h-3.5 shrink-0 text-indigo-500" />
+                                            <span className="truncate">Resi #${idx + 1}</span>
+                                          </div>
+                                          <Eye className="w-3 h-3 text-indigo-500 shrink-0 ml-1" />
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
 
                               {((req.managerComment && req.status !== RequestStatus.REJECTED) || req.adminComment) && (
                                 <div className="bg-slate-50/80 p-2.5 rounded-xl border border-slate-100 space-y-1.5 text-[10px] text-slate-600">
@@ -3222,7 +3263,7 @@ export default function App() {
                                                     ) : item.statusManager === ItemStatus.REJECTED ? (
                                                       <>
                                                         <AlertTriangle className="w-2.5 h-2.5 shrink-0 text-white" />
-                                                        <span>BARU: REVISI</span>
+                                                        <span>Revisi</span>
                                                       </>
                                                     ) : (
                                                       'Menunggu'
@@ -3264,7 +3305,7 @@ export default function App() {
                                                     ) : item.statusAdmin === ItemStatus.REJECTED ? (
                                                       <>
                                                         <AlertTriangle className="w-2.5 h-2.5 shrink-0 text-white" />
-                                                        <span>BARU: REVISI</span>
+                                                        <span>Revisi</span>
                                                       </>
                                                     ) : (
                                                       'Menunggu'
@@ -3749,7 +3790,7 @@ export default function App() {
       </main>
 
       {/* Document/Photo Preview Popup Modal */}
-      {previewDocument && (
+      {previewDocument && createPortal(
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
@@ -3826,7 +3867,8 @@ export default function App() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       {/* Modal BbmRefillModal */}
       {isBbmModalOpen && userProfile && (
@@ -4081,6 +4123,7 @@ export default function App() {
           onTransfer={handleAdminTransfer}
           onReject={handleRejectTransfer}
           histories={itemReviewHistories}
+          onPreviewDocument={setPreviewDocument}
           onClose={async () => {
             if (sharedFilePrefill?.recordId) {
               await deleteSharedReceipt(sharedFilePrefill.recordId);

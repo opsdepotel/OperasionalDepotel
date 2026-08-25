@@ -522,32 +522,42 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
             <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">
               Bukti Transfer Finance
             </label>
-            {selectedRequest.buktiTransferUrl ? (
-              <div className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-3 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 truncate">
-                  <Paperclip className="w-4 h-4 text-indigo-600 shrink-0" />
-                  <span className="text-xs font-bold text-indigo-900 truncate">Bukti Transfer Terlampir</span>
+            {selectedRequest.buktiTransferUrl ? (() => {
+              const urls = selectedRequest.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean);
+              const fileIds = (selectedRequest.buktiTransferFileId || '').split('||').map(f => f.trim()).filter(Boolean);
+              return (
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-1 gap-1.5">
+                    {urls.map((url, idx) => (
+                      <div key={idx} className="bg-indigo-50/60 border border-indigo-100 rounded-xl p-2.5 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 truncate">
+                          <Paperclip className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span className="text-xs font-bold text-indigo-900 truncate">Bukti Transfer #{idx + 1}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (onPreviewDocument) {
+                              onPreviewDocument({
+                                url: url,
+                                fileId: fileIds[idx] || undefined,
+                                title: `Bukti Transfer #${idx + 1} UID ${selectedRequest.id}`
+                              });
+                            } else {
+                              window.open(url, '_blank');
+                            }
+                          }}
+                          className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Lihat Resi #{idx + 1}</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (onPreviewDocument && selectedRequest.buktiTransferUrl) {
-                      onPreviewDocument({
-                        url: selectedRequest.buktiTransferUrl,
-                        fileId: selectedRequest.buktiTransferFileId,
-                        title: `Bukti Transfer UID ${selectedRequest.id}`
-                      });
-                    } else if (selectedRequest.buktiTransferUrl) {
-                      window.open(selectedRequest.buktiTransferUrl, '_blank');
-                    }
-                  }}
-                  className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] rounded-lg transition-all flex items-center gap-1 cursor-pointer shrink-0"
-                >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>Lihat Bukti</span>
-                </button>
-              </div>
-            ) : (
+              );
+            })() : (
               <p className="text-xs text-slate-400 italic bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                 Belum ada lampiran bukti transfer tersimpan.
               </p>
@@ -914,27 +924,62 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
                   </div>
 
                   <div className="flex items-center justify-start pt-0.5">
-                    {req.buktiTransferUrl ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (onPreviewDocument) {
-                            onPreviewDocument({
-                              url: req.buktiTransferUrl,
-                              fileId: req.buktiTransferFileId,
-                              title: `Bukti Transfer UID ${req.id}`
-                            });
-                          } else {
-                            window.open(req.buktiTransferUrl, '_blank');
-                          }
-                        }}
-                        className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm rounded-xl text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        <span>Lihat Bukti Transfer</span>
-                      </button>
-                    ) : (
+                    {req.buktiTransferUrl ? (() => {
+                      const urls = req.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean);
+                      const fileIds = (req.buktiTransferFileId || '').split('||').map(f => f.trim()).filter(Boolean);
+                      if (urls.length === 0) return null;
+
+                      if (urls.length === 1) {
+                        return (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onPreviewDocument) {
+                                onPreviewDocument({
+                                  url: urls[0],
+                                  fileId: fileIds[0] || undefined,
+                                  title: `Bukti Transfer UID ${req.id}`
+                                });
+                              } else {
+                                window.open(urls[0], '_blank');
+                              }
+                            }}
+                            className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm rounded-xl text-[10px] font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Lihat Bukti Transfer</span>
+                          </button>
+                        );
+                      }
+
+                      return (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {urls.map((url, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (onPreviewDocument) {
+                                  onPreviewDocument({
+                                    url: url,
+                                    fileId: fileIds[idx] || undefined,
+                                    title: `Bukti Transfer #${idx + 1} UID ${req.id}`
+                                  });
+                                } else {
+                                  window.open(url, '_blank');
+                                }
+                              }}
+                              className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                            >
+                              <Eye className="w-3 h-3 text-indigo-600" />
+                              <span>Resi #{idx + 1}</span>
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })() : (
                       <span className="text-[10px] text-slate-400 font-medium italic bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-xl">
                         Belum ada bukti transfer
                       </span>

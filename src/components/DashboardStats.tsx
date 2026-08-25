@@ -759,7 +759,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 {rejectedCount > 0 ? (
                   <span className="text-[9px] font-extrabold text-white bg-rose-600 px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse flex items-center gap-1 shadow-xs">
                     <AlertTriangle className="w-2.5 h-2.5 text-white" />
-                    BARU: REVISI ({rejectedCount})
+                    Perlu Revisi ({rejectedCount})
                   </span>
                 ) : (
                   <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Perlu Revisi</span>

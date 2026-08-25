@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile, ItemReviewHistory } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
@@ -279,16 +280,16 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                     <h4 className="text-xs font-bold text-slate-800">{item.keterangan}</h4>
                     <p className="text-[10px] text-slate-500 font-medium">Tanggal: {item.tanggalPenggunaan} | Nominal: <strong>{formatIDR(item.nominal)}</strong></p>
                   </div>
-                  {/* Status Badge Indikator Baru */}
+                  {/* Status Badge Indikator */}
                   {(item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED) ? (
-                    <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-rose-600 text-white px-2 py-0.5 rounded-full shadow-xs animate-pulse shrink-0">
-                      <AlertTriangle className="w-2.5 h-2.5 text-white" />
-                      BARU: REVISI
+                    <span className="inline-flex items-center gap-1 text-[8.5px] font-bold bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-full shrink-0">
+                      <AlertTriangle className="w-2.5 h-2.5 text-rose-600" />
+                      Revisi
                     </span>
                   ) : (item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED) ? (
-                    <span className="inline-flex items-center gap-1 text-[8.5px] font-extrabold bg-emerald-600 text-white px-2 py-0.5 rounded-full shadow-xs shrink-0">
-                      <CheckCircle2 className="w-2.5 h-2.5 text-white" />
-                      BARU: DISETUJUI
+                    <span className="inline-flex items-center gap-1 text-[8.5px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded-full shrink-0">
+                      <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                      Disetujui
                     </span>
                   ) : null}
                 </div>
@@ -619,9 +620,9 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       )}
 
       {/* Activities Popup Modal */}
-      {viewingActivityItem && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[10000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-          <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up my-auto">
+      {viewingActivityItem && createPortal(
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+          <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up my-auto relative">
             {/* Modal Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div>
@@ -770,12 +771,13 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Modal Popup Foto Aktivitas User */}
-      {previewActivityPhoto && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[999] flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
+      {previewActivityPhoto && createPortal(
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-sm z-[100001] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl p-5 space-y-4 animate-scale-up relative border border-slate-100 flex flex-col max-h-[90vh] my-auto">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
@@ -859,11 +861,12 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Modal Popup Pengisian BBM Duren Sawit */}
-      {viewingBbmItem && (() => {
+      {viewingBbmItem && createPortal((() => {
         const matchingBbmRequests = (requests || []).filter(r => {
           const isBbm = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
           const isSameUser = r.userEmail.toLowerCase() === viewingBbmItem.userEmail.toLowerCase();
@@ -872,8 +875,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         });
 
         return (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[10000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-            <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4 my-auto">
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
+            <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-100 flex flex-col max-h-[85vh] animate-scale-up space-y-4 my-auto relative">
               {/* Header */}
               <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2.5">
@@ -920,8 +923,10 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
 
                     {matchingBbmRequests.map((req) => {
                       const matchedUsageItem = (items || []).find(it => it.requestId === req.id || it.id.startsWith(req.id));
-                      const photoUrl = matchedUsageItem?.buktiUrl || req.buktiTransferUrl;
-                      const fileId = matchedUsageItem?.buktiFileId || req.buktiTransferFileId;
+                      const firstBuktiUrl = req.buktiTransferUrl ? req.buktiTransferUrl.split('||')[0].trim() : '';
+                      const firstFileId = req.buktiTransferFileId ? req.buktiTransferFileId.split('||')[0].trim() : '';
+                      const photoUrl = matchedUsageItem?.buktiUrl || firstBuktiUrl;
+                      const fileId = matchedUsageItem?.buktiFileId || firstFileId;
                       
                       let displayImg = '';
                       if (photoUrl) {
@@ -967,7 +972,15 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                                   alt="Nota BBM"
                                   className="w-full h-full object-contain max-h-48 cursor-pointer hover:opacity-95 transition-all"
                                   onClick={() => {
-                                    if (photoUrl) window.open(photoUrl, '_blank');
+                                    if (onPreviewDocument && photoUrl) {
+                                      onPreviewDocument({
+                                        url: photoUrl,
+                                        fileId: fileId || undefined,
+                                        title: `Foto Nota / Bukti Transfer (UID: ${req.id})`
+                                      });
+                                    } else if (photoUrl) {
+                                      window.open(photoUrl, '_blank');
+                                    }
                                   }}
                                 />
                               </div>
@@ -998,7 +1011,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
             </div>
           </div>
         );
-      })()}
+      })(), document.body)}
 
       {/* Item Review History Modal */}
       {historyModalItem && (

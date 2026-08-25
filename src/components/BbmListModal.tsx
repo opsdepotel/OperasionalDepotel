@@ -4,6 +4,7 @@
  */
 
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, RequestStatus } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
@@ -421,9 +422,9 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/15 backdrop-blur-[2px] animate-fade-in">
-      <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden animate-scale-up">
+  return createPortal(
+    <div className="fixed inset-0 z-[100000] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fade-in">
+      <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden animate-scale-up my-auto relative">
         
         {/* Modal Header */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/80 shrink-0">
@@ -587,8 +588,10 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
               const user = profiles.find(p => p.email.toLowerCase() === req.userEmail.toLowerCase());
               const userName = user?.nama || req.userEmail;
               const usageItem = usageItems.find(item => item.requestId === req.id || item.id.startsWith(req.id) || (item.requestId && req.id.includes(item.requestId)));
-              const rawBuktiPhoto = usageItem?.buktiUrl || req.buktiTransferUrl;
-              const rawBuktiFileId = usageItem?.buktiFileId || req.buktiTransferFileId;
+              const firstBuktiUrl = req.buktiTransferUrl ? req.buktiTransferUrl.split('||')[0].trim() : '';
+              const firstFileId = req.buktiTransferFileId ? req.buktiTransferFileId.split('||')[0].trim() : '';
+              const rawBuktiPhoto = usageItem?.buktiUrl || firstBuktiUrl;
+              const rawBuktiFileId = usageItem?.buktiFileId || firstFileId;
               const displayImgUrl = getImageSrc(rawBuktiPhoto, rawBuktiFileId);
               const isImgFailed = imageErrorMap[req.id];
 
@@ -957,6 +960,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
         }}
         profiles={profiles}
       />
-    </div>
+    </div>,
+    document.body
   );
 };
