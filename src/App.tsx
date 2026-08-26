@@ -2668,6 +2668,7 @@ export default function App() {
             requests={requests}
             histories={itemReviewHistories}
             onPreviewDocument={setPreviewDocument}
+            userProfile={userProfile}
           />
         ) : activeView === 'adjustment' && userProfile ? (
           <AdjustmentPanel
@@ -3539,7 +3540,7 @@ export default function App() {
                                         </div>
                                       )}
 
-                                      {([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED].includes(req.status)) && (
+                                      {([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED, RequestStatus.PENDING_TALANGAN_TRANSFER].includes(req.status) || (req.status === RequestStatus.PENDING_APPROVAL && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]') || req.category === 'TALANGAN'))) && (
                                         <button
                                           type="button"
                                           onClick={() => {
@@ -3552,7 +3553,11 @@ export default function App() {
                                               : 'bg-indigo-600 hover:bg-indigo-700 text-white'
                                           }`}
                                         >
-                                          {hasRejectedItems ? 'Perbaiki Laporan' : 'Lihat Laporan'}
+                                          {hasRejectedItems
+                                            ? 'Perbaiki Laporan'
+                                            : (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]') || req.category === 'TALANGAN')
+                                              ? 'Isi Nota Talangan'
+                                              : 'Lihat Laporan'}
                                         </button>
                                       )}
 

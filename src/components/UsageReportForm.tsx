@@ -73,6 +73,7 @@ interface UsageReportFormProps {
   requests?: BudgetRequest[];
   histories?: ItemReviewHistory[];
   onPreviewDocument?: (doc: { url: string; fileId?: string; title?: string }) => void;
+  userProfile?: UserProfile;
 }
 
 export const UsageReportForm: React.FC<UsageReportFormProps> = ({
@@ -93,7 +94,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   profiles = [],
   requests = [],
   histories = [],
-  onPreviewDocument
+  onPreviewDocument,
+  userProfile
 }) => {
   // Extract and match site IDs from request.siteId. Format is "XXXNNN" (3 letters, 3 digits)
   const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
@@ -258,8 +260,15 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     }
   };
 
+  // Determine if logged-in user is the submitter of this request (or USER role)
+  const isSubmitter = role === Role.USER || (
+    !!userProfile?.email &&
+    !!request.userEmail &&
+    userProfile.email.trim().toLowerCase() === request.userEmail.trim().toLowerCase()
+  );
+
   // Modal & Preview States
-  const [isFormOpen, setIsFormOpen] = useState(() => role !== Role.DIREKTUR && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && currentItems.length === 0);
+  const [isFormOpen, setIsFormOpen] = useState(() => isSubmitter && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && currentItems.length === 0);
   const [showCameraStream, setShowCameraStream] = useState(false);
   const [previewItem, setPreviewItem] = useState<UsageReportItem | null>(null);
   const [previewRequestProof, setPreviewRequestProof] = useState(false);
@@ -973,8 +982,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       </button>
                     </div>
 
-                     {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) and user is User role */}
-                    {role === Role.USER && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+                     {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) and current user is submitter */}
+                    {isSubmitter && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
                       <div className="flex items-center gap-2">
                         {isRejected && (
                           <button
@@ -1013,8 +1022,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         )}
       </div>
 
-      {/* Trigger Button to Open Input Form Modal (Only for User Role) */}
-      {role === Role.USER && [RequestStatus.PENDING_APPROVAL, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+      {/* Trigger Button to Open Input Form Modal (Only for Submitter of the Request) */}
+      {isSubmitter && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
         !hasRejectedItems ? (
           <button
             onClick={() => {
@@ -1029,7 +1038,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             className="w-full py-3 border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/20 hover:bg-indigo-50/50 text-indigo-600 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
           >
             <Plus className="w-4.5 h-4.5" />
-            <span>Tambah Rincian Penggunaan</span>
+            <span>{isTalangan ? 'Tambah Item Talangan' : 'Tambah Rincian Penggunaan'}</span>
           </button>
         ) : (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-800 flex items-start gap-2.5">
@@ -1178,7 +1187,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   <Plus className="w-4.5 h-4.5" />
                 </div>
                 <h4 className="text-xs font-bold text-slate-800">
-                  {editingItem ? 'Edit Item Laporan' : 'Tambah Rincian Penggunaan'}
+                  {editingItem ? 'Edit Item Laporan' : isTalangan ? 'Tambah Item Talangan' : 'Tambah Rincian Penggunaan'}
                 </h4>
               </div>
               <button
