@@ -39,7 +39,7 @@ async function clientSideGeminiAnalysis(
   } else if (payload.imageUrl || payload.fileId) {
     let targetUrl = payload.imageUrl || payload.fileId || '';
     if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-      targetUrl = `https://drive.google.com/thumbnail?sz=w1200&id=${payload.fileId}`;
+      targetUrl = `https://lh3.googleusercontent.com/d/${payload.fileId}=w1200`;
     }
     const res = await fetch(targetUrl);
     if (!res.ok) {
@@ -48,8 +48,9 @@ async function clientSideGeminiAnalysis(
     const arrayBuffer = await res.arrayBuffer();
     const bytes = new Uint8Array(arrayBuffer);
     let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.byteLength; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize) as any);
     }
     base64Data = btoa(binary);
     mimeType = res.headers.get('content-type')?.split(';')[0].trim() || 'image/jpeg';
@@ -75,8 +76,6 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
   const candidateModels = [
     'gemini-flash-latest',
     'gemini-3.1-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-3.7-flash',
   ];
 
   let response: any = null;
@@ -137,6 +136,85 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
 }
 
 /**
+ * Compresses large base64 images before sending over network to avoid payload size limits & ECONNRESET
+ */
+async function compressDataUrlIfNeeded(base64DataUrl: string, maxDim = 1024): Promise<string> {
+  if (typeof window === 'undefined' || !base64DataUrl.startsWith('data:')) return base64DataUrl;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      let { width, height } = img;
+      if (width <= maxDim && height <= maxDim && base64DataUrl.length < 400000) {
+        return resolve(base64DataUrl);
+      }
+      if (width > height) {
+        if (width > maxDim) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        }
+      } else {
+        if (height > maxDim) {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
+      } else {
+        resolve(base64DataUrl);
+      }
+    };
+    img.onerror = () => resolve(base64DataUrl);
+    img.src = base64DataUrl;
+  });
+}
+
+/**
+  * Attempts to load an image URL into a client-side canvas to extract compressed Base64 data URL
+  */
+async function urlToBase64Client(url: string, maxDim = 1024): Promise<string | null> {
+  if (typeof window === 'undefined' || !url || url.startsWith('data:')) return null;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.8));
+          return;
+        }
+      } catch {
+        // Ignored canvas/CORS error
+      }
+      resolve(null);
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+/**
  * Main AI Screen Recapture caller with resilient Vercel error handling and multi-strategy fallbacks
  */
 export async function requestAiScreenRecapture(
@@ -144,9 +222,27 @@ export async function requestAiScreenRecapture(
   photoUrl: string | null,
   fileId?: string | null
 ): Promise<AiRecaptureResult> {
+  let processedPhotoUrl = photoUrl;
+  if (photoUrl?.startsWith('data:')) {
+    try {
+      processedPhotoUrl = await compressDataUrlIfNeeded(photoUrl);
+    } catch {
+      processedPhotoUrl = photoUrl;
+    }
+  } else if (photoUrl && photoUrl.startsWith('http')) {
+    try {
+      const clientConverted = await urlToBase64Client(photoUrl);
+      if (clientConverted) {
+        processedPhotoUrl = clientConverted;
+      }
+    } catch {
+      // Keep original URL
+    }
+  }
+
   const payload: AiRecapturePayload = {
-    imageBase64: photoUrl?.startsWith('data:') ? photoUrl : undefined,
-    imageUrl: !photoUrl?.startsWith('data:') ? (photoUrl || activity.buktiUrl) : undefined,
+    imageBase64: processedPhotoUrl?.startsWith('data:') ? processedPhotoUrl : undefined,
+    imageUrl: !processedPhotoUrl?.startsWith('data:') ? (processedPhotoUrl || activity.buktiUrl) : undefined,
     fileId: fileId || undefined,
     activityInfo: {
       siteId: activity.siteId,
@@ -158,49 +254,60 @@ export async function requestAiScreenRecapture(
   };
 
   let primaryError: string | null = null;
+  let fetchAttempts = 0;
+  const maxFetchAttempts = 2;
 
-  try {
-    const res = await fetch('/api/ai/check-screen-recapture', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+  while (fetchAttempts < maxFetchAttempts) {
+    try {
+      fetchAttempts++;
+      const res = await fetch('/api/ai/check-screen-recapture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
 
-    const contentType = res.headers.get('content-type') || '';
-    const rawText = await res.text();
+      const contentType = res.headers.get('content-type') || '';
+      const rawText = await res.text();
 
-    // Check if response is HTML instead of JSON (typical when Vercel or static host returns 404 HTML page)
-    const isHtmlResponse = rawText.trim().startsWith('<') || 
-      rawText.includes('<!DOCTYPE html>') || 
-      rawText.toLowerCase().includes('<html') ||
-      rawText.includes('The page c') ||
-      rawText.includes('The page could not be found') ||
-      !contentType.includes('application/json');
+      // Check if response is HTML instead of JSON (typical when Vercel or static host returns 404 HTML page)
+      const isHtmlResponse = rawText.trim().startsWith('<') || 
+        rawText.includes('<!DOCTYPE html>') || 
+        rawText.toLowerCase().includes('<html') ||
+        rawText.includes('The page c') ||
+        rawText.includes('The page could not be found') ||
+        !contentType.includes('application/json');
 
-    if (isHtmlResponse) {
-      console.warn('Backend API endpoint returned non-JSON / HTML response:', rawText.slice(0, 150));
-      primaryError = `Endpoint Serverless Vercel /api/ai/check-screen-recapture belum terhubung (Status: ${res.status}).`;
-    } else {
-      let data: any = null;
-      try {
-        data = JSON.parse(rawText);
-      } catch (parseErr) {
-        throw new Error(`Respons server tidak valid (Bukan JSON: ${rawText.slice(0, 80)}...)`);
+      if (isHtmlResponse) {
+        console.warn('Backend API endpoint returned non-JSON / HTML response:', rawText.slice(0, 150));
+        primaryError = `Endpoint Serverless Vercel /api/ai/check-screen-recapture belum terhubung (Status: ${res.status}).`;
+        break;
+      } else {
+        let data: any = null;
+        try {
+          data = JSON.parse(rawText);
+        } catch (parseErr) {
+          throw new Error(`Respons server tidak valid (Bukan JSON: ${rawText.slice(0, 80)}...)`);
+        }
+
+        if (!res.ok || !data?.success) {
+          const errorMsg = data?.error || `Gagal menjalankan analisis AI (Status: ${res.status})`;
+          throw new Error(errorMsg);
+        }
+
+        return {
+          ...data.data,
+          checkedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+        };
       }
-
-      if (!res.ok || !data?.success) {
-        const errorMsg = data?.error || `Gagal menjalankan analisis AI (Status: ${res.status})`;
-        throw new Error(errorMsg);
+    } catch (apiErr: any) {
+      console.warn(`API route call attempt ${fetchAttempts} error:`, apiErr);
+      primaryError = apiErr?.message || 'Gagal menghubungi server AI.';
+      if (fetchAttempts < maxFetchAttempts && (primaryError.includes('fetch failed') || primaryError.includes('Failed to fetch'))) {
+        await new Promise((r) => setTimeout(r, 600));
+      } else {
+        break;
       }
-
-      return {
-        ...data.data,
-        checkedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
-      };
     }
-  } catch (apiErr: any) {
-    console.warn('API route call error:', apiErr);
-    primaryError = apiErr?.message || 'Gagal menghubungi server AI.';
   }
 
   // Fallback 1: If client-side VITE_GEMINI_API_KEY exists (e.g. configured in Vercel environment variables)
@@ -211,7 +318,11 @@ export async function requestAiScreenRecapture(
       return await clientSideGeminiAnalysis(payload, clientKey);
     } catch (fallbackErr: any) {
       console.error('Client-side fallback error:', fallbackErr);
-      throw new Error(`Gagal analisis AI: ${fallbackErr.message || primaryError}`);
+      const cleanFallbackMsg = fallbackErr?.message || '';
+      if (cleanFallbackMsg.includes('Failed to fetch') || cleanFallbackMsg.includes('NetworkError')) {
+        throw new Error(primaryError || 'Gagal menghubungi server API Gemini. Silakan periksa koneksi dan coba beberapa saat lagi.');
+      }
+      throw new Error(`Gagal analisis AI: ${cleanFallbackMsg || primaryError}`);
     }
   }
 

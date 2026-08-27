@@ -20,29 +20,66 @@ function getGenAI(): GoogleGenAI {
 }
 
 async function fetchImageAsBase64(urlOrFileId: string): Promise<{ base64: string; mimeType: string }> {
-  let targetUrl = urlOrFileId;
-  if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-    targetUrl = `https://drive.google.com/thumbnail?sz=w1200&id=${urlOrFileId}`;
-  } else if (targetUrl.includes('drive.google.com')) {
-    const match = targetUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
-                  targetUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
-                  targetUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+  let fileId = urlOrFileId;
+  if (urlOrFileId.startsWith('http://') || urlOrFileId.startsWith('https://')) {
+    const match = urlOrFileId.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+                  urlOrFileId.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+                  urlOrFileId.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
     if (match && match[1]) {
-      targetUrl = `https://drive.google.com/thumbnail?sz=w1200&id=${match[1]}`;
+      fileId = match[1];
     }
   }
 
-  const res = await fetch(targetUrl);
-  if (!res.ok) {
-    throw new Error(`Gagal mengunduh foto untuk analisis AI (status: ${res.status}).`);
+  const candidateUrls: string[] = [];
+  if (fileId && !fileId.includes('/')) {
+    candidateUrls.push(
+      `https://lh3.googleusercontent.com/d/${fileId}=w1200`,
+      `https://drive.google.com/thumbnail?sz=w1200&id=${fileId}`,
+      `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`
+    );
   }
-  const arrayBuffer = await res.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const contentType = res.headers.get('content-type') || 'image/jpeg';
-  return {
-    base64: buffer.toString('base64'),
-    mimeType: contentType.split(';')[0].trim() || 'image/jpeg',
-  };
+  if (urlOrFileId.startsWith('http://') || urlOrFileId.startsWith('https://')) {
+    if (!candidateUrls.includes(urlOrFileId)) {
+      candidateUrls.push(urlOrFileId);
+    }
+  }
+
+  let lastFetchErr: any = null;
+  for (const targetUrl of candidateUrls) {
+    let attempts = 0;
+    while (attempts < 2) {
+      try {
+        attempts++;
+        const res = await fetch(targetUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          },
+          redirect: 'follow',
+        });
+        if (res.ok) {
+          const contentType = (res.headers.get('content-type') || '').toLowerCase();
+          if (contentType.includes('image/') && !contentType.includes('text/html')) {
+            const arrayBuffer = await res.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            if (buffer.length > 200) {
+              return {
+                base64: buffer.toString('base64'),
+                mimeType: contentType.split(';')[0].trim() || 'image/jpeg',
+              };
+            }
+          }
+        }
+      } catch (err: any) {
+        lastFetchErr = err;
+        if (attempts < 2) {
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
+    }
+  }
+
+  throw lastFetchErr || new Error('Gagal mengunduh foto bukti dari Google Drive (Izin akses dibatasi). Silakan pastikan akses foto diset ke "Siapa saja yang memiliki link".');
 }
 
 export default async function handler(req: any, res: any) {
@@ -122,9 +159,6 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
     const candidateModels = [
       'gemini-flash-latest',
       'gemini-3.1-flash-lite',
-      'gemini-2.5-flash',
-      'gemini-3.7-flash',
-      'gemini-2.5-pro',
     ];
     let response: any = null;
     let lastModelError: any = null;
@@ -196,11 +230,21 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
           }
         } catch (modelErr: any) {
           lastModelError = modelErr;
-          const errMsg = String(modelErr?.message || '');
-          const isTransient = errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('high demand') || errMsg.includes('429') || errMsg.includes('RESOURCE_EXHAUSTED');
+          const errMsg = String(modelErr?.message || '') + ' ' + String(modelErr?.cause || '');
+          const isTransient = 
+            errMsg.includes('503') || 
+            errMsg.includes('UNAVAILABLE') || 
+            errMsg.includes('high demand') || 
+            errMsg.includes('429') || 
+            errMsg.includes('RESOURCE_EXHAUSTED') ||
+            errMsg.includes('fetch failed') ||
+            errMsg.includes('ECONNRESET') ||
+            errMsg.includes('ETIMEDOUT') ||
+            errMsg.includes('network') ||
+            errMsg.includes('socket');
           
           if (isTransient && attempts < maxAttempts) {
-            await new Promise((r) => setTimeout(r, 1500));
+            await new Promise((r) => setTimeout(r, 600));
           } else {
             break;
           }
@@ -213,6 +257,27 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
     }
 
     if (!response || !response.text) {
+      const lastErrMsg = String(lastModelError?.message || '') + ' ' + String(lastModelError?.cause || '');
+      if (
+        lastErrMsg.includes('503') || 
+        lastErrMsg.includes('UNAVAILABLE') || 
+        lastErrMsg.includes('high demand') ||
+        lastErrMsg.includes('fetch failed') ||
+        lastErrMsg.includes('ECONNRESET')
+      ) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            isRecapture: false,
+            confidence: 0,
+            verdict: 'SUSPICIOUS',
+            summary: 'Koneksi ke server AI terganggu sementara (Network Reset / Busy). Hasil analisis otomatis ditangguhkan. Silakan verifikasi foto secara manual atau klik "Coba Ulang Analisis AI" dalam beberapa detik.',
+            indicators: ['Layanan API AI mengalami koneksi terputus sementara (ECONNRESET/Network)'],
+            reasons: 'Terjadi gangguan jaringan atau antrean server pada API Google Gemini.',
+            recommendation: 'Periksa foto secara manual atau lakukan pengujian ulang.',
+          },
+        });
+      }
       throw lastModelError || new Error('Layanan AI sedang sibuk sementara. Silakan coba sesaat lagi.');
     }
 

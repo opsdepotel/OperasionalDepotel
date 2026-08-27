@@ -284,8 +284,10 @@ export function detectFakeGps(
         // Teleportasi ekstrim (> 150 km/h)
         moveStatus = 'ANOMALI';
         moveScore = 10;
-        moveNote = `Teleportasi ekstrim: pergerakan ${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s (kecepatan ${calculatedSpeedKmh.toFixed(0)} km/h) di luar batas fisik operasional.`;
-        reasons.push(`Dugaan Teleportasi lokasi (${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s, ${calculatedSpeedKmh.toFixed(0)} km/h)`);
+        const startCoordsStr = `${prevFix.latitude.toFixed(6)}, ${prevFix.longitude.toFixed(6)}`;
+        const endCoordsStr = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+        moveNote = `Teleportasi ekstrim: pergerakan ${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s (kecepatan ${calculatedSpeedKmh.toFixed(0)} km/h) dari [${startCoordsStr}] ke [${endCoordsStr}] di luar batas fisik operasional.`;
+        reasons.push(`Dugaan Teleportasi lokasi (${distanceMeters.toFixed(0)}m dalam ${elapsedSeconds.toFixed(1)}s, ${calculatedSpeedKmh.toFixed(0)} km/h | Awal: ${startCoordsStr} -> Akhir: ${endCoordsStr})`);
         riskScoreCumulative += 80;
       } else if (calculatedSpeedKmh !== null && calculatedSpeedKmh > 100) {
         // Kecepatan tinggi / jalan tol (100 - 150 km/h)
@@ -318,11 +320,13 @@ export function detectFakeGps(
     const formSpeedKmh = (formDistMeters / formElapsedSec) * 3.6;
 
     if (formDistMeters > 50) {
+      const startCoordsStr = `${openLat.toFixed(6)}, ${openLon.toFixed(6)}`;
+      const endCoordsStr = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
       if (formSpeedKmh > 150) {
         moveStatus = 'ANOMALI';
         moveScore = Math.min(moveScore, 10);
         const distStr = formDistMeters >= 1000 ? `${(formDistMeters / 1000).toFixed(1)} km` : `${Math.round(formDistMeters)}m`;
-        const reasonStr = `Dugaan Teleportasi saat pengisian form (${distStr} dalam ${formElapsedSec.toFixed(1)}s, ${Math.round(formSpeedKmh)} km/h)`;
+        const reasonStr = `Dugaan Teleportasi saat pengisian form (${distStr} dalam ${formElapsedSec.toFixed(1)}s, ${Math.round(formSpeedKmh)} km/h | Awal: ${startCoordsStr} -> Akhir: ${endCoordsStr})`;
         reasons.push(reasonStr);
         riskScoreCumulative += 80;
         moveNote += ` [ANOMALI FORM: ${reasonStr}]`;
@@ -330,14 +334,14 @@ export function detectFakeGps(
         moveStatus = 'ANOMALI';
         moveScore = Math.min(moveScore, 30);
         const distStr = formDistMeters >= 1000 ? `${(formDistMeters / 1000).toFixed(1)} km` : `${Math.round(formDistMeters)}m`;
-        const reasonStr = `Lompatan lokasi saat pengisian form (${distStr} dalam ${formElapsedSec.toFixed(1)}s, ${Math.round(formSpeedKmh)} km/h)`;
+        const reasonStr = `Lompatan lokasi saat pengisian form (${distStr} dalam ${formElapsedSec.toFixed(1)}s, ${Math.round(formSpeedKmh)} km/h | Awal: ${startCoordsStr} -> Akhir: ${endCoordsStr})`;
         reasons.push(reasonStr);
         riskScoreCumulative += 60;
         moveNote += ` [ANOMALI FORM: ${reasonStr}]`;
       } else if (formDistMeters > 1000 && formElapsedSec < 60) {
         moveStatus = 'ANOMALI';
         moveScore = Math.min(moveScore, 20);
-        const reasonStr = `Teleportasi lokasi ${(formDistMeters / 1000).toFixed(1)} km dalam ${Math.round(formElapsedSec)}s (${Math.round(formSpeedKmh)} km/h)`;
+        const reasonStr = `Teleportasi lokasi ${(formDistMeters / 1000).toFixed(1)} km dalam ${Math.round(formElapsedSec)}s (${Math.round(formSpeedKmh)} km/h | Awal: ${startCoordsStr} -> Akhir: ${endCoordsStr})`;
         reasons.push(reasonStr);
         riskScoreCumulative += 75;
         moveNote += ` [ANOMALI FORM: ${reasonStr}]`;
@@ -420,8 +424,10 @@ export function detectFakeGps(
         tsStatus = 'ANOMALI';
         tsScore = 10;
         tsDetail = `${formattedDeltaMs} (STAGNAN DENGAN LOMPATAN)`;
-        tsNote = `Timestamp hardware (${timestamp}) tidak diperbarui saat lokasi berpindah sejauh ${distanceMeters.toFixed(0)}m. Indikasi replay attack/mock.`;
-        reasons.push(`Timestamp stagnan saat koordinat berpindah (${distanceMeters.toFixed(0)}m)`);
+        const startCoordsStr = prevFix ? `${prevFix.latitude.toFixed(6)}, ${prevFix.longitude.toFixed(6)}` : '-';
+        const endCoordsStr = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
+        tsNote = `Timestamp hardware (${timestamp}) tidak diperbarui saat lokasi berpindah sejauh ${distanceMeters.toFixed(0)}m dari [${startCoordsStr}] ke [${endCoordsStr}]. Indikasi replay attack/mock.`;
+        reasons.push(`Timestamp stagnan saat koordinat berpindah (${distanceMeters.toFixed(0)}m | Awal: ${startCoordsStr} -> Akhir: ${endCoordsStr})`);
         riskScoreCumulative += 60;
       } else {
         // Stagnan saat pengguna diam -> Caching browser wajar (Bukan Fake GPS)
