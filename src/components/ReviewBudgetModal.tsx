@@ -15,6 +15,7 @@ interface ReviewBudgetModalProps {
   profiles?: UserProfile[];
   sites?: SiteInfo[];
   histories?: ItemReviewHistory[];
+  role?: Role;
   onApprove: (approvedAmount: number, comment: string) => Promise<void>;
   onReject: (reason: string) => Promise<void>;
   onClose: () => void;
@@ -26,6 +27,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
   profiles = [],
   sites = [],
   histories = [],
+  role,
   onApprove,
   onReject,
   onClose
@@ -33,8 +35,49 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
   const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
   const isRequesterManagerOrFinance = requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE;
   const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
+  const reviewerRoleTitle = role === Role.FINANCE ? 'Finance' : role === Role.DIREKTUR ? 'Direktur' : supervisorTitle;
+  const displayReviewerRole = reviewerRoleTitle;
 
-  const [approvedAmount, setApprovedAmount] = useState(String(request.jumlahPengajuan));
+  // Manager / Direktur approval info helper for Finance Role
+  const managerDirekturHistory = histories.find(h =>
+    (h.requestUid === request.id || h.itemUid === request.id) &&
+    (
+      h.actionType === 'APPROVAL_MANAGER' ||
+      h.actionType === 'APPROVAL_DIREKTUR' ||
+      h.actionType === 'REVISI_MANAGER' ||
+      h.actionType === 'REVISI_DIREKTUR'
+    )
+  );
+
+  const isDirekturApproval =
+    managerDirekturHistory?.actionType.includes('DIREKTUR') ||
+    managerDirekturHistory?.actorRole === Role.DIREKTUR ||
+    isRequesterManagerOrFinance;
+
+  const managerDirekturRoleLabel = isDirekturApproval ? 'Direktur' : 'Manager';
+
+  const managerDirekturName =
+    managerDirekturHistory?.actorNama ||
+    profiles.find(p => p.email.toLowerCase() === request.managerEmail.toLowerCase())?.nama ||
+    request.managerEmail ||
+    (isDirekturApproval ? 'Direktur' : 'Manager');
+
+  const managerApprovedAmount =
+    managerDirekturHistory?.nominal ||
+    (request.managerActionAmount > 0 ? request.managerActionAmount : request.jumlahPengajuan);
+
+  const managerCommentText =
+    managerDirekturHistory?.catatan ||
+    request.managerComment ||
+    '';
+
+  const initialNominal = request.adminActionAmount > 0
+    ? request.adminActionAmount
+    : request.managerActionAmount > 0
+      ? request.managerActionAmount
+      : request.jumlahPengajuan;
+
+  const [approvedAmount, setApprovedAmount] = useState(String(initialNominal));
   const [comment, setComment] = useState('');
   const [action, setAction] = useState<'APPROVE' | 'REJECT' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,32 +115,32 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
 
     return tokensToProcess.map(id => {
       const cleanId = id.toUpperCase();
-      const found = sitesList.find(s => 
-        s.siteId.toUpperCase().trim() === cleanId || 
+      const found = sitesList.find(s =>
+        s.siteId.toUpperCase().trim() === cleanId ||
         s.siteId.toUpperCase().replaceAll('-', '').trim() === cleanId.replaceAll('-', '')
       );
 
       if (found) {
-        return { 
-          id: found.siteId, 
-          name: found.siteName, 
-          coordinates: found.coordinates || '', 
-          isVerified: true 
+        return {
+          id: found.siteId,
+          name: found.siteName,
+          coordinates: found.coordinates || '',
+          isVerified: true
         };
       }
       if (cleanId === 'DUREN-SAWIT' || cleanId === 'DURENSAWIT') {
-        return { 
-          id: 'DUREN-SAWIT', 
-          name: 'Depot / Pos Utama', 
-          coordinates: '', 
-          isVerified: true 
+        return {
+          id: 'DUREN-SAWIT',
+          name: 'Depot / Pos Utama',
+          coordinates: '',
+          isVerified: true
         };
       }
-      return { 
-        id: id, 
-        name: null, 
-        coordinates: '', 
-        isVerified: false 
+      return {
+        id: id,
+        name: null,
+        coordinates: '',
+        isVerified: false
       };
     });
   };
@@ -120,7 +163,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
     setError(null);
 
     if (!comment.trim()) {
-      setError(`Catatan / komentar ${supervisorTitle} wajib diisi.`);
+      setError(`Catatan / komentar ${reviewerRoleTitle} wajib diisi.`);
       return;
     }
 
@@ -172,7 +215,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
       <div className="flex items-center justify-between pb-2 border-b border-slate-100">
         <div>
           <h2 className="font-display font-bold text-slate-800 text-sm">Tinjau Pengajuan Anggaran</h2>
-          <p className="text-[10px] text-slate-400">Reviewer: Manager</p>
+          <p className="text-[10px] text-slate-400">Reviewer: {displayReviewerRole}</p>
         </div>
         <button
           onClick={onClose}
@@ -205,8 +248,8 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
                     : '';
 
                   return (
-                    <div 
-                      key={idx} 
+                    <div
+                      key={idx}
                       className="flex flex-col gap-1 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-2xs"
                     >
                       {/* Top Row: Site ID & Site Name */}
@@ -258,6 +301,40 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
           <span className="text-sm font-bold text-slate-800">{formatIDR(request.jumlahPengajuan)}</span>
         </div>
       </div>
+
+      {/* Information Approval Manager / Direktur (Tampil untuk Role Finance atau ketika ada persetujuan sebelumnya) */}
+      {(role === Role.FINANCE || Boolean(request.managerComment) || Boolean(managerDirekturHistory)) && (
+        <div className="bg-indigo-50/70 border border-indigo-100/80 rounded-xl p-3.5 space-y-2 text-xs">
+          <div className="flex items-center justify-between pb-2 border-b border-indigo-100">
+            <span className="font-bold text-indigo-900 flex items-center gap-1.5 text-xs">
+              <Shield className="w-4 h-4 text-indigo-600 shrink-0" />
+              <span>Informasi Persetujuan {managerDirekturRoleLabel}</span>
+            </span>
+            <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-md flex items-center gap-1">
+              <Check className="w-3 h-3 text-emerald-600" />
+              <span>Disetujui</span>
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-slate-700">
+            <div>
+              <span className="text-[10px] text-slate-400 block font-semibold">Peninjau ({managerDirekturRoleLabel})</span>
+              <span className="font-semibold text-slate-800">{managerDirekturName}</span>
+            </div>
+            <div>
+              <span className="text-[10px] text-slate-400 block font-semibold">Nominal Disetujui {managerDirekturRoleLabel}</span>
+              <span className="font-bold text-indigo-700">{formatIDR(managerApprovedAmount)}</span>
+            </div>
+          </div>
+
+          <div className="pt-1.5 border-t border-indigo-100/70">
+            <span className="text-[10px] text-slate-400 block font-semibold">Catatan / Komentar {managerDirekturRoleLabel}</span>
+            <p className="text-slate-800 font-medium italic mt-1 bg-white/90 p-2.5 rounded-lg border border-indigo-100/60 shadow-2xs">
+              {managerCommentText ? `"${managerCommentText}"` : '-'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Previous Review History Clickable Label */}
       {(() => {
@@ -356,7 +433,7 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
 
           <div>
             <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1">
-              Catatan / Komentar {supervisorTitle} <span className="text-red-500">*</span> (Wajib)
+              Catatan / Komentar {reviewerRoleTitle} <span className="text-red-500">*</span> (Wajib)
             </label>
             <div className="relative">
               <input

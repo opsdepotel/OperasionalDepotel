@@ -7,6 +7,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { UserProfile, Role, BudgetRequest, UsageReportItem, ItemReviewHistory, SiteInfo, RequestStatus, ItemStatus } from '../types';
 import { ArrowLeft, User, Search, CreditCard, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Eye, Calendar, Clock } from 'lucide-react';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
+import { getFinanceApprovedAmount, getTransferBertahap } from '../App';
 
 interface TransferListPanelProps {
   profiles: UserProfile[];
@@ -201,7 +202,7 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
       }
     }
 
-    if (req.managerActionAmount > 0 || req.adminActionAmount > 0 || req.status === RequestStatus.APPROVED || req.status === RequestStatus.TRANSFERRED || req.status === RequestStatus.REPORTING || req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REVIEW_MANAGER || req.status === RequestStatus.CLOSED) {
+    if (req.managerActionAmount > 0 || req.adminActionAmount > 0 || req.status === RequestStatus.APPROVED || req.status === RequestStatus.TRANSFERRED || req.status === RequestStatus.TRANSFER_BERTAHAP || req.status === RequestStatus.REPORTING || req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REVIEW_MANAGER || req.status === RequestStatus.CLOSED) {
       return {
         supervisor: defaultSupervisor,
         time: req.createdAt || req.timestamp || '-'
@@ -362,6 +363,8 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
         return 'bg-cyan-50 text-cyan-700 border-cyan-200';
       case RequestStatus.REPORTING:
         return 'bg-purple-50 text-purple-700 border-purple-200';
+      case RequestStatus.TRANSFER_BERTAHAP:
+        return 'bg-amber-50 text-amber-700 border-amber-200';
       default:
         return 'bg-blue-50 text-blue-700 border-blue-200';
     }
@@ -377,6 +380,8 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
         return 'REVIEW MANAGER';
       case RequestStatus.REPORTING:
         return 'PROSES LAPORAN';
+      case RequestStatus.TRANSFER_BERTAHAP:
+        return 'TRANSFER BERTAHAP';
       default:
         return 'DITRANSFER';
     }

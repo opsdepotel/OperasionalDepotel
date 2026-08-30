@@ -268,7 +268,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   );
 
   // Modal & Preview States
-  const [isFormOpen, setIsFormOpen] = useState(() => isSubmitter && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && currentItems.length === 0);
+  const [isFormOpen, setIsFormOpen] = useState(() => isSubmitter && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && currentItems.length === 0);
   const [showCameraStream, setShowCameraStream] = useState(false);
   const [previewItem, setPreviewItem] = useState<UsageReportItem | null>(null);
   const [previewRequestProof, setPreviewRequestProof] = useState(false);
@@ -772,7 +772,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   </div>
 
                   {/* Status Review Breakdown (Manager & Finance) */}
-                  {(role === Role.USER || role === Role.DIREKTUR || request.status === RequestStatus.CLOSED || [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.PENDING_APPROVAL].includes(request.status)) && (
+                  {(role === Role.USER || role === Role.DIREKTUR || request.status === RequestStatus.CLOSED || [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.PENDING_APPROVAL].includes(request.status)) && (
                     <div className="bg-slate-50/80 rounded-xl p-2 border border-slate-100 mt-2">
                       <div className="grid grid-cols-2 gap-2 text-[10px]">
                         {/* Status Review Manager */}
@@ -983,7 +983,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     </div>
 
                      {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) and current user is submitter */}
-                    {isSubmitter && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+                    {isSubmitter && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
                       <div className="flex items-center gap-2">
                         {isRejected && (
                           <button
@@ -1023,7 +1023,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       </div>
 
       {/* Trigger Button to Open Input Form Modal (Only for Submitter of the Request) */}
-      {isSubmitter && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+      {isSubmitter && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
         !hasRejectedItems ? (
           <button
             onClick={() => {

@@ -73,6 +73,126 @@ import {
   Settings, LogOut, ShieldCheck, History, UserCheck, ShieldAlert, Share2, UploadCloud
 } from 'lucide-react';
 
+export const isOpBiasaRequest = (req: BudgetRequest) => {
+  return req.id.startsWith('OP') && !req.id.startsWith('OPT-') && !req.id.startsWith('BBM') && !req.id.startsWith('ADJ-');
+};
+
+export const isFinanceApprovedOpRequest = (req: BudgetRequest, histories: ItemReviewHistory[]) => {
+  if (!isOpBiasaRequest(req)) return true;
+  if ([RequestStatus.PENDING_PENGAJUAN_TRANSFER, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.CLOSED].includes(req.status)) return true;
+  if (req.adminComment && req.adminComment.trim().length > 0) return true;
+
+  return histories.some(h => {
+    const isMatchingUid = h.requestUid === req.id || h.itemUid === req.id;
+    if (!isMatchingUid) return false;
+    const actorRoleUpper = (h.actorRole || '').toString().toUpperCase();
+    const actionTypeUpper = (h.actionType || '').toString().toUpperCase();
+    const statusUpper = (h.status || '').toString().toUpperCase();
+
+    return actionTypeUpper === 'APPROVAL_FINANCE' || (actorRoleUpper === 'FINANCE' && (statusUpper === 'DISETUJUI' || statusUpper === 'APPROVED'));
+  });
+};
+
+// [LOCKED - DO NOT MODIFY WITHOUT EXPLICIT USER APPROVAL]
+// Logika getFinanceApprovedAmount untuk prefix OPT- dan OP- telah dikunci.
+export const getFinanceApprovedAmount = (
+  req: BudgetRequest,
+  histories: ItemReviewHistory[] = [],
+  usageItems: UsageReportItem[] = []
+): number => {
+  const isOpt = req.id.startsWith('OPT-') || req.tipePengajuan === 'DANA_TALANGAN' || (req.keterangan || '').startsWith('[DANA TALANGAN]');
+
+  if (isOpt) {
+    // Logika pengajuan ber-prefix OPT- (Operasional Dana Talangan):
+    // Nominal getFinanceApprovedAmount diambil dari total nominal database Laporan dengan StatusManager=APPROVED, StatusAdmin=APPROVED
+    const approvedLaporanItems = usageItems.filter(item => {
+      if (item.requestId !== req.id) return false;
+      const mgrApproved = item.statusManager === ItemStatus.APPROVED || (item.statusManager || '').toString().toUpperCase() === 'APPROVED';
+      const adminApproved = item.statusAdmin === ItemStatus.APPROVED || (item.statusAdmin || '').toString().toUpperCase() === 'APPROVED';
+      return mgrApproved && adminApproved;
+    });
+
+    if (approvedLaporanItems.length > 0) {
+      return approvedLaporanItems.reduce((sum, item) => sum + (item.nominal || 0), 0);
+    }
+  }
+
+  // Prioritas Utama (UID prefix OP- / Operasional Biasa): diambil dari nilai Nominal database ItemReviewHistory dengan ActorRole=FINANCE, ActionType=APPROVAL_FINANCE, Status=DISETUJUI
+  const finApprovalHistories = histories.filter(h => {
+    const isMatchingUid = h.requestUid === req.id || h.itemUid === req.id;
+    if (!isMatchingUid) return false;
+
+    const actorRoleUpper = (h.actorRole || '').toString().toUpperCase();
+    const actionTypeUpper = (h.actionType || '').toString().toUpperCase();
+    const statusUpper = (h.status || '').toString().toUpperCase();
+
+    const isFinanceRole = actorRoleUpper === 'FINANCE';
+    const isApprovalFinanceAction = actionTypeUpper === 'APPROVAL_FINANCE';
+    const isDisetujuiStatus = statusUpper === 'DISETUJUI';
+
+    return isFinanceRole && isApprovalFinanceAction && isDisetujuiStatus && (h.nominal || 0) > 0;
+  });
+
+  if (finApprovalHistories.length > 0) {
+    const directReqHist = finApprovalHistories.find(h => h.requestUid === req.id && (h.nominal || 0) > 0);
+    if (directReqHist) {
+      return directReqHist.nominal;
+    }
+    const sumNominal = finApprovalHistories.reduce((sum, h) => sum + (h.nominal || 0), 0);
+    if (sumNominal > 0) return sumNominal;
+  }
+
+  // Fallback jika tidak didapat data dari ItemReviewHistory: ambil nominal dari database Pengajuan [adminActionAmount]
+  return req.adminActionAmount || 0;
+};
+
+// Logika getTransferBertahap telah dikunci ([LOCKED]). Tidak boleh diubah tanpa persetujuan eksplisit dari pengguna.
+export const getTransferBertahap = (
+  req: BudgetRequest,
+  histories: ItemReviewHistory[] = [],
+  usageItems: UsageReportItem[] = []
+): boolean => {
+  const finApproved = getFinanceApprovedAmount(req, histories, usageItems);
+  const transferred = req.adminActionAmount || 0;
+  return transferred < finApproved;
+};
+
+export const isPendingTransferRequest = (
+  req: BudgetRequest,
+  histories: ItemReviewHistory[] = [],
+  usageItems: UsageReportItem[] = []
+): boolean => {
+  if (req.status === RequestStatus.CANCELLED || req.status === RequestStatus.REJECTED) return false;
+
+  // Operasional Biasa (OP-): Jika belum CLOSED dan kondisi getTransferBertahap = TRUE (termasuk status TRANSFER_BERTAHAP maupun REVIEW_ADMIN)
+  if (isOpBiasaRequest(req) && req.status !== RequestStatus.CLOSED && getTransferBertahap(req, histories, usageItems)) {
+    return true;
+  }
+
+  if (req.status === RequestStatus.PENDING_TALANGAN_TRANSFER || req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER) {
+    return true;
+  }
+
+  if (req.status === RequestStatus.TRANSFER_BERTAHAP) {
+    return getTransferBertahap(req, histories, usageItems);
+  }
+
+  if (req.status === RequestStatus.REVIEW_ADMIN) {
+    if (isOpBiasaRequest(req) && getTransferBertahap(req, histories, usageItems)) {
+      return true;
+    }
+  }
+
+  if (req.status === RequestStatus.APPROVED || req.status === RequestStatus.PARTIALLY_APPROVED) {
+    if (isOpBiasaRequest(req)) {
+      return isFinanceApprovedOpRequest(req, histories);
+    }
+    return true;
+  }
+
+  return false;
+};
+
 export default function App() {
   // Auth state
   const [user, setUser] = useState<User | null>(null);
@@ -1253,12 +1373,19 @@ export default function App() {
     }
   };
 
-  // Workflow Action 2: Review Budget Request (Manager Action)
+  // Workflow Action 2: Review Budget Request (Manager/Direktur/Finance Action)
   const handleReviewBudget = async (approvedAmount: number, comment: string) => {
     if (!token || !spreadsheetId || !reviewBudgetReq) return;
     const isApprovedFull = approvedAmount === reviewBudgetReq.jumlahPengajuan;
+    const isFinance = activeRole === Role.FINANCE || userProfile?.role === Role.FINANCE;
 
-    const updated: BudgetRequest = {
+    const updated: BudgetRequest = isFinance ? {
+      ...reviewBudgetReq,
+      status: RequestStatus.PENDING_PENGAJUAN_TRANSFER,
+      managerActionAmount: approvedAmount > 0 ? approvedAmount : (reviewBudgetReq.managerActionAmount || reviewBudgetReq.jumlahPengajuan),
+      adminActionAmount: 0,
+      adminComment: comment,
+    } : {
       ...reviewBudgetReq,
       status: isApprovedFull ? RequestStatus.APPROVED : RequestStatus.PARTIALLY_APPROVED,
       managerActionAmount: approvedAmount,
@@ -1271,10 +1398,10 @@ export default function App() {
       itemUid: reviewBudgetReq.id,
       requestUid: reviewBudgetReq.id,
       timestamp: formatTimestamp(new Date()),
-      actorRole: userProfile?.role || activeRole || Role.MANAGER,
+      actorRole: userProfile?.role || activeRole || (isFinance ? Role.FINANCE : Role.MANAGER),
       actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
-      actorNama: userProfile?.nama || userProfile?.email || (activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
-      actionType: activeRole === Role.DIREKTUR ? 'APPROVAL_DIREKTUR' : 'APPROVAL_MANAGER',
+      actorNama: userProfile?.nama || userProfile?.email || (isFinance ? 'Finance' : activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
+      actionType: isFinance ? 'APPROVAL_FINANCE' : activeRole === Role.DIREKTUR ? 'APPROVAL_DIREKTUR' : 'APPROVAL_MANAGER',
       status: 'DISETUJUI',
       catatan: comment,
       tanggalPenggunaan: reviewBudgetReq.tanggalPemakaian,
@@ -1291,6 +1418,7 @@ export default function App() {
     );
     if (success !== null) {
       setItemReviewHistories(prev => [historyLog, ...prev]);
+      setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
       setReviewBudgetReq(null);
       await handleManualRefresh();
     }
@@ -1298,8 +1426,13 @@ export default function App() {
 
   const handleRejectBudget = async (reason: string) => {
     if (!token || !spreadsheetId || !reviewBudgetReq) return;
+    const isFinance = activeRole === Role.FINANCE || userProfile?.role === Role.FINANCE;
 
-    const updated: BudgetRequest = {
+    const updated: BudgetRequest = isFinance ? {
+      ...reviewBudgetReq,
+      status: RequestStatus.REJECTED,
+      adminComment: reason
+    } : {
       ...reviewBudgetReq,
       status: RequestStatus.REJECTED,
       managerActionAmount: 0,
@@ -1311,10 +1444,10 @@ export default function App() {
       itemUid: reviewBudgetReq.id,
       requestUid: reviewBudgetReq.id,
       timestamp: formatTimestamp(new Date()),
-      actorRole: userProfile?.role || activeRole || Role.MANAGER,
+      actorRole: userProfile?.role || activeRole || (isFinance ? Role.FINANCE : Role.MANAGER),
       actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
-      actorNama: userProfile?.nama || userProfile?.email || (activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
-      actionType: activeRole === Role.DIREKTUR ? 'REVISI_DIREKTUR' : 'REVISI_MANAGER',
+      actorNama: userProfile?.nama || userProfile?.email || (isFinance ? 'Finance' : activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
+      actionType: isFinance ? 'REVISI_FINANCE' : activeRole === Role.DIREKTUR ? 'REVISI_DIREKTUR' : 'REVISI_MANAGER',
       status: 'REVISI',
       catatan: reason,
       tanggalPenggunaan: reviewBudgetReq.tanggalPemakaian,
@@ -1331,6 +1464,7 @@ export default function App() {
     );
     if (success !== null) {
       setItemReviewHistories(prev => [historyLog, ...prev]);
+      setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
       setReviewBudgetReq(null);
       await handleManualRefresh();
     }
@@ -1342,7 +1476,8 @@ export default function App() {
     buktiUrl: string,
     buktiFileId: string,
     adminComment?: string,
-    customAdminActionTime?: string
+    customAdminActionTime?: string,
+    isCloseTransferChecked?: boolean
   ) => {
     if (!token || !spreadsheetId || !transferReq) return;
 
@@ -1364,23 +1499,34 @@ export default function App() {
     if (buktiFileId) existingFileIds.push(buktiFileId);
     const combinedFileId = existingFileIds.join('||');
 
-    // 3. Determine target approved amount for Dana Talangan reimbursement
+    // 3. Determine target approved amount
     const approvedUsageAmount = usageItems
       .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
       .reduce((sum, item) => sum + item.nominal, 0);
 
+    const finHistories = itemReviewHistories.filter(h => (h.requestUid === transferReq.id || h.itemUid === transferReq.id) && h.actionType === 'APPROVAL_FINANCE');
+    let finApprovedNominal = 0;
+    if (finHistories.length > 0) {
+      finApprovedNominal = finHistories.reduce((s, h) => s + (h.nominal || 0), 0);
+    }
+
     const targetTotal = isReqTalangan
       ? (approvedUsageAmount > 0 ? approvedUsageAmount : transferReq.managerActionAmount)
-      : transferReq.managerActionAmount;
+      : (finApprovedNominal > 0 ? finApprovedNominal : (transferReq.managerActionAmount > 0 ? transferReq.managerActionAmount : transferReq.jumlahPengajuan));
 
     // 4. Determine status:
-    // For Dana Talangan, close ONLY if updatedTotalTransferred >= targetTotal (Jumlah Nominal Dana Talangan sama dengan Jumlah Transfer)
     let nextStatus = RequestStatus.TRANSFERRED;
     if (isReqTalangan) {
       if (targetTotal > 0 && updatedTotalTransferred >= targetTotal) {
         nextStatus = RequestStatus.CLOSED;
       } else if (isPendingTalanganTransfer) {
         nextStatus = RequestStatus.PENDING_TALANGAN_TRANSFER;
+      }
+    } else {
+      if ((targetTotal > 0 && updatedTotalTransferred >= targetTotal) || isCloseTransferChecked) {
+        nextStatus = RequestStatus.TRANSFERRED;
+      } else {
+        nextStatus = RequestStatus.TRANSFER_BERTAHAP;
       }
     }
 
@@ -2176,26 +2322,37 @@ export default function App() {
       if (statusFilter === 'DIREKTUR_APPROVAL') {
         if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
       } else if (statusFilter === 'DIREKTUR_RECONCILIATION') {
-        if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER].includes(r.status)) return false;
+        if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) return false;
         const reqItems = usageItems.filter(i => i.requestId === r.id);
         if (reqItems.length === 0) return false;
         if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING)) return false;
       } else if (statusFilter === 'PENDING') {
-        if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
+        if (activeRole === Role.MANAGER && dashboardTab === 'APPROVAL') {
+          if (r.status !== RequestStatus.PENDING_APPROVAL) return false;
+          if (!isOpBiasaRequest(r)) return false;
+        } else if (activeRole === Role.FINANCE && dashboardTab !== 'SUBMISSION') {
+          if (!isOpBiasaRequest(r)) return false;
+          if (r.status !== RequestStatus.APPROVED && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
+          if (isFinanceApprovedOpRequest(r, itemReviewHistories)) return false;
+        } else {
+          const isPendingManager = r.status === RequestStatus.PENDING_APPROVAL;
+          const isPendingFinance = isOpBiasaRequest(r) && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) && !isFinanceApprovedOpRequest(r, itemReviewHistories);
+          if (!isPendingManager && !isPendingFinance) return false;
+        }
       } else if (statusFilter === 'APPROVED') {
-        if (r.status !== RequestStatus.APPROVED && 
-            r.status !== RequestStatus.PARTIALLY_APPROVED && 
-            r.status !== RequestStatus.PENDING_TALANGAN_TRANSFER) return false;
+        if (!isPendingTransferRequest(r, itemReviewHistories, usageItems)) return false;
       } else if (statusFilter === 'TRANSFERRED') {
-        if (r.status !== RequestStatus.TRANSFERRED) return false;
+        if (r.status !== RequestStatus.TRANSFERRED && r.status !== RequestStatus.TRANSFER_BERTAHAP) return false;
       } else if (statusFilter === 'REPORTING') {
         // For USER or SUBMISSION tab, "Proses Laporan" displays requests currently in reporting / review process
         if (activeRole === Role.USER || dashboardTab === 'SUBMISSION') {
           if (r.status !== RequestStatus.REPORTING &&
               r.status !== RequestStatus.REVIEW_MANAGER &&
-              r.status !== RequestStatus.REVIEW_ADMIN) return false;
+              r.status !== RequestStatus.REVIEW_ADMIN &&
+              r.status !== RequestStatus.TRANSFERRED &&
+              r.status !== RequestStatus.TRANSFER_BERTAHAP) return false;
         } else if (activeRole === Role.MANAGER) {
-          if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED].includes(r.status)) return false;
+          if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) return false;
           const reqItems = usageItems.filter(i => i.requestId === r.id);
           if (reqItems.length === 0) return false;
           return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
@@ -2207,7 +2364,7 @@ export default function App() {
           const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
           if (!managerApproved) return false;
         } else if (activeRole === Role.DIREKTUR) {
-          if (![RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
+          if (![RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
         } else {
           if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
         }
@@ -2286,6 +2443,10 @@ export default function App() {
         return 'bg-cyan-50 text-cyan-600 border border-cyan-150';
       case RequestStatus.PENDING_TALANGAN_TRANSFER:
         return 'bg-pink-50 text-pink-600 border border-pink-150 animate-pulse';
+      case RequestStatus.PENDING_PENGAJUAN_TRANSFER:
+        return 'bg-blue-50 text-blue-600 border border-blue-150 animate-pulse';
+      case RequestStatus.TRANSFER_BERTAHAP:
+        return 'bg-amber-50 text-amber-700 border border-amber-200 animate-pulse';
       case RequestStatus.CLOSED:
         return 'bg-slate-100 text-slate-500 border border-slate-200';
       case RequestStatus.CANCELLED:
@@ -2314,6 +2475,10 @@ export default function App() {
         return 'text-cyan-600';
       case RequestStatus.PENDING_TALANGAN_TRANSFER:
         return 'text-pink-600 animate-pulse';
+      case RequestStatus.PENDING_PENGAJUAN_TRANSFER:
+        return 'text-blue-600 animate-pulse';
+      case RequestStatus.TRANSFER_BERTAHAP:
+        return 'text-amber-700 font-bold animate-pulse';
       case RequestStatus.CLOSED:
         return 'text-slate-500';
       case RequestStatus.CANCELLED:
@@ -2342,6 +2507,10 @@ export default function App() {
         return 'border-l-cyan-500';
       case RequestStatus.PENDING_TALANGAN_TRANSFER:
         return 'border-l-pink-500';
+      case RequestStatus.PENDING_PENGAJUAN_TRANSFER:
+        return 'border-l-blue-500';
+      case RequestStatus.TRANSFER_BERTAHAP:
+        return 'border-l-amber-500';
       case RequestStatus.CLOSED:
         return 'border-l-slate-400';
       default:
@@ -2371,6 +2540,8 @@ export default function App() {
       case RequestStatus.REVIEW_MANAGER: return `Review Laporan (${supervisorTitle})`;
       case RequestStatus.REVIEW_ADMIN: return 'Review Laporan (Finance)';
       case RequestStatus.PENDING_TALANGAN_TRANSFER: return 'Menunggu Transfer Dana Talangan';
+      case RequestStatus.PENDING_PENGAJUAN_TRANSFER: return 'Menunggu Transfer Anggaran';
+      case RequestStatus.TRANSFER_BERTAHAP: return 'TRANSFER BERTAHAP';
       case RequestStatus.CLOSED: return 'Closing';
       case RequestStatus.CANCELLED: return 'Dibatalkan (Cancelled)';
       default: return status;
@@ -2845,7 +3016,10 @@ export default function App() {
                     <div className="flex items-center justify-between pb-2 border-b border-slate-100 flex-wrap gap-2">
                       <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                         Daftar Pengajuan: <span className="text-indigo-600 font-bold">
-                          {statusFilter === 'DIREKTUR_APPROVAL' ? 'Alur Persetujuan Direktur (Tinjau Anggaran)' :
+                          {statusFilter === 'PENDING' && activeRole === Role.MANAGER && dashboardTab === 'APPROVAL' ? 'Alur Persetujuan (Menunggu Approval Manager)' :
+                           statusFilter === 'PENDING' ? 'Menunggu Approval (Review Manager / Finance)' :
+                           statusFilter === 'APPROVED' ? 'Telah Disetujui Finance (Menunggu Transfer)' :
+                           statusFilter === 'DIREKTUR_APPROVAL' ? 'Alur Persetujuan Direktur (Tinjau Anggaran)' :
                            statusFilter === 'DIREKTUR_RECONCILIATION' ? 'Alur Rekonsiliasi Direktur (Review Penggunaan Anggaran)' :
                            statusFilter === 'TRANSFERRED' ? 'Belum Dilaporkan (Telah Ditransfer)' :
                            statusFilter === 'REPORTING' && (activeRole === Role.USER || activeRole === Role.MANAGER || (activeRole === Role.FINANCE && dashboardTab === 'SUBMISSION')) ? 'Proses Laporan (Pengisian & Review Laporan)' :
@@ -2975,8 +3149,8 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* Action buttons for USER role and MANAGER/FINANCE (PENGAJUAN / PENDING mode) */}
-                      {(activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && (dashboardTab === 'SUBMISSION' || statusFilter === 'PENDING' || statusFilter === RequestStatus.PENDING_APPROVAL))) && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && statusFilter !== 'TRANSFERRED' && statusFilter !== RequestStatus.TRANSFERRED && (
+                      {/* Action buttons for USER role and MANAGER/FINANCE (SUBMISSION mode only) */}
+                      {(activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && dashboardTab === 'SUBMISSION')) && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && statusFilter !== 'TRANSFERRED' && statusFilter !== RequestStatus.TRANSFERRED && (
                         <div className="flex gap-2 pt-1">
                           <button
                             onClick={() => {
@@ -3033,6 +3207,7 @@ export default function App() {
                             RequestStatus.APPROVED,
                             RequestStatus.PARTIALLY_APPROVED,
                             RequestStatus.PENDING_TALANGAN_TRANSFER,
+                            RequestStatus.PENDING_PENGAJUAN_TRANSFER,
                             RequestStatus.REJECTED
                           ].includes(req.status)
                             ? 0
@@ -3103,9 +3278,23 @@ export default function App() {
                                 <div>
                                   <span className="block text-[8px] font-bold text-slate-400 uppercase">Disetujui</span>
                                   <span className="font-semibold text-emerald-600">
-                                    {req.status === RequestStatus.PENDING_APPROVAL || req.status === RequestStatus.REJECTED
-                                      ? '-'
-                                      : formatIDR(req.managerActionAmount)}
+                                    {(() => {
+                                      const isOp = isOpBiasaRequest(req) || req.id.startsWith('OP-');
+                                      const finApproved = getFinanceApprovedAmount(req, itemReviewHistories, usageItems);
+                                      const hasFinApproval = itemReviewHistories.some(h => (h.requestUid === req.id || h.itemUid === req.id) && h.actionType === 'APPROVAL_FINANCE') ||
+                                        !!req.adminComment ||
+                                        [RequestStatus.PENDING_PENGAJUAN_TRANSFER, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.CLOSED].includes(req.status);
+
+                                      if (isOp) {
+                                        if (!hasFinApproval) return '-';
+                                        return formatIDR(finApproved);
+                                      }
+
+                                      if (req.status === RequestStatus.PENDING_APPROVAL || req.status === RequestStatus.REJECTED) {
+                                        return '-';
+                                      }
+                                      return formatIDR(finApproved);
+                                    })()}
                                   </span>
                                 </div>
                                 <div>
@@ -3117,6 +3306,14 @@ export default function App() {
                                   </span>
                                 </div>
                               </div>
+
+                              {(req.status === RequestStatus.TRANSFER_BERTAHAP || (getTransferBertahap(req, itemReviewHistories, usageItems) && (req.adminActionAmount || 0) > 0)) && (
+                                <div className="text-left">
+                                  <span className="text-[9px] font-bold text-cyan-700 bg-cyan-50 px-2.5 py-1 rounded-md uppercase tracking-wider border border-cyan-200/60 inline-block">
+                                    Transfer Bertahap
+                                  </span>
+                                </div>
+                              )}
 
                               {req.buktiTransferUrl && (() => {
                                 const urls = req.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean);
@@ -3442,7 +3639,7 @@ export default function App() {
                                   {/* USER ACTIONS */}
                                   {activeRole === Role.USER && (
                                     <>
-                                      {([RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status) || (req.status === RequestStatus.PENDING_APPROVAL && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
+                                      {([RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status) || (req.status === RequestStatus.PENDING_APPROVAL && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')))) && (
                                         <button
                                           onClick={() => {
                                             setSelectedRequest(req);
@@ -3540,7 +3737,7 @@ export default function App() {
                                         </div>
                                       )}
 
-                                      {([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED, RequestStatus.PENDING_TALANGAN_TRANSFER].includes(req.status) || (req.status === RequestStatus.PENDING_APPROVAL && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]') || req.category === 'TALANGAN'))) && (
+                                      {([RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.REPORTING, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.PENDING_TALANGAN_TRANSFER].includes(req.status) || (req.status === RequestStatus.PENDING_APPROVAL && (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]') || req.category === 'TALANGAN'))) && (
                                         <button
                                           type="button"
                                           onClick={() => {
@@ -3555,9 +3752,7 @@ export default function App() {
                                         >
                                           {hasRejectedItems
                                             ? 'Perbaiki Laporan'
-                                            : (req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]') || req.category === 'TALANGAN')
-                                              ? 'Isi Nota Talangan'
-                                              : 'Lihat Laporan'}
+                                             : 'Lihat Laporan'}
                                         </button>
                                       )}
 
@@ -3656,7 +3851,7 @@ export default function App() {
                                     <>
                                       {dashboardTab === 'SUBMISSION' ? (
                                         <>
-                                          {([RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status)) && (
+                                          {([RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status)) && (
                                             <button
                                               type="button"
                                               onClick={() => {
@@ -3729,15 +3924,33 @@ export default function App() {
                                       ) : (
                                         <>
                                           {(req.status === RequestStatus.APPROVED || 
-                                             req.status === RequestStatus.PARTIALLY_APPROVED ||
-                                             req.status === RequestStatus.PENDING_TALANGAN_TRANSFER) && (
+                                             req.status === RequestStatus.PARTIALLY_APPROVED) && (
+                                            isOpBiasaRequest(req) && !isFinanceApprovedOpRequest(req, itemReviewHistories) ? (
+                                              <button
+                                                type="button"
+                                                onClick={() => setReviewBudgetReq(req)}
+                                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                              >
+                                                Tinjau Anggaran (Finance)
+                                              </button>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                onClick={() => setTransferReq(req)}
+                                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                              >
+                                                Proses Transfer
+                                              </button>
+                                            )
+                                          )}
+
+                                          {(req.status === RequestStatus.PENDING_TALANGAN_TRANSFER || req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER || req.status === RequestStatus.TRANSFER_BERTAHAP || (isOpBiasaRequest(req) && req.status !== RequestStatus.CLOSED && getTransferBertahap(req, itemReviewHistories, usageItems))) && (
                                             <button
+                                              type="button"
                                               onClick={() => setTransferReq(req)}
                                               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
                                             >
-                                              {req.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-                                                ? 'Transfer & Closing Talangan'
-                                                : 'Proses Transfer'}
+                                              Proses Transfer
                                             </button>
                                           )}
 
@@ -4019,6 +4232,7 @@ export default function App() {
           profiles={profiles}
           sites={sites}
           histories={itemReviewHistories}
+          role={activeRole}
           onApprove={handleReviewBudget}
           onReject={handleRejectBudget}
           onClose={() => setReviewBudgetReq(null)}

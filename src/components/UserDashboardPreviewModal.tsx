@@ -95,9 +95,13 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
       } else if (dashboardFilter === 'APPROVED') {
         list = list.filter(r => r.status === RequestStatus.APPROVED);
       } else if (dashboardFilter === 'TRANSFERRED') {
-        list = list.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.REPORTING);
+        list = list.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING);
       } else if (dashboardFilter === 'REPORTING') {
-        list = list.filter(r => r.status === RequestStatus.REVIEW_MANAGER || r.status === RequestStatus.REVIEW_ADMIN);
+        list = list.filter(r => {
+          const hasItems = usageItems.some(i => i.requestId === r.id);
+          const isTransferBertahapWithItems = r.status === RequestStatus.TRANSFER_BERTAHAP && hasItems;
+          return r.status === RequestStatus.REPORTING || r.status === RequestStatus.REVIEW_MANAGER || r.status === RequestStatus.REVIEW_ADMIN || isTransferBertahapWithItems;
+        });
       } else if (dashboardFilter === 'CLOSED') {
         list = list.filter(r => r.status === RequestStatus.CLOSED);
       } else if (dashboardFilter === 'REJECTED') {
@@ -156,8 +160,9 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
       case RequestStatus.APPROVED:
         return <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-200">Menunggu Transfer</span>;
       case RequestStatus.TRANSFERRED:
+      case RequestStatus.TRANSFER_BERTAHAP:
       case RequestStatus.REPORTING:
-        return <span className="bg-cyan-100 text-cyan-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-cyan-200">Proses Laporan</span>;
+        return <span className="bg-cyan-100 text-cyan-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-cyan-200">{status === RequestStatus.TRANSFER_BERTAHAP ? 'Transfer Bertahap' : 'Proses Laporan'}</span>;
       case RequestStatus.REVIEW_MANAGER:
         return <span className="bg-purple-100 text-purple-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-purple-200">Review Manager</span>;
       case RequestStatus.REVIEW_ADMIN:

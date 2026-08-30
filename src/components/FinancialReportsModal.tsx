@@ -486,6 +486,10 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
         const approvedAmt = getPendingTransferAmount(r);
         const statusLabel = r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
           ? 'Transfer Talangan'
+          : r.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER
+          ? 'Menunggu Transfer Anggaran'
+          : r.status === RequestStatus.TRANSFER_BERTAHAP
+          ? 'TRANSFER BERTAHAP'
           : r.status === RequestStatus.PARTIALLY_APPROVED
           ? 'Disetujui Sebagian'
           : 'Disetujui Manager';
@@ -867,6 +871,10 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
         const pendingAmt = getPendingTransferAmount(r);
         const statusLabel = r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
           ? 'Transfer Talangan'
+          : r.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER
+          ? 'Menunggu Transfer Anggaran'
+          : r.status === RequestStatus.TRANSFER_BERTAHAP
+          ? 'TRANSFER BERTAHAP'
           : r.status === RequestStatus.PARTIALLY_APPROVED
           ? 'Disetujui Sebagian'
           : 'Disetujui Manager';

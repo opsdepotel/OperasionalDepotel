@@ -2,6 +2,7 @@
 
 ## Mandatory Rules
 - **No Unapproved Changes**: Never modify business rules, workflows, role hierarchies, or core logic without explicit approval from the user.
+- **Role-Based Scope Rule**: When a prompt or sentence begins with a specific **ROLE** (e.g., `MANAGER`, `FINANCE`, `DIREKTUR`, `ADMIN`, etc.), apply any modifications, UI changes, logic updates, or actions strictly and exclusively for that specified role.
 
 ## Hierarchy & Approval Rules
 - **DIREKTUR Approval Role**: The direct supervisor for **MANAGER** and **FINANCE** roles is **DIREKTUR**.
@@ -29,6 +30,18 @@
   - Avoid technical developer jargon like `IndexedDB`, `LocalStorage`, `Base64`, or `Database Server` in user notifications.
 - **Auto-Sync**: Automatically syncs pending offline reports to server when network connection is restored.
 - **Auto-Cleanup**: Offline entries are deleted from device storage only after successful upload to the server database.
+
+## Finance Approved Amount Logic (`getFinanceApprovedAmount`) - [LOCKED]
+- **Status: STRICTLY LOCKED**: Logika fungsi `getFinanceApprovedAmount` telah dikunci. Tidak boleh ada perubahan pada fungsi ini dalam kode maupun alurnya tanpa konfirmasi/persetujuan eksplisit dari pengguna.
+- **Rules**:
+  - **Prefix `OPT-` (Dana Talangan)**: Nominal diambil murni dari total nominal database Laporan (`UsageReportItem`) dengan `statusManager === ItemStatus.APPROVED` dan `statusAdmin === ItemStatus.APPROVED`.
+  - **Prefix `OP-` (Operasional Biasa)**: Nominal diambil murni dari database `ItemReviewHistory` (Prioritas Utama saja) dengan `actorRole === Role.FINANCE`, `actionType === 'APPROVAL_FINANCE'`, `status` disetujui, dan `nominal > 0`. Jika belum ada, mengembalikan `0`.
+
+## Transfer Bertahap Logic (`getTransferBertahap`) - [LOCKED]
+- **Status: STRICTLY LOCKED**: Logika fungsi `getTransferBertahap` telah dikunci. Tidak boleh ada perubahan pada fungsi ini dalam kode maupun alurnya tanpa konfirmasi/persetujuan eksplisit dari pengguna.
+- **Rules**:
+  - Mengembalikan `TRUE` jika `req.adminActionAmount` kurang dari `getFinanceApprovedAmount`.
+  - Mengembalikan `FALSE` jika `req.adminActionAmount` sama dengan `getFinanceApprovedAmount`.
 
 ## Dashboard & UI Card Rules
 - **Transfer Status Label**: Use strictly **"SUDAH DITRANSFER"** for `TRANSFERRED` status cards.

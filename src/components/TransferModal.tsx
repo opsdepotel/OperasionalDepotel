@@ -4,8 +4,9 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { BudgetRequest, RequestStatus, ItemReviewHistory, ItemStatus, UserProfile, Role } from '../types';
+import { BudgetRequest, RequestStatus, ItemReviewHistory, ItemStatus, UserProfile, Role, UsageReportItem } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
+import { getFinanceApprovedAmount, getTransferBertahap } from '../App';
 import { ItemHistoryModal } from './ItemHistoryModal';
 import { 
   CreditCard, 
@@ -27,9 +28,10 @@ interface TransferModalProps {
   request: BudgetRequest;
   requesterName?: string;
   profiles?: UserProfile[];
-  onTransfer: (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string, customAdminActionTime?: string) => Promise<void>;
+  onTransfer: (transferredAmount: number, buktiUrl: string, buktiFileId: string, adminComment?: string, customAdminActionTime?: string, isCloseTransferChecked?: boolean) => Promise<void>;
   onReject?: (reason: string) => Promise<void>;
   histories?: ItemReviewHistory[];
+  usageItems?: UsageReportItem[];
   onPreviewDocument?: (doc: { url: string; fileId?: string; title?: string }) => void;
   onClose: () => void;
   googleToken: string;
@@ -48,6 +50,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   onTransfer,
   onReject,
   histories = [],
+  usageItems = [],
   onPreviewDocument,
   onClose,
   googleToken,
@@ -68,10 +71,12 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   const [activeMode, setActiveMode] = useState<'TRANSFER' | 'REVISE'>('TRANSFER');
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
+  const finApprovedNominal = getFinanceApprovedAmount(request, histories, usageItems);
+
   // Target total amount approved for this request
   const targetTotal = isTalangan
-    ? (approvedUsageAmount > 0 ? approvedUsageAmount : request.managerActionAmount)
-    : request.managerActionAmount;
+    ? (finApprovedNominal > 0 ? finApprovedNominal : (approvedUsageAmount > 0 ? approvedUsageAmount : request.managerActionAmount))
+    : (finApprovedNominal > 0 ? finApprovedNominal : (request.managerActionAmount > 0 ? request.managerActionAmount : request.jumlahPengajuan));
   // Accumulated amount already transferred previously
   const previousTransferredAmount = request.adminActionAmount || 0;
   // Remaining amount left to be transferred
@@ -79,13 +84,12 @@ export const TransferModal: React.FC<TransferModalProps> = ({
 
   const initialAmountValue = initialOcrAmount > 0
     ? String(initialOcrAmount)
-    : (isTalangan 
-        ? (remainingAmount > 0 ? String(remainingAmount) : String(targetTotal))
-        : String(request.managerActionAmount || 0));
+    : (remainingAmount > 0 ? String(remainingAmount) : String(targetTotal));
 
   const [transferredAmount, setTransferredAmount] = useState(initialAmountValue);
   const [ocrDate, setOcrDate] = useState<string>(initialOcrDate || '');
   const [adminComment, setAdminComment] = useState('');
+  const [isCloseTransferChecked, setIsCloseTransferChecked] = useState(false);
   const [revisionReason, setRevisionReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -170,64 +174,23 @@ export const TransferModal: React.FC<TransferModalProps> = ({
 
     // Mode TRANSFER
     const amt = parseNumericValue(transferredAmount);
+    const projectedTotal = previousTransferredAmount + amt;
 
-    if (!isTalangan) {
-      // Logic & Validation Khusus Pengajuan Biasa (OP) - Single Transfer
-      if (request.status === RequestStatus.TRANSFERRED) {
-        setError(`Finance tidak bisa melakukan transfer pada UID Pengajuan biasa (${request.id}) yang telah berstatus TRANSFERRED.`);
-        return;
-      }
+    if (remainingAmount > 0 && amt <= 0 && previousTransferredAmount < targetTotal) {
+      setError('Nominal transfer harus lebih besar dari Rp 0.');
+      return;
+    }
 
-      if (amt <= 0) {
-        setError('Nominal transfer harus lebih besar dari Rp 0.');
-        return;
-      }
+    if (targetTotal > 0 && projectedTotal > targetTotal) {
+      setError(
+        `Gagal Transfer: Total akumulasi transfer (${formatIDR(previousTransferredAmount)} + ${formatIDR(amt)} = ${formatIDR(projectedTotal)}) MELEBIHI total nominal disetujui (${formatIDR(targetTotal)}). Sisa maksimal yang dapat ditransfer: ${formatIDR(remainingAmount)}.`
+      );
+      return;
+    }
 
-      if (request.managerActionAmount > 0 && amt > request.managerActionAmount) {
-        setError(
-          `Nominal transfer (${formatIDR(amt)}) tidak boleh melebihi nominal yang disetujui Manager (${formatIDR(request.managerActionAmount)}).`
-        );
-        return;
-      }
-
-      if (request.managerActionAmount > 0 && amt < request.managerActionAmount && !adminComment.trim()) {
-        setError(
-          `Karena nominal transfer (${formatIDR(amt)}) kurang dari nominal yang disetujui Manager (${formatIDR(request.managerActionAmount)}), Catatan Finance wajib diisi (misal: penjelasan alasan transfer sebagian/kurang).`
-        );
-        return;
-      }
-
-      if (!selectedFile) {
-        setError('Bukti Transfer wajib dilampirkan.');
-        return;
-      }
-    } else {
-      // Logic & Validation Khusus Dana Talangan (OPT / BBMDS) - Multi Transfer & Reimbursement
-      const projectedTotal = previousTransferredAmount + amt;
-
-      if (isFinalTalanganTransfer) {
-        if (remainingAmount > 0 && amt <= 0 && previousTransferredAmount < targetTotal) {
-          setError('Nominal transfer harus lebih besar dari Rp 0.');
-          return;
-        }
-      } else {
-        if (amt <= 0 && previousTransferredAmount < targetTotal) {
-          setError('Nominal transfer harus lebih besar dari Rp 0.');
-          return;
-        }
-      }
-
-      if (targetTotal > 0 && projectedTotal > targetTotal) {
-        setError(
-          `Gagal Transfer: Total akumulasi transfer (${formatIDR(previousTransferredAmount)} + ${formatIDR(amt)} = ${formatIDR(projectedTotal)}) MELEBIHI total nominal disetujui (${formatIDR(targetTotal)}). Sisa maksimal yang dapat ditransfer: ${formatIDR(remainingAmount)}.`
-        );
-        return;
-      }
-
-      if (!selectedFile && remainingAmount > 0 && amt > 0) {
-        setError('Bukti Transfer wajib dilampirkan.');
-        return;
-      }
+    if (!selectedFile && remainingAmount > 0 && amt > 0) {
+      setError('Bukti Transfer wajib dilampirkan.');
+      return;
     }
 
     setIsSubmitting(true);
@@ -235,7 +198,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     let finalBuktiFileId = '';
 
     try {
-      const shouldUpload = selectedFile && (!isTalangan || isFinalTalanganTransfer || amt > 0);
+      const shouldUpload = selectedFile && (amt > 0 || !isTalangan || isFinalTalanganTransfer);
       if (shouldUpload) {
         if (!driveFolderId) {
           throw new Error('ID Folder Google Drive belum terinisialisasi.');
@@ -245,7 +208,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         finalBuktiFileId = uploadResult.fileId;
       }
 
-      await onTransfer(amt, finalBuktiUrl, finalBuktiFileId, adminComment.trim(), ocrDate || undefined);
+      await onTransfer(amt, finalBuktiUrl, finalBuktiFileId, adminComment.trim(), ocrDate || undefined, isCloseTransferChecked);
     } catch (err: any) {
       const isAuthError = err.message && (
         err.message.includes('401') ||
@@ -271,7 +234,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         <div className="flex items-center justify-between p-4 sm:p-5 pb-3 border-b border-slate-100 shrink-0 bg-white">
           <div>
             <h2 className="font-display font-bold text-slate-800 text-sm sm:text-base">
-              {isFinalTalanganTransfer ? 'Proses Transfer Dana Talangan (Reimbursement)' : 'Proses Transfer Anggaran'}
+              {isTalangan ? 'Proses Transfer Dana Talangan (Reimbursement)' : 'Proses Transfer Anggaran Operasional'}
             </h2>
             <p className="text-[10px] sm:text-[11px] text-slate-400 font-semibold">Role: Finance</p>
           </div>
@@ -303,7 +266,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           </div>
           <div>
             <span className="text-[10px] text-slate-400 block font-semibold">
-              {isFinalTalanganTransfer ? 'Total Reimbursement' : (isRequesterManagerOrFinance ? 'Disetujui Direktur' : 'Disetujui Manager')}
+              {isTalangan ? 'Total Reimbursement' : (finApprovedNominal > 0 || request.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER || request.status === RequestStatus.TRANSFER_BERTAHAP ? 'Disetujui Finance' : (isRequesterManagerOrFinance ? 'Disetujui Direktur' : 'Disetujui Manager'))}
             </span>
             <span className="font-bold text-emerald-600">
               {formatIDR(targetTotal)}
@@ -311,23 +274,21 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           </div>
         </div>
 
-        {/* Transfer Progress Breakdown (Only for Dana Talangan OPT) */}
-        {isTalangan && (
-          <div className="pt-2 border-t border-slate-200/80 grid grid-cols-2 gap-2 text-[11px]">
-            <div className="bg-white p-2 rounded-lg border border-slate-200/80">
-              <span className="text-[9px] font-bold text-slate-400 uppercase block">Sudah Ditransfer</span>
-              <span className="font-bold text-indigo-600">{formatIDR(previousTransferredAmount)}</span>
-            </div>
-            <div className="bg-white p-2 rounded-lg border border-slate-200/80">
-              <span className="text-[9px] font-bold text-slate-400 uppercase block">Sisa Belum Ditransfer</span>
-              <span className={`font-bold ${remainingAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
-                {formatIDR(remainingAmount)}
-              </span>
-            </div>
+        {/* Transfer Progress Breakdown */}
+        <div className="pt-2 border-t border-slate-200/80 grid grid-cols-2 gap-2 text-[11px]">
+          <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+            <span className="text-[9px] font-bold text-slate-400 uppercase block">Sudah Ditransfer</span>
+            <span className="font-bold text-indigo-600">{formatIDR(previousTransferredAmount)}</span>
           </div>
-        )}
+          <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+            <span className="text-[9px] font-bold text-slate-400 uppercase block">Sisa Belum Ditransfer</span>
+            <span className={`font-bold ${remainingAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+              {formatIDR(remainingAmount)}
+            </span>
+          </div>
+        </div>
 
-        {request.managerComment && (
+        {isTalangan && request.managerComment && (
           <div className="pt-2 border-t border-slate-200">
             <span className="text-[10px] text-slate-400 block font-semibold">
               {isRequesterManagerOrFinance ? 'Catatan Direktur' : 'Catatan Manager'}
@@ -337,8 +298,8 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         )}
       </div>
 
-      {/* Previous Transfers List Card (Only for Dana Talangan OPT) */}
-      {isTalangan && previousTransferredAmount > 0 && (
+      {/* Previous Transfers List Card */}
+      {previousTransferredAmount > 0 && (
         <div className="bg-indigo-50/40 border border-indigo-100 rounded-xl p-3.5 space-y-2.5 text-xs">
           <div className="flex items-center justify-between border-b border-indigo-100 pb-2">
             <span className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
@@ -553,7 +514,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
       })()}
 
       {/* Option Selector: Transfer vs Revisi */}
-      {onReject && !isFinalTalanganTransfer && (
+      {onReject && isTalangan && !isFinalTalanganTransfer && (
         <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl border border-slate-200">
           <button
             type="button"
@@ -643,193 +604,53 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               </div>
             )}
 
-            {!isTalangan ? (
-              /* FORM PENGAJUAN BIASA (OP) - SINGLE TRANSFER */
+            {isTalangan && !isFinalTalanganTransfer ? (
+              /* FORM INITIAL DANA TALANGAN (OPT Awal) */
               <div className="space-y-4">
-                {request.status === RequestStatus.TRANSFERRED && (
-                  <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-3.5 text-xs space-y-1">
-                    <p className="font-bold flex items-center gap-1.5 text-amber-800">
-                      <AlertTriangle className="w-4 h-4 text-amber-600" />
-                      <span>Status Transferred</span>
-                    </p>
-                    <p className="text-[11px] text-amber-800 leading-relaxed font-medium">
-                      UID Pengajuan biasa (<strong>{request.id}</strong>) telah berstatus <strong>TRANSFERRED</strong>. Finance tidak bisa melakukan transfer ulang.
-                    </p>
-                  </div>
-                )}
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">
-                    Nominal Dana Ditransfer (Rupiah) <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={transferredAmount}
-                      onChange={(e) => setTransferredAmount(e.target.value.replace(/\D/g, ''))}
-                      placeholder="Nominal transfer"
-                      disabled={request.status === RequestStatus.TRANSFERRED}
-                      className={`w-full pl-9 pr-3 py-2 text-xs bg-white border rounded-xl focus:ring-1 transition-all outline-none ${
-                        transferredAmount && parseNumericValue(transferredAmount) > request.managerActionAmount && request.managerActionAmount > 0
-                          ? 'border-red-400 focus:border-red-500 focus:ring-red-500/30'
-                          : 'border-slate-200 focus:border-indigo-500 focus:ring-indigo-500/30'
-                      }`}
-                      required
-                    />
-                    <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  </div>
-
-                  {transferredAmount && parseNumericValue(transferredAmount) > 0 && (
-                    parseNumericValue(transferredAmount) > request.managerActionAmount && request.managerActionAmount > 0 ? (
-                      <div className="mt-2 p-2.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-[11px] font-semibold flex items-start gap-2 shadow-2xs">
-                        <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-bold text-red-800">Transfer Melebihi Nominal Disetujui Manager!</p>
-                          <p className="text-[10px] text-red-700 mt-0.5 leading-snug">
-                            Nominal transfer (<strong>{formatIDR(transferredAmount)}</strong>) tidak boleh melebihi nominal yang disetujui Manager (<strong>{formatIDR(request.managerActionAmount)}</strong>).
-                          </p>
-                        </div>
-                      </div>
-                    ) : parseNumericValue(transferredAmount) < request.managerActionAmount && request.managerActionAmount > 0 ? (
-                      <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-[11px] font-semibold flex items-start gap-2 shadow-2xs">
-                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-bold text-amber-900">Transfer Kurang Dari Nominal Disetujui Manager</p>
-                          <p className="text-[10px] text-amber-800 mt-0.5 leading-snug">
-                            Nominal transfer (<strong>{formatIDR(transferredAmount)}</strong>) kurang dari disetujui Manager (<strong>{formatIDR(request.managerActionAmount)}</strong>). <strong>Catatan Finance WAJIB diisi</strong>.
-                          </p>
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="text-[10px] text-indigo-600 font-semibold mt-1">
-                        Format: {formatIDR(transferredAmount)}
-                      </p>
-                    )
-                  )}
+                <div className="bg-indigo-50 border border-indigo-100 text-indigo-800 rounded-xl p-3.5 text-xs space-y-1">
+                  <p className="font-semibold flex items-center gap-1.5 text-indigo-700">
+                    <Coins className="w-4 h-4 text-indigo-600" />
+                    <span>Konfirmasi Dana Talangan Pribadi</span>
+                  </p>
+                  <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                    Sistem mencatat transfer sebesar <strong>Rp 0</strong> untuk UID ini karena merupakan Dana Talangan Pribadi. Mengonfirmasi akan mengubah status menjadi <strong>TRANSFERRED</strong> agar pemohon dapat mulai mengunggah nota/bukti pemakaian dana secara bertahap.
+                  </p>
                 </div>
 
-                {/* Bukti Transfer Upload */}
-                <div className="space-y-2 pt-1">
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    Bukti / Nota Transfer Bank (Wajib)
-                  </label>
-                  
-                  {/* File Status Indicator */}
-                  {selectedFile && (
-                    <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 p-3 rounded-xl text-xs flex items-center justify-between">
-                      <div className="flex items-center gap-2 truncate">
-                        <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500 shrink-0" />
-                        <div className="truncate">
-                          <p className="font-bold truncate">{selectedFile.name}</p>
-                          <p className="text-[9px] text-emerald-500 font-mono">{(selectedFile.size / 1024).toFixed(0)} KB</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedFile(null)}
-                        className="text-[10px] font-bold text-red-500 hover:text-red-700 hover:underline px-2 py-1 bg-red-50 rounded-lg shrink-0 cursor-pointer"
-                      >
-                        Hapus
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Hidden Input Selectors */}
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleFileChange}
-                    accept="image/*,application/pdf"
-                    className="hidden"
-                  />
-                  <input
-                    type="file"
-                    ref={cameraInputRef}
-                    onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        setSelectedFile(e.target.files[0]);
-                      }
-                    }}
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                  />
-
-                  {/* Capture/Upload Options Panel */}
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => cameraInputRef.current?.click()}
-                      disabled={request.status === RequestStatus.TRANSFERRED}
-                      className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer disabled:opacity-50"
-                    >
-                      <Camera className="w-5 h-5 text-indigo-500" />
-                      <span>Kamera HP</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={request.status === RequestStatus.TRANSFERRED}
-                      className="p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl text-center flex flex-col items-center justify-center gap-1.5 transition-all text-[10px] font-bold text-slate-600 cursor-pointer disabled:opacity-50"
-                    >
-                      <UploadCloud className="w-5 h-5 text-indigo-500" />
-                      <span>File / Galeri</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Catatan Finance */}
                 <div className="space-y-1">
                   <label className="block text-xs font-semibold text-slate-500">
-                    Catatan Finance{' '}
-                    {parseNumericValue(transferredAmount) < request.managerActionAmount && request.managerActionAmount > 0 ? (
-                      <span className="text-red-500 font-bold">(Wajib - Transfer Kurang dari Disetujui) *</span>
-                    ) : (
-                      <span className="text-slate-400 font-normal">(Opsional)</span>
-                    )}
+                    Catatan Finance <span className="text-slate-400 font-normal">(Opsional)</span>
                   </label>
                   <textarea
                     rows={2}
                     value={adminComment}
                     onChange={(e) => setAdminComment(e.target.value)}
-                    disabled={request.status === RequestStatus.TRANSFERRED}
-                    placeholder={
-                      parseNumericValue(transferredAmount) < request.managerActionAmount && request.managerActionAmount > 0
-                        ? "Jelaskan alasan nominal transfer kurang dari nominal yang disetujui Manager..."
-                        : "Tambahkan catatan dari Finance (misal: No. Ref Transfer, Nama Bank, dll)..."
-                    }
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-none disabled:bg-slate-50"
+                    placeholder="Tambahkan catatan dari Finance (misal: No. Ref Transfer, Nama Bank, dll)..."
+                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-none"
                   />
                 </div>
 
-                {/* Single Transfer Submit Button for OP */}
                 <button
                   type="submit"
-                  disabled={
-                    isSubmitting ||
-                    request.status === RequestStatus.TRANSFERRED ||
-                    (request.managerActionAmount > 0 && parseNumericValue(transferredAmount) > request.managerActionAmount) ||
-                    (request.managerActionAmount > 0 && parseNumericValue(transferredAmount) < request.managerActionAmount && !adminComment.trim())
-                  }
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 disabled:shadow-none transition-all cursor-pointer"
+                  disabled={isSubmitting}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
                 >
                   <CreditCard className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Memproses & Mengunggah...' : 'Simpan data dan bukti transfer'}</span>
+                  <span>{isSubmitting ? 'Memproses...' : 'Konfirmasi & Aktifkan UID'}</span>
                 </button>
               </div>
-            ) : isFinalTalanganTransfer ? (
-              /* FORM FINAL REIMBURSEMENT DANA TALANGAN (OPT) */
+            ) : (
+              /* FORM MULTI TRANSFER PENCAIRAN (OP & OPT) */
               <div className="space-y-3">
                 <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl p-3.5 text-xs space-y-1">
                   <p className="font-semibold flex items-center gap-1.5 text-emerald-700">
                     <Coins className="w-4 h-4 text-emerald-600" />
-                    <span>Reimbursement Dana Talangan Pribadi</span>
+                    <span>{isTalangan ? 'Reimbursement Dana Talangan Pribadi' : 'Pencairan Anggaran Operasional'}</span>
                   </p>
                   <p className="text-[10px] text-slate-600 leading-relaxed font-medium">
-                    Total reimbursement disetujui: <strong>{formatIDR(approvedUsageAmount || targetTotal)}</strong>. Sisa belum ditransfer: <strong>{formatIDR(remainingAmount)}</strong>. Anda dapat mentransfer seluruhnya atau secara bertahap.
+                    {isTalangan
+                      ? <>Total reimbursement disetujui: <strong>{formatIDR(approvedUsageAmount || targetTotal)}</strong>. Sisa belum ditransfer: <strong>{formatIDR(remainingAmount)}</strong>. Anda dapat mentransfer seluruhnya atau secara bertahap.</>
+                      : <>Total anggaran disetujui: <strong>{formatIDR(targetTotal)}</strong>. Sisa belum ditransfer: <strong>{formatIDR(remainingAmount)}</strong>. Anda dapat mentransfer seluruhnya atau secara bertahap.</>}
                   </p>
                 </div>
 
@@ -848,7 +669,9 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-emerald-900 leading-relaxed">
-                      Seluruh dana yang disetujui telah 100% ditransfer. Klik tombol di bawah ini untuk melakukan <strong>CLOSING UID TALANGAN</strong> dan mengarsipkan transaksi ini.
+                      {isTalangan
+                        ? <>Seluruh dana yang disetujui telah 100% ditransfer. Klik tombol di bawah ini untuk melakukan <strong>CLOSING UID TALANGAN</strong> dan mengarsipkan transaksi ini.</>
+                        : <>Seluruh anggaran yang disetujui telah 100% ditransfer (Lunas). Klik tombol di bawah ini untuk menyelesaikan pencairan <strong>ANGGARAN OPERASIONAL</strong>.</>}
                     </p>
                     <button
                       type="button"
@@ -857,7 +680,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                       className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-200 transition-all cursor-pointer"
                     >
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>{isSubmitting ? 'Memproses Closing...' : 'LAKUKAN CLOSING UID TALANGAN'}</span>
+                      <span>{isSubmitting ? 'Memproses...' : (isTalangan ? 'LAKUKAN CLOSING UID TALANGAN' : 'SELESAIKAN PENCAIRAN ANGGARAN')}</span>
                     </button>
                   </div>
                 ) : (
@@ -902,20 +725,24 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                       )}
                     </div>
 
-                    {/* Notification Banner when total transfer equals total approved nominal */}
-                    {targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) === targetTotal && parseNumericValue(transferredAmount) > 0 && (
+                    {/* Notification Banner when total transfer equals total approved nominal or closing checkmark is checked */}
+                    {targetTotal > 0 && (previousTransferredAmount + parseNumericValue(transferredAmount) >= targetTotal || isCloseTransferChecked) && parseNumericValue(transferredAmount) >= 0 && (
                       <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl p-3.5 text-xs space-y-1.5 animate-fade-in">
                         <div className="flex items-center justify-between">
                           <p className="font-bold flex items-center gap-1.5 text-emerald-800">
                             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                            <span>OPSI CLOSING DIAKTIFKAN</span>
+                            <span>{isTalangan ? 'OPSI CLOSING DIAKTIFKAN' : (isCloseTransferChecked ? 'CLOSING PENGAJUAN ANGGARAN' : 'PENCAIRAN LUNAS (100%)')}</span>
                           </p>
                           <span className="px-2 py-0.5 text-[9.5px] font-black bg-emerald-600 text-white rounded-full uppercase tracking-wider">
-                            CLOSING READY
+                            {isTalangan ? 'CLOSING READY' : 'STATUS: TRANSFERRED'}
                           </span>
                         </div>
                         <p className="text-[11px] text-emerald-800 leading-relaxed font-medium">
-                          Total akumulasi transfer (<strong>{formatIDR(targetTotal)}</strong>) sudah <strong>SAMA DENGAN</strong> total nominal disetujui. Mengonfirmasi transfer ini akan melakukan <strong>CLOSING UID TALANGAN</strong> (Status: CLOSED).
+                          {isTalangan
+                            ? <>Total akumulasi transfer (<strong>{formatIDR(targetTotal)}</strong>) sudah <strong>SAMA DENGAN</strong> total nominal disetujui. Mengonfirmasi transfer ini akan melakukan <strong>CLOSING UID TALANGAN</strong> (Status: CLOSED).</>
+                            : (isCloseTransferChecked
+                                ? <>Opsi <strong>Closing Transfer Pengajuan Anggaran</strong> dicentang. Mengonfirmasi transfer ini akan menetapkan status UID menjadi <strong>TRANSFERRED</strong>.</>
+                                : <>Total akumulasi transfer (<strong>{formatIDR(targetTotal)}</strong>) sudah <strong>SAMA DENGAN</strong> total nominal disetujui. Mengonfirmasi transfer ini akan menyelesaikan pencairan anggaran (Status: TRANSFERRED).</>)}
                         </p>
                       </div>
                     )}
@@ -923,7 +750,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                     {/* Bukti Transfer Upload */}
                     <div className="space-y-2 pt-1">
                       <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        Bukti / Nota Transfer Pengembalian Dana (Wajib)
+                        Bukti / Struk Transfer Bank (Wajib)
                       </label>
                       
                       {selectedFile && (
@@ -1000,17 +827,36 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                       />
                     </div>
 
-                    {/* Submit Button for Final Reimbursement */}
+                    {/* Checkmark Closing Transfer Pengajuan Anggaran (Default: Unchecked) */}
+                    {!isTalangan && (
+                      <div className="flex items-start gap-2.5 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                        <input
+                          type="checkbox"
+                          id="closeTransferCheck"
+                          checked={isCloseTransferChecked}
+                          onChange={(e) => setIsCloseTransferChecked(e.target.checked)}
+                          className="mt-0.5 rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer shrink-0"
+                        />
+                        <label htmlFor="closeTransferCheck" className="text-xs text-slate-700 cursor-pointer font-medium select-none">
+                          <span className="font-bold block text-slate-800 text-xs">Closing Transfer Pengajuan Anggaran</span>
+                          <span className="text-[10.5px] text-slate-500 leading-tight block mt-0.5">
+                            Centang opsi ini jika transfer ini (meskipun nominal kurang dari disetujui) adalah transfer terakhir untuk langsung mengubah status UID menjadi <strong className="text-emerald-700 font-bold">TRANSFERRED</strong>.
+                          </span>
+                        </label>
+                      </div>
+                    )}
+
+                    {/* Submit Button */}
                     <button
                       type="submit"
                       disabled={isSubmitting || (targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) > targetTotal)}
                       className={`w-full py-2.5 font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer ${
-                        targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) === targetTotal
+                        targetTotal > 0 && (previousTransferredAmount + parseNumericValue(transferredAmount) >= targetTotal || isCloseTransferChecked)
                           ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-100'
                           : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100'
                       } disabled:bg-slate-300 disabled:shadow-none`}
                     >
-                      {targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) === targetTotal ? (
+                      {targetTotal > 0 && (previousTransferredAmount + parseNumericValue(transferredAmount) >= targetTotal || isCloseTransferChecked) ? (
                         <CheckCircle2 className="w-4 h-4" />
                       ) : (
                         <CreditCard className="w-4 h-4" />
@@ -1018,48 +864,13 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                       <span>
                         {isSubmitting 
                           ? 'Memproses & Mengunggah...' 
-                          : (targetTotal > 0 && previousTransferredAmount + parseNumericValue(transferredAmount) === targetTotal
-                              ? 'Kirim Bukti & Closing UID Talangan (Lunas 100%)' 
-                              : 'Kirim Bukti & Selesaikan Reimbursement')}
+                          : (targetTotal > 0 && (previousTransferredAmount + parseNumericValue(transferredAmount) >= targetTotal || isCloseTransferChecked)
+                              ? (isTalangan ? 'Kirim Bukti & Closing UID Talangan (Lunas 100%)' : 'Kirim Bukti & Set Status TRANSFERRED')
+                              : (isTalangan ? 'Kirim Bukti & Selesaikan Reimbursement' : 'Kirim Bukti & Transfer Anggaran'))}
                       </span>
                     </button>
                   </>
                 )}
-              </div>
-            ) : (
-              /* FORM INITIAL DANA TALANGAN (OPT Awal) */
-              <div className="space-y-4">
-                <div className="bg-indigo-50 border border-indigo-100 text-indigo-800 rounded-xl p-3.5 text-xs space-y-1">
-                  <p className="font-semibold flex items-center gap-1.5 text-indigo-700">
-                    <Coins className="w-4 h-4 text-indigo-600" />
-                    <span>Konfirmasi Dana Talangan Pribadi</span>
-                  </p>
-                  <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                    Sistem mencatat transfer sebesar <strong>Rp 0</strong> untuk UID ini karena merupakan Dana Talangan Pribadi. Mengonfirmasi akan mengubah status menjadi <strong>TRANSFERRED</strong> agar pemohon dapat mulai mengunggah nota/bukti pemakaian dana secara bertahap.
-                  </p>
-                </div>
-
-                <div className="space-y-1">
-                  <label className="block text-xs font-semibold text-slate-500">
-                    Catatan Finance <span className="text-slate-400 font-normal">(Opsional)</span>
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={adminComment}
-                    onChange={(e) => setAdminComment(e.target.value)}
-                    placeholder="Tambahkan catatan dari Finance (misal: No. Ref Transfer, Nama Bank, dll)..."
-                    className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none resize-none"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
-                >
-                  <CreditCard className="w-4 h-4" />
-                  <span>{isSubmitting ? 'Memproses...' : 'Konfirmasi & Aktifkan UID'}</span>
-                </button>
               </div>
             )}
           </>
