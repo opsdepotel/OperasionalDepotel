@@ -39,42 +39,42 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
   const displayReviewerRole = reviewerRoleTitle;
 
   // Manager / Direktur approval info helper for Finance Role
-  const managerDirekturHistory = histories.find(h =>
+  const managerDirekturHistory = histories.find(h => 
     (h.requestUid === request.id || h.itemUid === request.id) &&
     (
-      h.actionType === 'APPROVAL_MANAGER' ||
-      h.actionType === 'APPROVAL_DIREKTUR' ||
-      h.actionType === 'REVISI_MANAGER' ||
+      h.actionType === 'APPROVAL_MANAGER' || 
+      h.actionType === 'APPROVAL_DIREKTUR' || 
+      h.actionType === 'REVISI_MANAGER' || 
       h.actionType === 'REVISI_DIREKTUR'
     )
   );
 
-  const isDirekturApproval =
+  const isDirekturApproval = 
     managerDirekturHistory?.actionType.includes('DIREKTUR') ||
     managerDirekturHistory?.actorRole === Role.DIREKTUR ||
     isRequesterManagerOrFinance;
 
   const managerDirekturRoleLabel = isDirekturApproval ? 'Direktur' : 'Manager';
 
-  const managerDirekturName =
-    managerDirekturHistory?.actorNama ||
-    profiles.find(p => p.email.toLowerCase() === request.managerEmail.toLowerCase())?.nama ||
-    request.managerEmail ||
+  const managerDirekturName = 
+    managerDirekturHistory?.actorNama || 
+    profiles.find(p => p.email.toLowerCase() === request.managerEmail.toLowerCase())?.nama || 
+    request.managerEmail || 
     (isDirekturApproval ? 'Direktur' : 'Manager');
 
-  const managerApprovedAmount =
-    managerDirekturHistory?.nominal ||
+  const managerApprovedAmount = 
+    managerDirekturHistory?.nominal || 
     (request.managerActionAmount > 0 ? request.managerActionAmount : request.jumlahPengajuan);
 
-  const managerCommentText =
-    managerDirekturHistory?.catatan ||
-    request.managerComment ||
+  const managerCommentText = 
+    managerDirekturHistory?.catatan || 
+    request.managerComment || 
     '';
 
-  const initialNominal = request.adminActionAmount > 0
-    ? request.adminActionAmount
-    : request.managerActionAmount > 0
-      ? request.managerActionAmount
+  const initialNominal = request.adminActionAmount > 0 
+    ? request.adminActionAmount 
+    : request.managerActionAmount > 0 
+      ? request.managerActionAmount 
       : request.jumlahPengajuan;
 
   const [approvedAmount, setApprovedAmount] = useState(String(initialNominal));
@@ -115,32 +115,32 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
 
     return tokensToProcess.map(id => {
       const cleanId = id.toUpperCase();
-      const found = sitesList.find(s =>
-        s.siteId.toUpperCase().trim() === cleanId ||
+      const found = sitesList.find(s => 
+        s.siteId.toUpperCase().trim() === cleanId || 
         s.siteId.toUpperCase().replaceAll('-', '').trim() === cleanId.replaceAll('-', '')
       );
 
       if (found) {
-        return {
-          id: found.siteId,
-          name: found.siteName,
-          coordinates: found.coordinates || '',
-          isVerified: true
+        return { 
+          id: found.siteId, 
+          name: found.siteName, 
+          coordinates: found.coordinates || '', 
+          isVerified: true 
         };
       }
       if (cleanId === 'DUREN-SAWIT' || cleanId === 'DURENSAWIT') {
-        return {
-          id: 'DUREN-SAWIT',
-          name: 'Depot / Pos Utama',
-          coordinates: '',
-          isVerified: true
+        return { 
+          id: 'DUREN-SAWIT', 
+          name: 'Depot / Pos Utama', 
+          coordinates: '', 
+          isVerified: true 
         };
       }
-      return {
-        id: id,
-        name: null,
-        coordinates: '',
-        isVerified: false
+      return { 
+        id: id, 
+        name: null, 
+        coordinates: '', 
+        isVerified: false 
       };
     });
   };
@@ -248,8 +248,8 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
                     : '';
 
                   return (
-                    <div
-                      key={idx}
+                    <div 
+                      key={idx} 
                       className="flex flex-col gap-1 bg-white px-3 py-2 rounded-xl border border-slate-200 shadow-2xs"
                     >
                       {/* Top Row: Site ID & Site Name */}

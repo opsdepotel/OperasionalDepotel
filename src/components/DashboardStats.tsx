@@ -272,7 +272,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   const getTransferTimestampMs = (r: BudgetRequest): number => {
     if (histories && histories.length > 0) {
-      const transferLog = histories.find(h =>
+      const transferLog = histories.find(h => 
         (h.requestUid === r.id || h.itemUid === r.id) &&
         (h.status === 'TRANSFERRED' || h.status === RequestStatus.TRANSFERRED || h.actionType === 'APPROVAL_FINANCE')
       );
@@ -289,7 +289,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   const getTransferDateDisplay = (r: BudgetRequest): string => {
     if (histories && histories.length > 0) {
-      const transferLog = histories.find(h =>
+      const transferLog = histories.find(h => 
         (h.requestUid === r.id || h.itemUid === r.id) &&
         (h.status === 'TRANSFERRED' || h.status === RequestStatus.TRANSFERRED || h.actionType === 'APPROVAL_FINANCE')
       );
@@ -338,9 +338,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
     const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
 
-    const myUserReqs = requests.filter(r =>
-      r.userEmail.toLowerCase() === email.toLowerCase() &&
-      r.status !== RequestStatus.CANCELLED &&
+    const myUserReqs = requests.filter(r => 
+      r.userEmail.toLowerCase() === email.toLowerCase() && 
+      r.status !== RequestStatus.CANCELLED && 
       !isBbmReq(r)
     ).sort((a, b) => {
       const timeA = getTransferTimestampMs(a);
@@ -373,10 +373,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const totPengajuan = filteredReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
     const totTransfer = filteredReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
     const totDilaporkan = filteredReqs.reduce((sum, r) => {
-      const reqUsage = usageItems.filter(item =>
-        item.requestId === r.id &&
-        item.statusManager === ItemStatus.APPROVED &&
-        item.statusAdmin === ItemStatus.APPROVED &&
+      const reqUsage = usageItems.filter(item => 
+        item.requestId === r.id && 
+        item.statusManager === ItemStatus.APPROVED && 
+        item.statusAdmin === ItemStatus.APPROVED && 
         !isBbmItem(item)
       );
       return sum + reqUsage.reduce((sub, u) => sub + u.nominal, 0);
@@ -392,10 +392,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     doc.text(`Sisa Saldo Operasional: ${formatIDR(totSisa)}`, 225, 32.5);
 
     const tableRows = filteredReqs.map((r, idx) => {
-      const reqUsageApproved = usageItems.filter(item =>
-        item.requestId === r.id &&
-        item.statusManager === ItemStatus.APPROVED &&
-        item.statusAdmin === ItemStatus.APPROVED &&
+      const reqUsageApproved = usageItems.filter(item => 
+        item.requestId === r.id && 
+        item.statusManager === ItemStatus.APPROVED && 
+        item.statusAdmin === ItemStatus.APPROVED && 
         !isBbmItem(item)
       );
       const reportedApproved = reqUsageApproved.reduce((sum, u) => sum + u.nominal, 0);
@@ -590,8 +590,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     // 2. Transferred requests that need usage report filling (status is TRANSFERRED or REPORTING)
     // 3. Reports with some rejected items that need correction
     const taskReportNeeded = myReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING).length;
-    const taskCorrections = myReqs.filter(r =>
-      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) &&
+    const taskCorrections = myReqs.filter(r => 
+      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
       myUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
     ).length;
     const taskRejected = myReqs.filter(r => r.status === RequestStatus.REJECTED).length;
@@ -612,13 +612,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       return isReportingState && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED);
     }).length;
 
-    const pendingApprCount = myReqs.filter(r =>
-      r.status === RequestStatus.PENDING_APPROVAL ||
+    const pendingApprCount = myReqs.filter(r => 
+      r.status === RequestStatus.PENDING_APPROVAL || 
       (isOpBiasaRequest(r) && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) && !isFinanceApprovedOpRequest(r, histories))
     ).length;
 
     const approvedWaitingTransfer = myReqs.filter(r => isPendingTransferRequest(r, histories, usageItems)).length;
-    const reportingCount = myReqs.filter(r =>
+    const reportingCount = myReqs.filter(r => 
       r.status === RequestStatus.REPORTING ||
       r.status === RequestStatus.REVIEW_MANAGER ||
       r.status === RequestStatus.REVIEW_ADMIN ||
@@ -663,7 +663,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
         {/* Stats Cards Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          <div
+          <div 
             onClick={() => handleCardClick('PENDING')}
             className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'PENDING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -679,7 +679,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Menunggu Approval</p>
           </div>
 
-          <div
+          <div 
             onClick={() => handleCardClick('APPROVED')}
             className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'APPROVED' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -695,7 +695,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Pengajuan disetujui, menunggu proses transfer</p>
           </div>
 
-          <div
+          <div 
             onClick={() => handleCardClick('REPORTING')}
             className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'REPORTING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -720,7 +720,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             )}
           </div>
 
-          <div
+          <div 
             onClick={() => handleCardClick('CLOSED')}
             className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'CLOSED' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -736,7 +736,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Dinyatakan Closed oleh Finance</p>
           </div>
 
-          <div
+          <div 
             onClick={() => handleCardClick('REJECTED')}
             className={`p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-rose-300 hover:shadow-md ${
               activeFilter === 'REJECTED' ? 'border-rose-500 bg-rose-50/20 ring-2 ring-rose-500/20' : 'bg-white border-slate-200'
@@ -761,7 +761,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         </div>
 
         {/* Financial info Card - Saldo Operasional */}
-        <div
+        <div 
           onClick={() => setIsTransactionReportOpen(true)}
           className="bg-slate-900 hover:bg-slate-850 text-white rounded-2xl p-5 shadow-lg border border-slate-800 hover:border-emerald-500/50 hover:shadow-emerald-950/20 transition-all cursor-pointer group relative overflow-hidden"
           id="saldo-operasional-card"
@@ -828,9 +828,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
                   const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
 
-                  const myUserReqs = requests.filter(r =>
-                    r.userEmail.toLowerCase() === email.toLowerCase() &&
-                    r.status !== RequestStatus.CANCELLED &&
+                  const myUserReqs = requests.filter(r => 
+                    r.userEmail.toLowerCase() === email.toLowerCase() && 
+                    r.status !== RequestStatus.CANCELLED && 
                     !isBbmReq(r)
                   ).sort((a, b) => {
                     const timeA = getTransferTimestampMs(a);
@@ -856,10 +856,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   const totPengajuan = filteredReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
                   const totTransfer = filteredReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
                   const totDilaporkan = filteredReqs.reduce((sum, r) => {
-                    const reqUsage = usageItems.filter(item =>
-                      item.requestId === r.id &&
-                      item.statusManager === ItemStatus.APPROVED &&
-                      item.statusAdmin === ItemStatus.APPROVED &&
+                    const reqUsage = usageItems.filter(item => 
+                      item.requestId === r.id && 
+                      item.statusManager === ItemStatus.APPROVED && 
+                      item.statusAdmin === ItemStatus.APPROVED && 
                       !isBbmItem(item)
                     );
                     return sum + reqUsage.reduce((sub, u) => sub + u.nominal, 0);
@@ -883,10 +883,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                         </thead>
                         <tbody className="divide-y divide-slate-150 bg-white">
                           {filteredReqs.map((r, idx) => {
-                            const reqUsageApproved = usageItems.filter(item =>
-                              item.requestId === r.id &&
-                              item.statusManager === ItemStatus.APPROVED &&
-                              item.statusAdmin === ItemStatus.APPROVED &&
+                            const reqUsageApproved = usageItems.filter(item => 
+                              item.requestId === r.id && 
+                              item.statusManager === ItemStatus.APPROVED && 
+                              item.statusAdmin === ItemStatus.APPROVED && 
                               !isBbmItem(item)
                             );
                             const reportedApproved = reqUsageApproved.reduce((sum, u) => sum + u.nominal, 0);
@@ -1011,12 +1011,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             return `${year}-${month}-${day}`;
           };
           const todayStr = getTodayStr();
-          const todayActivitiesCount = activities.filter(act =>
+          const todayActivitiesCount = activities.filter(act => 
             act.userEmail.toLowerCase() === email.toLowerCase() && act.tanggal === todayStr
           ).length;
 
           return (
-            <div
+            <div 
               onClick={onOpenActivities}
               className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
               id="activity-dashboard-card"
@@ -1067,8 +1067,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const myPersonalReqIds = myPersonalReqs.map(r => r.id);
     const myPersonalUsage = usageItems.filter(item => myPersonalReqIds.includes(item.requestId));
     const myTaskReportNeeded = myPersonalReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING).length;
-    const myTaskCorrections = myPersonalReqs.filter(r =>
-      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) &&
+    const myTaskCorrections = myPersonalReqs.filter(r => 
+      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
       myPersonalUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
     ).length;
     const myTaskRejected = myPersonalReqs.filter(r => r.status === RequestStatus.REJECTED).length;
@@ -1158,7 +1158,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
             {/* 2 Stats Cards (Approval & Review) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div
+              <div 
                 onClick={() => handleCardClick('PENDING')}
                 className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md flex flex-col justify-between min-h-[140px] ${
                   activeFilter === 'PENDING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -1177,7 +1177,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 </div>
               </div>
 
-              <div
+              <div 
                 onClick={() => handleCardClick('REPORTING')}
                 className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md flex flex-col justify-between min-h-[140px] ${
                   activeFilter === 'REPORTING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -1212,12 +1212,12 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === email.toLowerCase() || p.email.toLowerCase() === email.toLowerCase());
               const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
 
-              const todayTeamActivitiesCount = activities.filter(act =>
+              const todayTeamActivitiesCount = activities.filter(act => 
                 subEmails.has(act.userEmail.toLowerCase()) && act.tanggal === todayStr
               ).length;
 
               return (
-                <div
+                <div 
                   onClick={onOpenActivities}
                   className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
                   id="manager-activity-card"
@@ -1249,9 +1249,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   // Finance stats
   if (role === Role.FINANCE) {
     // 1. Pending Finance Review for OP- requests (after Manager/Direktur approval)
-    const pendingFinanceBudgetReviewReqs = requests.filter(r =>
+    const pendingFinanceBudgetReviewReqs = requests.filter(r => 
       r.status !== RequestStatus.CANCELLED &&
-      isOpBiasaRequest(r) &&
+      isOpBiasaRequest(r) && 
       (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) &&
       !isFinanceApprovedOpRequest(r, histories)
     );
@@ -1302,8 +1302,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const myPersonalReqIds = myPersonalReqs.map(r => r.id);
     const myPersonalUsage = usageItems.filter(item => myPersonalReqIds.includes(item.requestId));
     const myTaskReportNeeded = myPersonalReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING).length;
-    const myTaskCorrections = myPersonalReqs.filter(r =>
-      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) &&
+    const myTaskCorrections = myPersonalReqs.filter(r => 
+      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
       myPersonalUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
     ).length;
     const myTaskRejected = myPersonalReqs.filter(r => r.status === RequestStatus.REJECTED).length;
@@ -1336,7 +1336,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       const totalReportedApproved = userUsage
         .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
         .reduce((sum, item) => sum + item.nominal, 0);
-
+      
       const balance = totalTransferredVal + totalAdjustmentsVal - totalReportedApproved;
       return { user, balance, requiredNominal: Math.abs(balance) };
     }).filter(item => item.requiredNominal > 0.01);
@@ -1344,8 +1344,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const unbalancedUsersCount = unbalancedUsersStats.length;
     const totalAdjustmentNominalNeeded = unbalancedUsersStats.reduce((sum, item) => sum + item.requiredNominal, 0);
 
-    const transferredReqsList = requests.filter(r =>
-      !isBbmRequestAdmin(r) &&
+    const transferredReqsList = requests.filter(r => 
+      !isBbmRequestAdmin(r) && 
       r.status !== RequestStatus.CANCELLED &&
       (r.adminActionAmount || 0) > 0
     );
@@ -1401,7 +1401,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const todayTransferredCount = todayTransferredReqs.length;
     const todayTransferredTotal = todayTransferredReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
 
-    const todayBbmReqs = requests.filter(r =>
+    const todayBbmReqs = requests.filter(r => 
       (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) &&
       r.tanggalPemakaian === todayStr
     );
@@ -1517,7 +1517,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
         {/* Stats Cards Grid for Finance */}
         <div className="grid grid-cols-2 gap-4">
-          <div
+          <div 
             onClick={() => handleCardClick('PENDING')}
             className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'PENDING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -1534,7 +1534,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Pengajuan Anggaran yang perlu persetujuan</p>
           </div>
 
-          <div
+          <div 
             onClick={() => handleCardClick('APPROVED')}
             className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'APPROVED' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -1551,7 +1551,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Pengajuan siap diproses transfer dana</p>
           </div>
 
-          <div
+          <div 
             onClick={() => handleCardClick('REPORTING')}
             className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'REPORTING' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -1564,7 +1564,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
           </div>
 
-          <div
+          <div 
             onClick={() => handleCardClick('CLOSED')}
             className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md ${
               activeFilter === 'CLOSED' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -1577,7 +1577,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
           </div>
 
-          <div
+          <div 
             onClick={() => handleCardClick('REJECTED')}
             className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-rose-300 hover:shadow-md ${
               activeFilter === 'REJECTED' ? 'border-rose-500 bg-rose-50/20 ring-2 ring-rose-500/20' : 'bg-white border-slate-200'
@@ -1595,7 +1595,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           {renderAdminBbmCard()}
 
           {onOpenActivities && (
-            <div
+            <div 
               onClick={onOpenActivities}
               id="finance-activity-card"
               className="p-5 rounded-2xl border border-indigo-200/90 bg-gradient-to-br from-indigo-50/70 via-white to-sky-50/40 shadow-sm transition-all cursor-pointer hover:border-indigo-400 hover:shadow-md active:scale-[0.99] group flex flex-col justify-between"
@@ -1620,7 +1620,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           )}
 
           {onOpenReportsModal && (
-            <div
+            <div 
               onClick={onOpenReportsModal}
               id="finance-reports-card"
               className="p-5 rounded-2xl border border-indigo-200/90 bg-gradient-to-br from-indigo-50/70 via-white to-purple-50/40 shadow-sm transition-all cursor-pointer hover:border-indigo-400 hover:shadow-md col-span-2 group flex items-center justify-between"
@@ -1643,7 +1643,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           )}
 
           {onOpenAdjustment && (
-            <div
+            <div 
               onClick={onOpenAdjustment}
               className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-400 hover:shadow-md col-span-2 group ${
                 activeFilter === 'ADJUSTMENT' ? 'border-indigo-500 bg-indigo-50/20 ring-2 ring-indigo-500/20' : 'bg-white border-slate-200'
@@ -1684,7 +1684,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           )}
 
           {onOpenTransferList && (
-            <div
+            <div 
               onClick={onOpenTransferList}
               id="finance-transfer-list-card"
               className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-indigo-400 hover:shadow-md col-span-2 group ${
@@ -1765,7 +1765,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     };
     const todayStr = getTodayStr();
 
-    const todayBbmReqs = requests.filter(r =>
+    const todayBbmReqs = requests.filter(r => 
       (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) &&
       r.tanggalPemakaian === todayStr
     );
@@ -1929,7 +1929,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         </div>
 
         {/* Kartu BBM Duren Sawit (Administrator) */}
-        <div
+        <div 
           onClick={onOpenBbmListModal || onOpenBbmModal}
           className="bg-gradient-to-r from-amber-500/10 via-amber-50/80 to-orange-50/80 border border-amber-200/90 rounded-2xl p-4 shadow-sm hover:border-amber-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between gap-3 group"
           id="administrator-bbm-card"
@@ -1959,7 +1959,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
         {/* Kartu Activity User (Log Kegiatan) */}
         {onOpenActivities && (
-          <div
+          <div 
             onClick={onOpenActivities}
             className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-indigo-300 transition-all cursor-pointer flex items-center justify-between"
           >
@@ -2554,9 +2554,9 @@ User Agent: ${navigator.userAgent}`;
 
       // Direct check on ManagerEmail field (e.g. margono@depotel.com)
       if (reqManagerEmail && (
-        direkturEmails.has(reqManagerEmail) ||
-        reqManagerEmail.includes('margono') ||
-        reqManagerEmail.includes('direktur') ||
+        direkturEmails.has(reqManagerEmail) || 
+        reqManagerEmail.includes('margono') || 
+        reqManagerEmail.includes('direktur') || 
         (email && reqManagerEmail === email.trim().toLowerCase()) ||
         (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
       )) {
@@ -2567,9 +2567,9 @@ User Agent: ${navigator.userAgent}`;
       if (requesterProfile) {
         const profileMgrEmail = (requesterProfile.managerEmail || '').trim().toLowerCase();
         if (profileMgrEmail && (
-          direkturEmails.has(profileMgrEmail) ||
-          profileMgrEmail.includes('margono') ||
-          profileMgrEmail.includes('direktur') ||
+          direkturEmails.has(profileMgrEmail) || 
+          profileMgrEmail.includes('margono') || 
+          profileMgrEmail.includes('direktur') || 
           (email && profileMgrEmail === email.trim().toLowerCase()) ||
           (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
         )) {
@@ -2580,7 +2580,7 @@ User Agent: ${navigator.userAgent}`;
     };
 
     const direkturDirectReqs = activeReqs.filter(r => isDirekturDirectReq(r));
-    const pendingBudgetReview = direkturDirectReqs.filter(r =>
+    const pendingBudgetReview = direkturDirectReqs.filter(r => 
       r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
     ).length;
     const pendingReportReview = direkturDirectReqs.filter(r => {
@@ -2595,14 +2595,14 @@ User Agent: ${navigator.userAgent}`;
     const monitoringReqs = activeReqs;
 
     // 1. PENGAJUAN (Pending Approval by Manager / Partially Approved)
-    const pengajuanCount = monitoringReqs.filter(r =>
+    const pengajuanCount = monitoringReqs.filter(r => 
       r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
     ).length;
 
     // 2. MENUNGGU TRANSFER (Approved by Manager / Partially Approved or Bailout Reimbursement pending)
-    const pendingTransferReqs = monitoringReqs.filter(r =>
-      r.status === RequestStatus.APPROVED ||
-      r.status === RequestStatus.PARTIALLY_APPROVED ||
+    const pendingTransferReqs = monitoringReqs.filter(r => 
+      r.status === RequestStatus.APPROVED || 
+      r.status === RequestStatus.PARTIALLY_APPROVED || 
       r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
     );
     const menungguTransferCount = pendingTransferReqs.length;
@@ -2617,7 +2617,7 @@ User Agent: ${navigator.userAgent}`;
     }, 0);
 
     // 3. PROSES LAPORAN (Transferred, Reporting, Review Manager, Review Admin)
-    const prosesLaporanCount = monitoringReqs.filter(r =>
+    const prosesLaporanCount = monitoringReqs.filter(r => 
       [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)
     ).length;
 
@@ -2671,8 +2671,8 @@ User Agent: ${navigator.userAgent}`;
     };
     const todayStr = getTodayStr();
 
-    const transferredReqsList = requests.filter(r =>
-      !isBbmRequest(r) &&
+    const transferredReqsList = requests.filter(r => 
+      !isBbmRequest(r) && 
       r.status !== RequestStatus.CANCELLED &&
       (r.adminActionAmount || 0) > 0
     );
@@ -2770,7 +2770,7 @@ User Agent: ${navigator.userAgent}`;
 
             {/* 2 Kartu Akses Approval & Review Direktur */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div
+              <div 
                 onClick={() => handleCardClick('DIREKTUR_APPROVAL')}
                 className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
                   activeFilter === 'DIREKTUR_APPROVAL' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
@@ -2791,7 +2791,7 @@ User Agent: ${navigator.userAgent}`;
                 </div>
               </div>
 
-              <div
+              <div 
                 onClick={() => handleCardClick('DIREKTUR_RECONCILIATION')}
                 className={`p-4.5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md flex flex-col justify-between min-h-[130px] ${
                   activeFilter === 'DIREKTUR_RECONCILIATION' ? 'border-purple-500 bg-purple-50/30 ring-2 ring-purple-500/20' : 'bg-white border-slate-200'
@@ -2907,7 +2907,7 @@ User Agent: ${navigator.userAgent}`;
 
             {/* Kartu DAFTAR TRANSFER - DIREKTUR MONITORING */}
             {onOpenTransferList && (
-              <div
+              <div 
                 onClick={onOpenTransferList}
                 id="direktur-transfer-list-card"
                 className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-purple-300 hover:shadow-md group ${
@@ -2955,7 +2955,7 @@ User Agent: ${navigator.userAgent}`;
               const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayStr).length;
 
               return (
-                <div
+                <div 
                   onClick={onOpenActivities}
                   className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-sm hover:border-purple-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between bg-gradient-to-r from-purple-50/40 via-white to-indigo-50/30"
                   id="direktur-activity-card"

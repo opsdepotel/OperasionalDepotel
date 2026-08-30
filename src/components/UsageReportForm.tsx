@@ -274,8 +274,15 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [previewRequestProof, setPreviewRequestProof] = useState(false);
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [viewingActivityItem, setViewingActivityItem] = useState<{ item: UsageReportItem; date: string } | null>(null);
+  const [selectedActivityDate, setSelectedActivityDate] = useState<string>('');
   const [previewActivityPhoto, setPreviewActivityPhoto] = useState<{ url: string; fileId?: string; title: string } | null>(null);
   const [historyModalItem, setHistoryModalItem] = useState<UsageReportItem | null>(null);
+
+  useEffect(() => {
+    if (viewingActivityItem) {
+      setSelectedActivityDate(viewingActivityItem.date);
+    }
+  }, [viewingActivityItem]);
 
   // Mobile Back Button handlers for UsageReportForm modals
   useBackHandler(isFormOpen, () => setIsFormOpen(false), 'report_isFormOpen');
@@ -1545,29 +1552,41 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[100000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
           <div className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[85vh] animate-scale-up my-auto relative">
             {/* Modal Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div>
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 gap-2">
+              <div className="flex-1 min-w-0">
                 <h3 className="font-display font-bold text-slate-800 text-sm">Aktivitas Lapangan Pemohon</h3>
-                <p className="text-[10px] text-slate-500 font-medium">
-                  User: <span className="font-bold text-slate-700">{request.userEmail}</span> | Tanggal: <span className="font-semibold text-indigo-600">{viewingActivityItem.date}</span>
+                <p className="text-[10px] text-slate-500 font-medium truncate">
+                  User: <span className="font-bold text-slate-700">{request.userEmail}</span>
                 </p>
+              </div>
+
+              {/* Tanggal Picker Filter */}
+              <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200/80 px-2.5 py-1 rounded-xl shrink-0">
+                <Calendar className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <input
+                  type="date"
+                  value={selectedActivityDate || viewingActivityItem.date}
+                  onChange={(e) => setSelectedActivityDate(e.target.value)}
+                  className="text-xs font-semibold text-indigo-900 bg-transparent border-none outline-hidden p-0 cursor-pointer focus:ring-0"
+                />
               </div>
             </div>
 
             {/* Modal Content - List of Activities */}
             <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-1">
               {(() => {
+                const activeDate = selectedActivityDate || viewingActivityItem.date;
                 const matchedActivities = (activities || []).filter(
                   act =>
                     act.userEmail.toLowerCase() === request.userEmail.toLowerCase() &&
-                    act.tanggal === viewingActivityItem.date
+                    act.tanggal === activeDate
                 );
 
                 if (matchedActivities.length === 0) {
                   return (
                     <div className="text-center py-8 text-slate-400 space-y-2">
                       <ClipboardList className="w-10 h-10 mx-auto text-slate-300" />
-                      <p className="text-xs font-medium">Tidak ada aktivitas lapangan yang tercatat untuk tanggal {viewingActivityItem.date}.</p>
+                      <p className="text-xs font-medium">Tidak ada aktivitas lapangan yang tercatat untuk tanggal {activeDate}.</p>
                     </div>
                   );
                 }
@@ -1782,7 +1801,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Modal Popup Pengisian BBM Duren Sawit */}
