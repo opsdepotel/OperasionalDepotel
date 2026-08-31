@@ -1532,6 +1532,58 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
   }
 }
 
+// Purge orphan ItemReviewHistory entries that do not correspond to any valid BudgetRequest or UsageReportItem
+export async function purgeOrphanItemReviewHistories(
+  token: string,
+  spreadsheetId: string,
+  validRequestIds: Set<string>,
+  validUsageItemIds: Set<string>
+): Promise<{ purgedCount: number; remainingCount: number }> {
+  if (token === 'mock_demo_token') {
+    const existing = getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
+    const valid = existing.filter(h => 
+      (h.requestUid && validRequestIds.has(h.requestUid)) ||
+      (h.itemUid && (validUsageItemIds.has(h.itemUid) || validRequestIds.has(h.itemUid)))
+    );
+    const purgedCount = existing.length - valid.length;
+    setMockData('mock_db_item_review_history', valid);
+    return { purgedCount, remainingCount: valid.length };
+  }
+
+  // Fetch current histories directly from Google Sheets
+  const currentHistories = await fetchItemReviewHistories(token, spreadsheetId);
+  const validHistories = currentHistories.filter(h => 
+    (h.requestUid && validRequestIds.has(h.requestUid)) ||
+    (h.itemUid && (validUsageItemIds.has(h.itemUid) || validRequestIds.has(h.itemUid)))
+  );
+
+  const purgedCount = currentHistories.length - validHistories.length;
+  if (purgedCount === 0) {
+    return { purgedCount: 0, remainingCount: currentHistories.length };
+  }
+
+  // Clear range ItemReviewHistory!A2:Z
+  const clearRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ItemReviewHistory!A2:Z:clear`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!clearRes.ok) {
+    const txt = await clearRes.text();
+    throw new Error(`Gagal mengosongkan tabel ItemReviewHistory saat pembersihan orphan data: ${txt}`);
+  }
+
+  // Re-insert valid histories if any remain
+  if (validHistories.length > 0) {
+    await createBatchItemReviewHistories(token, spreadsheetId, validHistories);
+  }
+
+  return { purgedCount, remainingCount: validHistories.length };
+}
+
 // Fetch single profile
 export async function fetchUserProfile(token: string, spreadsheetId: string, email: string): Promise<UserProfile | null> {
   const profiles = await fetchProfiles(token, spreadsheetId);

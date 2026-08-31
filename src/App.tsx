@@ -32,6 +32,7 @@ import {
   fetchItemReviewHistories,
   createItemReviewHistory,
   createBatchItemReviewHistories,
+  purgeOrphanItemReviewHistories,
   parseNumericValue,
   formatDivisiSubDivisi,
   defaultUsers
@@ -62,6 +63,7 @@ import { UserDashboardPreviewModal } from './components/UserDashboardPreviewModa
 import { GoogleConnectionModal } from './components/GoogleConnectionModal';
 import { PwaInstallBanner } from './components/PwaInstallBanner';
 import { FinanceSharedReceiptModal } from './components/FinanceSharedReceiptModal';
+import { OP_TimeLine } from './components/OP_TimeLine';
 import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt, clearAllSharedReceipts } from './lib/sharedReceiptStorage';
 
 // Icons
@@ -70,7 +72,8 @@ import {
   RefreshCw, FileSpreadsheet, Eye, Search, AlertTriangle, Check, CreditCard,
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight, Edit2,
   Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel, X,
-  Settings, LogOut, ShieldCheck, History, UserCheck, ShieldAlert, Share2, UploadCloud
+  Settings, LogOut, ShieldCheck, History, UserCheck, ShieldAlert, Share2, UploadCloud,
+  ChevronDown, ChevronUp
 } from 'lucide-react';
 
 export const isOpBiasaRequest = (req: BudgetRequest) => {
@@ -370,6 +373,7 @@ export default function App() {
   };
   const [initialIsTalangan, setInitialIsTalangan] = useState(false);
   const [expandedReportReqIds, setExpandedReportReqIds] = useState<Record<string, boolean>>({});
+  const [expandedTimelineReqIds, setExpandedTimelineReqIds] = useState<Record<string, boolean>>({});
 
   // Closed requests filter states
   const [closedUserFilter, setClosedUserFilter] = useState<string>('ALL');
@@ -1066,6 +1070,32 @@ export default function App() {
     }
   };
 
+  // Pembersihan Orphan Data ItemReviewHistory
+  const handlePurgeOrphanHistories = async (): Promise<{ purgedCount: number; remainingCount: number } | null> => {
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+
+    const validRequestIds = new Set<string>(requests.map(r => r.id).filter(Boolean));
+    const validUsageItemIds = new Set<string>(usageItems.map(i => i.id).filter(Boolean));
+
+    let result: { purgedCount: number; remainingCount: number } | null = null;
+
+    const success = await runGoogleAction(
+      async () => {
+        result = await purgeOrphanItemReviewHistories(currentToken, currentSheetId, validRequestIds, validUsageItemIds);
+      },
+      'Gagal melakukan pembersihan orphan data ItemReviewHistory.'
+    );
+
+    if (success !== null && result) {
+      // Refresh local itemReviewHistories state
+      const freshHistories = await fetchItemReviewHistories(currentToken, currentSheetId);
+      setItemReviewHistories(freshHistories);
+      return result;
+    }
+    return null;
+  };
+
   // Profile Update Password
   const handleUpdatePassword = async (newPassword: string) => {
     if (!userProfile) return false;
@@ -1320,7 +1350,26 @@ export default function App() {
           adminActionTime: nowTime
         };
 
+        const historyLog: ItemReviewHistory = {
+          id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+          itemUid: uid,
+          requestUid: uid,
+          timestamp: formatTimestamp(new Date()),
+          actorRole: Role.FINANCE,
+          actorEmail: userProfile?.email || 'finance@depotel.co.id',
+          actorNama: userProfile?.nama || userProfile?.email || 'Finance',
+          actionType: 'APPROVAL_FINANCE',
+          status: 'DISETUJUI',
+          catatan: `Adjustment Saldo User (${type}) - ${notes}`,
+          tanggalPenggunaan: tanggal,
+          nominal: amount,
+          keterangan: `[ADJUSTMENT] ${type} - ${notes}`,
+          buktiUrl: finalBuktiUrl || undefined,
+          buktiFileId: finalBuktiFileId || undefined
+        };
+
         await createBudgetRequest(token, spreadsheetId, newRequest);
+        await createItemReviewHistory(token, spreadsheetId, historyLog);
       },
       'Gagal membuat transaksi Adjustment.'
     );
@@ -2788,6 +2837,7 @@ export default function App() {
             resetDeviceLogs={resetDeviceLogs}
             onSave={handleSaveProfile}
             onResetDeviceId={handleResetUserDeviceId}
+            onPurgeOrphanHistories={handlePurgeOrphanHistories}
             onClose={() => setActiveView('dashboard')}
           />
         ) : activeView === 'profile-settings' && userProfile ? (
@@ -3365,6 +3415,35 @@ export default function App() {
                                   </div>
                                 );
                               })()}
+
+                              {/* Clickable Timeline Pengajuan rata kiri vertikal di atas Catatan Manager */}
+                              <div className="space-y-1.5 text-left">
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedTimelineReqIds(prev => ({ ...prev, [req.id]: !prev[req.id] }))}
+                                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl text-[10px] transition-all cursor-pointer border border-indigo-200/80 shrink-0 shadow-2xs"
+                                  title="Lihat Timeline Pengajuan"
+                                >
+                                  <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                                  <span>Timeline Pengajuan</span>
+                                  {expandedTimelineReqIds[req.id] ? (
+                                    <ChevronUp className="w-3.5 h-3.5 text-indigo-600" />
+                                  ) : (
+                                    <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+                                  )}
+                                </button>
+
+                                {expandedTimelineReqIds[req.id] && (
+                                  <OP_TimeLine
+                                    request={req}
+                                    histories={itemReviewHistories}
+                                    usageItems={usageItems}
+                                    profiles={profiles}
+                                    theme="light"
+                                    className="animate-fade-in my-1.5"
+                                  />
+                                )}
+                              </div>
 
                               {((req.managerComment && req.status !== RequestStatus.REJECTED) || req.adminComment) && (
                                 <div className="bg-slate-50/80 p-2.5 rounded-xl border border-slate-100 space-y-1.5 text-[10px] text-slate-600">

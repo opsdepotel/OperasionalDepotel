@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, SiteInfo, UserProfile } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import { Fuel, Calendar, MapPin, Coins, FileText, Camera, RefreshCw, CheckCircle2, AlertCircle, X, ExternalLink, UploadCloud } from 'lucide-react';
@@ -280,8 +281,8 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-[60] flex items-center justify-center p-4 overflow-y-auto">
+  return createPortal(
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[200000] flex items-center justify-center p-4 overflow-y-auto animate-fade-in">
       <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 my-auto animate-in fade-in zoom-in-95 duration-150">
         
         {/* Header */}
@@ -563,6 +564,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
 
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
