@@ -375,21 +375,6 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
                     <p className="text-[10px] font-semibold text-slate-700 ml-2.5">
                       Nama: <span className="text-emerald-700">{siteResults[0].siteName}</span>
                     </p>
-                    {siteResults[0].coordinates && (
-                      <p className="text-[9px] text-slate-500 font-mono ml-2.5 flex items-center gap-1">
-                        Koord:{" "}
-                        <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(siteResults[0].coordinates.trim())}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-bold text-indigo-600 hover:text-indigo-800 hover:underline inline-flex items-center gap-0.5 transition-colors"
-                          title="Buka di Google Maps"
-                        >
-                          <span>{siteResults[0].coordinates}</span>
-                          <ExternalLink className="w-2.5 h-2.5" />
-                        </a>
-                      </p>
-                    )}
                   </div>
                 ) : null
               )

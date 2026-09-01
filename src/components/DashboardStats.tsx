@@ -9,7 +9,8 @@ import { getTransferBertahap, getFinanceApprovedAmount, isPendingTransferRequest
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2 } from 'lucide-react';
+import { OP_TimeLine } from './OP_TimeLine';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -82,6 +83,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [copyCoordSuccess, setCopyCoordSuccess] = useState(false);
 
   useBackHandler(isSearchSiteModalOpen, () => setIsSearchSiteModalOpen(false), 'dashboardStats_searchSiteModal');
+
+  // Manager Active UID Modal States
+  const [isManagerActiveUidModalOpen, setIsManagerActiveUidModalOpen] = useState(false);
+  const [searchManagerUidText, setSearchManagerUidText] = useState('');
+  const [expandedManagerTimelines, setExpandedManagerTimelines] = useState<Record<string, boolean>>({});
+
+  useBackHandler(isManagerActiveUidModalOpen, () => setIsManagerActiveUidModalOpen(false), 'dashboardStats_managerActiveUidModal');
 
   const defaultSitesList: SiteInfo[] = [
     { siteId: 'JKT-SOUTH-02', siteName: 'Depotel JKT South 02', coordinates: '-6.2088, 106.8456' },
@@ -637,6 +645,215 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </span>
         )}
       </button>
+    );
+  };
+
+  // Modal UID Aktif Tim Bawahan (VIEW ONLY - MANAGER)
+  const renderManagerActiveUidModal = () => {
+    if (!isManagerActiveUidModalOpen || role !== Role.MANAGER) return null;
+
+    const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === email.toLowerCase());
+    const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
+
+    const subActiveRequests = requests.filter(r => {
+      const isSubordinate = (r.managerEmail && r.managerEmail.toLowerCase() === email.toLowerCase()) || subEmails.has(r.userEmail.toLowerCase());
+      const isNotSelf = r.userEmail.toLowerCase() !== email.toLowerCase();
+      const isActive = r.status !== RequestStatus.CLOSED && r.status !== RequestStatus.CANCELLED && r.status !== RequestStatus.REJECTED;
+      return isSubordinate && isNotSelf && isActive;
+    });
+
+    const searchLower = searchManagerUidText.trim().toLowerCase();
+    const subActiveRequestsFiltered = subActiveRequests.filter(r => {
+      if (!searchLower) return true;
+      const reqProfile = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+      const reqName = (reqProfile?.nama || (reqProfile as any)?.name || r.userEmail).toLowerCase();
+      const siteInfo = (r.siteName || r.siteId || '').toLowerCase();
+      const ket = (r.keterangan || '').toLowerCase();
+      const uid = r.id.toLowerCase();
+      const statusLbl = getStatusLabel(r.status, r.userEmail).toLowerCase();
+
+      return uid.includes(searchLower) ||
+        reqName.includes(searchLower) ||
+        r.userEmail.toLowerCase().includes(searchLower) ||
+        siteInfo.includes(searchLower) ||
+        ket.includes(searchLower) ||
+        statusLbl.includes(searchLower);
+    });
+
+    return (
+      <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in overflow-y-auto">
+        <div className="bg-white w-full max-w-3xl rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 flex flex-col max-h-[90vh] overflow-hidden my-auto animate-scale-up">
+          {/* Header */}
+          <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 to-indigo-950 text-white flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-xs flex items-center justify-center text-indigo-300">
+                <FolderOpen className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-display font-bold text-base text-white">Daftar UID Aktif (Tim Bawahan)</h3>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  Menampilkan {subActiveRequestsFiltered.length} UID milik tim bawahan yang sedang berjalan
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsManagerActiveUidModalOpen(false)}
+              className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Search Input */}
+          <div className="p-4 bg-slate-50 border-b border-slate-200 shrink-0 flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchManagerUidText}
+                onChange={(e) => setSearchManagerUidText(e.target.value)}
+                placeholder="Cari berdasarkan UID, nama pemohon, lokasi, keterangan..."
+                className="w-full pl-9 pr-3 py-2 rounded-xl bg-white border border-slate-200 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500"
+              />
+            </div>
+          </div>
+
+          {/* List Content */}
+          <div className="p-4 sm:p-5 overflow-y-auto space-y-3 flex-1 bg-slate-50/50">
+            {subActiveRequestsFiltered.length === 0 ? (
+              <div className="text-center py-12 bg-white rounded-2xl border border-slate-200 p-6">
+                <FolderOpen className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+                <p className="text-sm font-bold text-slate-700">Tidak ada UID aktif milik tim bawahan</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  {searchManagerUidText ? 'Tidak ada data yang cocok dengan pencarian Anda.' : 'Seluruh pengajuan UID bawahan telah selesai (closed) atau belum ada pengajuan baru.'}
+                </p>
+              </div>
+            ) : (
+              subActiveRequestsFiltered.map((req) => {
+                const reqProfile = profiles.find(p => p.email.toLowerCase() === req.userEmail.toLowerCase());
+                const reqName = reqProfile?.nama || (reqProfile as any)?.name || req.userEmail.split('@')[0];
+                const divisiText = formatDivisiSubDivisi(reqProfile?.divisi || req.divisi, reqProfile?.subDivisi || req.subDivisi);
+                const isTalangan = req.id.startsWith('OPT-') || req.id.startsWith('BBMDS') || req.id.startsWith('BBM_DurenSawit') || req.tipePengajuan === 'DANA_TALANGAN';
+                const nominal = req.managerActionAmount || req.jumlahPengajuan || req.nominalTotal || 0;
+
+                return (
+                  <div
+                    key={req.id}
+                    className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs hover:border-slate-300 transition-all flex flex-col gap-2.5"
+                  >
+                    {/* Top Row */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-xs text-slate-900 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                          {req.id}
+                        </span>
+                        {isTalangan && (
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200">
+                            Dana Talangan
+                          </span>
+                        )}
+                        <span className="text-[11px] text-slate-400 font-medium">
+                          {req.tanggalPengajuan || req.tanggal || '-'}
+                        </span>
+                      </div>
+                      <div>{renderStatusBadge(req.status, req.userEmail)}</div>
+                    </div>
+
+                    {/* Subordinate info & Site */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1 border-t border-slate-100">
+                      <div>
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase">Pemohon:</span>
+                        <span className="font-bold text-slate-800">{reqName}</span>
+                        <span className="text-slate-500 text-[11px] block">{req.userEmail}</span>
+                        {divisiText && (
+                          <span className="text-[10px] text-slate-400 font-medium block">{divisiText}</span>
+                        )}
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase">Lokasi / Site:</span>
+                        <span className="font-semibold text-slate-700">{req.siteName || req.siteId || '-'}</span>
+                        {req.siteId && req.siteName && req.siteId !== req.siteName && (
+                          <span className="text-[10px] text-slate-400 block">({req.siteId})</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Keterangan & Nominal */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-50/80 p-2.5 rounded-xl border border-slate-100 mt-1">
+                      <div className="flex-1">
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase">Keterangan:</span>
+                        <p className="text-xs text-slate-700 font-medium line-clamp-2">
+                          {req.keterangan || '-'}
+                        </p>
+                      </div>
+                      <div className="text-left sm:text-right shrink-0">
+                        <span className="text-[10px] font-semibold text-slate-400 block uppercase">Estimasi / Nominal:</span>
+                        <span className="text-sm font-display font-bold text-indigo-600">
+                          {formatIDR(nominal)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Collapsible Timeline Toggle & Component */}
+                    {(() => {
+                      const isExpanded = !!expandedManagerTimelines[req.id]; // Default minimized (false)
+                      return (
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedManagerTimelines(prev => ({
+                                ...prev,
+                                [req.id]: !isExpanded
+                              }));
+                            }}
+                            className="w-full flex items-center justify-between px-3 py-1.5 bg-slate-100/80 hover:bg-indigo-50/80 border border-slate-200/80 rounded-xl text-xs font-bold text-slate-700 hover:text-indigo-700 transition-all cursor-pointer group shadow-2xs"
+                          >
+                            <span className="flex items-center gap-1.5 text-[11px] font-bold tracking-wide text-slate-700 group-hover:text-indigo-700">
+                              <Clock className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Timeline Proses Pengajuan</span>
+                            </span>
+                            <span className="flex items-center text-indigo-600">
+                              {isExpanded ? (
+                                <ChevronUp className="w-4 h-4 text-indigo-600" />
+                              ) : (
+                                <ChevronDown className="w-4 h-4 text-indigo-600" />
+                              )}
+                            </span>
+                          </button>
+                          {isExpanded && (
+                            <OP_TimeLine
+                              request={req}
+                              histories={histories}
+                              usageItems={usageItems}
+                              profiles={profiles}
+                              theme="light"
+                              className="mt-1 animate-fade-in"
+                            />
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end shrink-0">
+            <button
+              type="button"
+              onClick={() => setIsManagerActiveUidModalOpen(false)}
+              className="px-5 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs transition-all cursor-pointer"
+            >
+              Tutup
+            </button>
+          </div>
+        </div>
+      </div>
     );
   };
 
@@ -1266,6 +1483,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
+
+
         {/* Kartu Activity */}
         {(() => {
           const getTodayStr = () => {
@@ -1462,6 +1681,39 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               </div>
             </div>
 
+            {/* Kartu UID AKTIF - MANAGER */}
+            {(() => {
+              const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === email.toLowerCase());
+              const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
+
+              const subActiveRequests = requests.filter(r => {
+                const isSubordinate = (r.managerEmail && r.managerEmail.toLowerCase() === email.toLowerCase()) || subEmails.has(r.userEmail.toLowerCase());
+                const isNotSelf = r.userEmail.toLowerCase() !== email.toLowerCase();
+                const isActive = r.status !== RequestStatus.CLOSED && r.status !== RequestStatus.CANCELLED && r.status !== RequestStatus.REJECTED;
+                return isSubordinate && isNotSelf && isActive;
+              });
+
+              return (
+                <div 
+                  onClick={() => setIsManagerActiveUidModalOpen(true)}
+                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+                  id="manager-active-uid-card"
+                >
+                  <div>
+                    <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">UID AKTIF (TIM BAWAHAN)</p>
+                    <div className="flex items-baseline gap-1 mt-2">
+                      <span className="text-3xl font-display font-bold text-slate-900">{subActiveRequests.length}</span>
+                      <span className="text-xs text-slate-500 font-medium">UID Aktif</span>
+                    </div>
+                    <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat daftar UID milik bawahan yang masih aktif.</p>
+                  </div>
+                  <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                    <FolderOpen className="w-6 h-6" />
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Kartu Activity User - MANAGER */}
             {(() => {
               const getTodayStr = () => {
@@ -1507,6 +1759,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         ) : (
           renderUserDashboardView()
         )}
+
+        {renderManagerActiveUidModal()}
       </div>
     );
   }
