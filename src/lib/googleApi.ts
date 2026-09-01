@@ -1043,6 +1043,58 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
   }
 }
 
+// Helper to find 0-indexed row position in a 2D sheet array by header name and target value
+function findRowIndexByHeaderAndValue(
+  rows: any[][],
+  primaryHeader: string,
+  targetValue: string,
+  fallbackHeaders: string[] = []
+): number {
+  if (!rows || rows.length <= 1) return -1;
+  const sheetHeaders = rows[0].map(h => String(h || '').trim());
+  const searchHeaders = [primaryHeader, ...fallbackHeaders].map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+
+  let colIdx = -1;
+  for (const sh of sheetHeaders) {
+    const shNorm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (searchHeaders.includes(shNorm)) {
+      colIdx = sheetHeaders.indexOf(sh);
+      break;
+    }
+  }
+
+  const normalizedTarget = String(targetValue || '').trim().toLowerCase();
+
+  // 1. Search in target header column first if found
+  if (colIdx !== -1) {
+    for (let i = 1; i < rows.length; i++) {
+      const cellVal = String(rows[i][colIdx] || '').trim().toLowerCase();
+      if (cellVal === normalizedTarget) {
+        return i;
+      }
+    }
+  }
+
+  // 2. Fallback: Search column 0
+  for (let i = 1; i < rows.length; i++) {
+    const cellVal = String(rows[i][0] || '').trim().toLowerCase();
+    if (cellVal === normalizedTarget) {
+      return i;
+    }
+  }
+
+  // 3. Fallback: Search all cells across all rows
+  for (let i = 1; i < rows.length; i++) {
+    for (let j = 0; j < rows[i].length; j++) {
+      if (String(rows[i][j] || '').trim().toLowerCase() === normalizedTarget) {
+        return i;
+      }
+    }
+  }
+
+  return -1;
+}
+
 // Update Budget Request
 export async function updateBudgetRequest(token: string, spreadsheetId: string, req: BudgetRequest): Promise<void> {
   if (token === 'mock_demo_token') {
@@ -1055,15 +1107,14 @@ export async function updateBudgetRequest(token: string, spreadsheetId: string, 
     return;
   }
 
-  // First we need to find the row index by reading column A (UIDs)
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:A1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) throw new Error('Gagal membaca data untuk update.');
 
   const data = await res.json();
-  const uids = data.values ? data.values.map((v: any[]) => v[0]) : [];
-  const rowIdx = uids.indexOf(req.id); // 0-indexed
+  const rows: any[][] = data.values || [];
+  const rowIdx = findRowIndexByHeaderAndValue(rows, 'UID', req.id, ['id', 'pengajuanuid']);
 
   if (rowIdx === -1) {
     throw new Error(`Data pengajuan dengan UID ${req.id} tidak ditemukan.`);
@@ -1165,14 +1216,14 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
     return;
   }
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:A1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) throw new Error('Gagal membaca data laporan untuk update.');
 
   const data = await res.json();
-  const itemUids = data.values ? data.values.map((v: any[]) => v[0]) : [];
-  const rowIdx = itemUids.indexOf(item.id);
+  const rows: any[][] = data.values || [];
+  const rowIdx = findRowIndexByHeaderAndValue(rows, 'ItemUID', item.id, ['id', 'item_uid']);
 
   if (rowIdx === -1) {
     throw new Error(`Data item laporan dengan ItemUID ${item.id} tidak ditemukan.`);
@@ -1223,14 +1274,14 @@ export async function deleteUsageItem(token: string, spreadsheetId: string, item
     return;
   }
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:A1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) throw new Error('Gagal membaca data laporan untuk menghapus.');
 
   const data = await res.json();
-  const itemUids = data.values ? data.values.map((v: any[]) => v[0]) : [];
-  const rowIdx = itemUids.indexOf(itemId);
+  const rows: any[][] = data.values || [];
+  const rowIdx = findRowIndexByHeaderAndValue(rows, 'ItemUID', itemId, ['id', 'item_uid']);
 
   if (rowIdx === -1) {
     throw new Error(`Data item laporan dengan ItemUID ${itemId} tidak ditemukan.`);
@@ -1238,8 +1289,7 @@ export async function deleteUsageItem(token: string, spreadsheetId: string, item
 
   const sheetRowIdx = rowIdx + 1;
 
-  // Since Google Sheets values API doesn't support deleting row cleanly without shifting, we can clear the values of this row or delete the row with batchUpdate (requires gridId).
-  // Clearing the row values is much simpler and safer for basic spreadsheets. Or we can clear it:
+  // Since Google Sheets values API doesn't support deleting row cleanly without shifting, we clear the values of this row
   const clearRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:M${sheetRowIdx}:clear`, {
     method: 'POST',
     headers: {
@@ -1371,14 +1421,14 @@ export async function updateUserActivity(token: string, spreadsheetId: string, a
     console.warn('Could not auto-verify Activity headers:', headerErr);
   }
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:A1000`, {
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (!res.ok) throw new Error('Gagal membaca data kegiatan untuk update.');
 
   const data = await res.json();
-  const activityIds = data.values ? data.values.map((v: any[]) => String(v[0]).trim().toUpperCase()) : [];
-  const rowIdx = activityIds.indexOf(activity.id.trim().toUpperCase());
+  const rows: any[][] = data.values || [];
+  const rowIdx = findRowIndexByHeaderAndValue(rows, 'ActivityID', activity.id, ['id', 'activity_id']);
 
   if (rowIdx === -1) {
     throw new Error(`Data kegiatan dengan ActivityID ${activity.id} tidak ditemukan di Google Sheets.`);
