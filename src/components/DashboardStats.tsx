@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory } from '../types';
+import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory, SiteInfo } from '../types';
 import { getTransferBertahap, getFinanceApprovedAmount, isPendingTransferRequest, isFinanceApprovedOpRequest, isOpBiasaRequest } from '../App';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
@@ -18,6 +18,7 @@ interface DashboardStatsProps {
   email: string;
   requests: BudgetRequest[];
   usageItems: UsageReportItem[];
+  sites?: SiteInfo[];
   activeFilter?: string;
   onSelectFilter?: (filterKey: string) => void;
   onManageUsers?: () => void;
@@ -41,6 +42,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   email,
   requests,
   usageItems,
+  sites = [],
   activeFilter = 'ALL',
   onSelectFilter,
   onManageUsers,
@@ -70,6 +72,82 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [transactionSearchQuery, setTransactionSearchQuery] = useState('');
 
   useBackHandler(isTransactionReportOpen, () => setIsTransactionReportOpen(false), 'dashboardStats_transactionReport');
+
+  // Search Site Modal States
+  const [isSearchSiteModalOpen, setIsSearchSiteModalOpen] = useState(false);
+  const [searchSiteIdInput, setSearchSiteIdInput] = useState('');
+  const [selectedSite, setSelectedSite] = useState<SiteInfo | null>(null);
+  const [geocodedAddress, setGeocodedAddress] = useState<string | null>(null);
+  const [isGeocodingSite, setIsGeocodingSite] = useState(false);
+  const [copyCoordSuccess, setCopyCoordSuccess] = useState(false);
+
+  useBackHandler(isSearchSiteModalOpen, () => setIsSearchSiteModalOpen(false), 'dashboardStats_searchSiteModal');
+
+  const defaultSitesList: SiteInfo[] = [
+    { siteId: 'JKT-SOUTH-02', siteName: 'Depotel JKT South 02', coordinates: '-6.2088, 106.8456' },
+    { siteId: 'SITE-A', siteName: 'Site Alfa Jakarta', coordinates: '-6.1751, 106.8272' },
+    { siteId: 'SITE-B', siteName: 'Site Bravo Surabaya', coordinates: '-7.2575, 112.7521' },
+    { siteId: 'SITE-C', siteName: 'Site Charlie Medan', coordinates: '3.5952, 98.6722' }
+  ];
+
+  const allSitesToUse = (sites && sites.length > 0) ? sites : defaultSitesList;
+
+  // Auto match selected site when search input changes
+  useEffect(() => {
+    if (!searchSiteIdInput.trim()) {
+      setSelectedSite(null);
+      return;
+    }
+    const q = searchSiteIdInput.trim().toLowerCase();
+    const match = allSitesToUse.find(s => s.siteId.toLowerCase() === q);
+    if (match) {
+      setSelectedSite(match);
+    }
+  }, [searchSiteIdInput, allSitesToUse]);
+
+  // Reverse geocode address corresponding to site coordinates
+  useEffect(() => {
+    if (!selectedSite || !selectedSite.coordinates) {
+      setGeocodedAddress(null);
+      setIsGeocodingSite(false);
+      return;
+    }
+
+    const coord = selectedSite.coordinates.trim();
+    const parts = coord.split(',').map(s => s.trim());
+    if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
+      const lat = parts[0];
+      const lon = parts[1];
+      setIsGeocodingSite(true);
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.display_name) {
+            setGeocodedAddress(data.display_name);
+          } else {
+            setGeocodedAddress(`Lokasi Koordinat GPS (${coord})`);
+          }
+        })
+        .catch(() => {
+          setGeocodedAddress(`Lokasi Koordinat GPS (${coord})`);
+        })
+        .finally(() => {
+          setIsGeocodingSite(false);
+        });
+    } else {
+      setGeocodedAddress(coord);
+      setIsGeocodingSite(false);
+    }
+  }, [selectedSite]);
+
+  const getGoogleMapsDirectionUrl = (site: SiteInfo) => {
+    if (!site.coordinates) return '#';
+    const parts = site.coordinates.split(',').map(s => s.trim());
+    if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
+      return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${parts[0]},${parts[1]}`)}`;
+    }
+    return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(site.coordinates)}`;
+  };
 
   const [isGpsModalOpen, setIsGpsModalOpen] = useState(false);
   const [isFetchingGpsModal, setIsFetchingGpsModal] = useState(false);
@@ -758,6 +836,35 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Diminta revisi. Klik untuk lihat, revisi & pembatalan</p>
           </div>
+
+          {/* Card CARI SITE */}
+          <div 
+            onClick={() => {
+              setIsSearchSiteModalOpen(true);
+            }}
+            className="p-5 rounded-2xl border shadow-sm flex flex-col justify-between transition-all cursor-pointer hover:border-indigo-300 hover:shadow-md bg-white border-slate-200 group"
+            id="cari-site-card"
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">PENCARIAN SITE</p>
+              </div>
+              <div className="flex items-center gap-2.5 mt-2.5">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-xs">
+                  <Search className="w-4.5 h-4.5" />
+                </div>
+                <div>
+                  <span className="text-sm sm:text-base font-display font-bold text-slate-900 group-hover:text-indigo-600 transition-colors block">
+                    CARI SITE
+                  </span>
+                </div>
+              </div>
+            </div>
+            <p className="text-[9px] text-slate-400 mt-2 font-medium flex items-center justify-between">
+              <span>Cari alamat site & Google Maps</span>
+              <Navigation className="w-3.5 h-3.5 text-indigo-500 shrink-0 group-hover:translate-x-0.5 transition-transform" />
+            </p>
+          </div>
         </div>
 
         {/* Financial info Card - Saldo Operasional */}
@@ -996,6 +1103,164 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                     Tutup Laporan
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal CARI SITE */}
+        {isSearchSiteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
+            <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in fade-in zoom-in-95 duration-150">
+              {/* Header Modal */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-indigo-900/50">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-600 border border-indigo-400/30 flex items-center justify-center text-white shrink-0 shadow-md">
+                    <MapPin className="w-5 h-5 text-indigo-100" />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="font-display font-bold text-sm sm:text-base text-white tracking-wide truncate">
+                      Pencarian Site & Navigasi Lokasi
+                    </h3>
+                    <p className="text-[11px] text-indigo-200/80 font-medium mt-0.5 truncate">
+                      Masukkan Site ID untuk alamat lengkap & rute Google Maps
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSearchSiteModalOpen(false)}
+                  className="w-9 h-9 rounded-2xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
+                  title="Tutup Modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body Modal */}
+              <div className="p-4 sm:p-6 space-y-5 overflow-y-auto flex-1">
+                {/* Search Form */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    Form Pencarian Site ID
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={searchSiteIdInput}
+                      onChange={(e) => setSearchSiteIdInput(e.target.value)}
+                      placeholder="Masukkan atau ketik Site ID (contoh: JKT-SOUTH-02)..."
+                      className="w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-300 rounded-2xl text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all"
+                      autoFocus
+                    />
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                    {searchSiteIdInput && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchSiteIdInput('');
+                          setSelectedSite(null);
+                        }}
+                        className="absolute right-3.5 top-3.5 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Result Section */}
+                {selectedSite ? (
+                  <div className="bg-slate-50 border border-indigo-200 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm animate-in fade-in zoom-in-95 duration-150">
+                    <div className="flex items-start justify-between gap-2 border-b border-slate-200 pb-3">
+                      <div>
+                        <span className="text-[9px] font-extrabold uppercase tracking-widest text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-md">
+                          SITE DITEMUKAN
+                        </span>
+                        <h4 className="font-display font-bold text-slate-900 text-base mt-1">
+                          {selectedSite.siteName || selectedSite.siteId}
+                        </h4>
+                        <p className="text-xs text-slate-500 font-mono font-semibold mt-0.5">
+                          ID: <span className="text-slate-800">{selectedSite.siteId}</span>
+                        </p>
+                      </div>
+                      <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                        <MapPin className="w-5 h-5" />
+                      </div>
+                    </div>
+
+                    {/* Address corresponding to coordinates */}
+                    <div className="space-y-1">
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                        Alamat Sesuai Koordinat Site:
+                      </p>
+                      <div className="bg-white border border-slate-200 rounded-xl p-3 text-xs text-slate-700 font-medium min-h-[50px] flex items-center">
+                        {isGeocodingSite ? (
+                          <div className="flex items-center gap-2 text-indigo-600 font-semibold animate-pulse">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Mencari alamat lokasi dari koordinat GPS...</span>
+                          </div>
+                        ) : geocodedAddress ? (
+                          <div className="flex items-start gap-2">
+                            <MapPin className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                            <span className="leading-relaxed text-slate-800 font-medium">
+                              {geocodedAddress}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 italic">Alamat tidak dapat dimuat.</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Link Direction Clickable to Google Maps */}
+                    {selectedSite.coordinates && (
+                      <div className="pt-2">
+                        <a
+                          href={getGoogleMapsDirectionUrl(selectedSite)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full py-3 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-indigo-200 cursor-pointer"
+                        >
+                          <Navigation className="w-4 h-4 text-white" />
+                          <span>Google Maps Direction</span>
+                          <ExternalLink className="w-3.5 h-3.5 text-indigo-200" />
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                ) : searchSiteIdInput.trim() ? (
+                  <div className="p-6 bg-slate-50 border border-slate-200 rounded-2xl text-center space-y-2">
+                    <AlertTriangle className="w-8 h-8 text-amber-500 mx-auto" />
+                    <h5 className="font-bold text-xs text-slate-800">
+                      Site ID "{searchSiteIdInput}" Tidak Ditemukan
+                    </h5>
+                    <p className="text-[11px] text-slate-500">
+                      Silakan periksa kembali Site ID yang Anda ketik.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-6 bg-slate-50 border border-slate-200/80 rounded-2xl text-center space-y-2">
+                    <Search className="w-8 h-8 text-indigo-400 mx-auto" />
+                    <h5 className="font-bold text-xs text-slate-700">
+                      Silakan Isikan Site ID
+                    </h5>
+                    <p className="text-[11px] text-slate-400">
+                      Sistem akan menampilkan alamat lokasi lengkap dan tombol rute navigasi Google Maps secara langsung.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer Modal */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsSearchSiteModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs transition-all cursor-pointer"
+                >
+                  Tutup
+                </button>
               </div>
             </div>
           </div>

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { UserProfile, BudgetRequest, UsageReportItem, UserActivity, ItemReviewHistory, Role, RequestStatus, ItemStatus } from '../types';
+import { UserProfile, BudgetRequest, UsageReportItem, UserActivity, ItemReviewHistory, Role, RequestStatus, ItemStatus, SiteInfo } from '../types';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { DashboardStats } from './DashboardStats';
 import { ZoomableImage } from './ZoomableImage';
@@ -19,6 +19,7 @@ interface UserDashboardPreviewModalProps {
   usageItems: UsageReportItem[];
   activities: UserActivity[];
   histories?: ItemReviewHistory[];
+  sites?: SiteInfo[];
 }
 
 export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps> = ({
@@ -28,7 +29,8 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
   requests = [],
   usageItems = [],
   activities = [],
-  histories = []
+  histories = [],
+  sites = []
 }) => {
   useBackHandler(isOpen, onClose, 'isUserDashboardPreviewModalOpen');
 
@@ -396,6 +398,7 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                 email={selectedProfile.email}
                 requests={requests}
                 usageItems={usageItems}
+                sites={sites}
                 activeFilter={dashboardFilter}
                 onSelectFilter={setDashboardFilter}
                 profiles={profiles}

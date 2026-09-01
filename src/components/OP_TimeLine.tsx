@@ -1,5 +1,5 @@
 import React from 'react';
-import { BudgetRequest, ItemReviewHistory, UsageReportItem, UserProfile, Role, RequestStatus } from '../types';
+import { BudgetRequest, ItemReviewHistory, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus } from '../types';
 import { getFinanceApprovedAmount } from '../App';
 
 export interface OP_TimeLineProps {
@@ -24,6 +24,52 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
   const formatIDR = (num: any) => {
     const val = Number(num) || 0;
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val);
+  };
+
+  const formatTimestamp = (rawTime: any): string => {
+    if (!rawTime || rawTime === '-') return '-';
+    let d: Date | null = null;
+
+    if (typeof rawTime === 'number') {
+      d = new Date(rawTime);
+    } else if (typeof rawTime === 'string') {
+      const trimmed = rawTime.trim();
+      const parsed = new Date(trimmed);
+      if (!isNaN(parsed.getTime())) {
+        d = parsed;
+      } else {
+        // Parse Indonesian locale string: "DD/MM/YYYY, HH.mm.ss" or "DD/MM/YYYY HH:mm:ss"
+        const cleanStr = trimmed.replace(',', '');
+        const parts = cleanStr.split(/\s+/);
+        if (parts.length >= 2) {
+          const dateParts = parts[0].split('/');
+          const timeParts = parts[1].replace(/\./g, ':').split(':');
+          if (dateParts.length === 3 && timeParts.length >= 2) {
+            const day = parseInt(dateParts[0], 10);
+            const month = parseInt(dateParts[1], 10) - 1;
+            const year = parseInt(dateParts[2], 10);
+            const hours = parseInt(timeParts[0], 10) || 0;
+            const minutes = parseInt(timeParts[1], 10) || 0;
+            const seconds = parseInt(timeParts[2], 10) || 0;
+            const customDate = new Date(year, month, day, hours, minutes, seconds);
+            if (!isNaN(customDate.getTime())) {
+              d = customDate;
+            }
+          }
+        }
+      }
+    }
+
+    if (!d || isNaN(d.getTime())) return String(rawTime);
+
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+
+    return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
   };
 
   // Helper to extract approval time from supervisor (Manager / Direktur)
@@ -77,8 +123,91 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
     };
   };
 
+  // Helper to extract Manager Review Info for usage report items (Laporan)
+  const getManagerReportReviewInfo = (req: BudgetRequest) => {
+    const reqUsageItems = usageItems.filter(item => item.requestId === req.id);
+    const totalItems = reqUsageItems.length;
+
+    const itemIds = new Set(reqUsageItems.map(i => i.id));
+    const reportHistories = histories.filter(h =>
+      (h.requestUid && h.requestUid === req.id) || (h.itemUid && itemIds.has(h.itemUid))
+    );
+
+    const mgrHistories = reportHistories.filter(h => {
+      const roleUpper = (h.actorRole || '').toString().toUpperCase();
+      const actionUpper = (h.actionType || '').toString().toUpperCase();
+      return (
+        actionUpper.includes('MANAGER') ||
+        actionUpper.includes('DIREKTUR') ||
+        roleUpper === 'MANAGER' ||
+        roleUpper === 'DIREKTUR'
+      );
+    });
+
+    const approvedItemIds = new Set<string>();
+    reqUsageItems.forEach(item => {
+      const isApprovedInItem = item.statusManager === ItemStatus.APPROVED || (item.statusManager || '').toString().toUpperCase() === 'APPROVED';
+      const isApprovedInHistory = reportHistories.some(h =>
+        h.itemUid === item.id &&
+        (h.actionType === 'APPROVAL_MANAGER' || h.actionType === 'APPROVAL_DIREKTUR' || ((h.status || '').toString().toUpperCase() === 'APPROVED' && ((h.actorRole || '').toString().toUpperCase() === 'MANAGER' || (h.actorRole || '').toString().toUpperCase() === 'DIREKTUR')))
+      );
+      if (isApprovedInItem || isApprovedInHistory) {
+        approvedItemIds.add(item.id);
+      }
+    });
+
+    const approvedCount = approvedItemIds.size;
+
+    const approvedNominal = reqUsageItems.reduce((sum, item) => {
+      if (approvedItemIds.has(item.id)) {
+        return sum + (Number(item.nominal) || 0);
+      }
+      return sum;
+    }, 0);
+
+    let latestTimestamp: string | null = null;
+    const historyListToUse = mgrHistories.length > 0 ? mgrHistories : reportHistories;
+    if (historyListToUse.length > 0) {
+      let maxTime = 0;
+      historyListToUse.forEach(h => {
+        if (!h.timestamp) return;
+        let timeMs = 0;
+        const parsed = new Date(h.timestamp);
+        if (!isNaN(parsed.getTime())) {
+          timeMs = parsed.getTime();
+        } else {
+          const clean = h.timestamp.replace(',', '').trim();
+          const parts = clean.split(/\s+/);
+          if (parts.length >= 2) {
+            const dateParts = parts[0].split('/');
+            const timeParts = parts[1].replace(/\./g, ':').split(':');
+            if (dateParts.length === 3 && timeParts.length >= 2) {
+              const d = new Date(parseInt(dateParts[2], 10), parseInt(dateParts[1], 10) - 1, parseInt(dateParts[0], 10), parseInt(timeParts[0], 10), parseInt(timeParts[1], 10));
+              if (!isNaN(d.getTime())) timeMs = d.getTime();
+            }
+          }
+        }
+        if (timeMs >= maxTime) {
+          maxTime = timeMs;
+          latestTimestamp = h.timestamp;
+        }
+      });
+      if (!latestTimestamp && historyListToUse[historyListToUse.length - 1]?.timestamp) {
+        latestTimestamp = historyListToUse[historyListToUse.length - 1].timestamp;
+      }
+    }
+
+    return {
+      totalItems,
+      approvedCount,
+      approvedNominal,
+      latestTimestamp
+    };
+  };
+
   const approvalInfo = getApprovalTimeInfo(request);
   const finInfo = getFinanceApprovalInfo(request);
+  const reportReviewInfo = getManagerReportReviewInfo(request);
   const submitTime = request.timestamp || request.createdAt || request.date || null;
   const submitAmount = request.jumlahPengajuan || request.nominal || 0;
 
@@ -86,6 +215,7 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
   const hasApprovalTime = Boolean(approvalInfo?.time && approvalInfo.time !== '-');
   const hasFinTime = Boolean(finInfo?.time && finInfo.time !== '-');
   const hasTransferTime = Boolean(request.adminActionTime && request.adminActionTime !== '-');
+  const hasReportReviewTime = Boolean(reportReviewInfo.latestTimestamp && reportReviewInfo.latestTimestamp !== '-');
 
   const isDark = theme === 'dark';
 
@@ -110,7 +240,7 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
             )}
           </div>
           <div className="text-[9px] font-mono text-slate-400">
-            {hasSubmitTime ? submitTime : '-'}
+            {hasSubmitTime ? formatTimestamp(submitTime) : '-'}
           </div>
         </div>
 
@@ -124,7 +254,7 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
             )}
           </div>
           <div className="text-[9px] font-mono text-slate-400">
-            {hasApprovalTime ? approvalInfo.time : '-'}
+            {hasApprovalTime ? formatTimestamp(approvalInfo.time) : '-'}
           </div>
         </div>
 
@@ -138,7 +268,7 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
             )}
           </div>
           <div className="text-[9px] font-mono text-slate-400">
-            {hasFinTime ? finInfo.time : '-'}
+            {hasFinTime ? formatTimestamp(finInfo.time) : '-'}
           </div>
         </div>
 
@@ -152,7 +282,21 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
             )}
           </div>
           <div className="text-[9px] font-mono text-slate-400">
-            {hasTransferTime ? request.adminActionTime : '-'}
+            {hasTransferTime ? formatTimestamp(request.adminActionTime) : '-'}
+          </div>
+        </div>
+
+        {/* Step 5: Review Manager (I/A) */}
+        <div className="relative text-left">
+          <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasReportReviewTime ? (isDark ? 'bg-sky-500 ring-4 ring-sky-950' : 'bg-sky-600 ring-4 ring-sky-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
+          <div className={`flex items-center justify-between text-[10px] font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+            <span>Review Manager ({reportReviewInfo.approvedCount}/{reportReviewInfo.totalItems})</span>
+            {hasReportReviewTime && reportReviewInfo.approvedNominal > 0 && (
+              <span className={`font-mono font-bold ${isDark ? 'text-sky-400' : 'text-sky-600'}`}>{formatIDR(reportReviewInfo.approvedNominal)}</span>
+            )}
+          </div>
+          <div className="text-[9px] font-mono text-slate-400">
+            {hasReportReviewTime ? formatTimestamp(reportReviewInfo.latestTimestamp) : '-'}
           </div>
         </div>
       </div>

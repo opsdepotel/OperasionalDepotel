@@ -3027,6 +3027,7 @@ export default function App() {
                   email={userProfile?.email || ''}
                   requests={requests}
                   usageItems={usageItems}
+                  sites={sites}
                   activeFilter={statusFilter}
                   onSelectFilter={setStatusFilter}
                   onManageUsers={() => setActiveView('setup-profile')}
@@ -4221,6 +4222,7 @@ export default function App() {
         usageItems={usageItems}
         activities={activities}
         histories={itemReviewHistories}
+        sites={sites}
       />
 
       {/* Modal Popup Preview Logo DIOMS */}
