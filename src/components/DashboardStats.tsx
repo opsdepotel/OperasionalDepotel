@@ -854,7 +854,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   <Search className="w-4.5 h-4.5" />
                 </div>
                 <div>
-                  <span className="text-sm sm:text-base font-display font-bold text-slate-900 group-hover:text-indigo-600 transition-colors block">
+                  <span className="text-xs font-display font-bold text-slate-900 group-hover:text-indigo-600 transition-colors block whitespace-nowrap">
                     CARI SITE
                   </span>
                 </div>

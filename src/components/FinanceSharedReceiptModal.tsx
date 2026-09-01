@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BudgetRequest, RequestStatus, Role, UserProfile } from '../types';
+import { BudgetRequest, RequestStatus, Role, UserProfile, ItemReviewHistory, UsageReportItem, ItemStatus } from '../types';
 import { SharedReceiptRecord, deleteSharedReceipt, clearAllSharedReceipts } from '../lib/sharedReceiptStorage';
 import { ZoomableImage } from './ZoomableImage';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
+import { getTransferBertahap, isPendingTransferRequest, getFinanceApprovedAmount, isFinanceApprovedOpRequest } from '../App';
 import {
   Share2,
   FileCheck,
@@ -19,6 +20,8 @@ interface FinanceSharedReceiptModalProps {
   activeRole: Role;
   sharedRecord: SharedReceiptRecord;
   requests: BudgetRequest[];
+  histories?: ItemReviewHistory[];
+  usageItems?: UsageReportItem[];
   profiles?: UserProfile[];
   onSelectCandidate: (candidate: BudgetRequest, file: File) => void;
   onSwitchToFinanceRole?: () => void;
@@ -29,6 +32,8 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
   activeRole,
   sharedRecord,
   requests,
+  histories = [],
+  usageItems = [],
   profiles = [],
   onSelectCandidate,
   onSwitchToFinanceRole,
@@ -77,11 +82,35 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
   };
 
   const pendingTransferRequests = requests.filter((r) => {
-    const isPendingTransfer =
-      r.status === RequestStatus.APPROVED ||
-      r.status === RequestStatus.PARTIALLY_APPROVED ||
-      r.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
-    return isPendingTransfer;
+    if (r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED) return false;
+
+    // 1. UID berstatus "PENDING_TALANGAN_TRANSFER"
+    if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) return true;
+
+    // 2. UID berstatus "PENDING_PENGAJUAN_TRANSFER"
+    if (r.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER) return true;
+
+    // 3. UID yang berstatus Transfer Bertahap (belum CLOSED) yang semua itemnya telah diapproved Manager dan Finance
+    if (r.status !== RequestStatus.CLOSED) {
+      const isTransferBertahap = r.status === RequestStatus.TRANSFER_BERTAHAP || getTransferBertahap(r, histories, usageItems);
+      if (isTransferBertahap) {
+        const reqItems = usageItems.filter(i => i.requestId === r.id);
+        if (reqItems.length > 0) {
+          const allItemsApproved = reqItems.every(i => {
+            const mgrApp = i.statusManager === ItemStatus.APPROVED || (i.statusManager || '').toString().toUpperCase() === 'APPROVED';
+            const adminApp = i.statusAdmin === ItemStatus.APPROVED || (i.statusAdmin || '').toString().toUpperCase() === 'APPROVED';
+            return mgrApp && adminApp;
+          });
+          if (allItemsApproved) return true;
+        } else {
+          // Jika belum ada item laporan yang diinput, pastikan pengajuan telah di-approve oleh Finance
+          const finApproved = isFinanceApprovedOpRequest(r, histories) || getFinanceApprovedAmount(r, histories, usageItems) > 0;
+          if (finApproved) return true;
+        }
+      }
+    }
+
+    return false;
   });
 
   const filteredCandidates = pendingTransferRequests.filter((r) => {
@@ -253,8 +282,29 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                       const reqProfile = profiles.find((p) => p.email.toLowerCase() === req.userEmail.toLowerCase());
                       const reqName = reqProfile?.nama || (reqProfile as any)?.name || req.userEmail.split('@')[0];
                       const divisiText = formatDivisiSubDivisi(reqProfile?.divisi || req.divisi, reqProfile?.subDivisi || req.subDivisi);
-                      const isTalangan = req.id.startsWith('OPT-') || req.tipePengajuan === 'DANA_TALANGAN';
-                      const nominal = req.managerActionAmount || req.nominalTotal || 0;
+                      const isTalangan = req.id.startsWith('OPT-') || req.id.startsWith('BBMDS') || req.id.startsWith('BBM_DurenSawit') || req.tipePengajuan === 'DANA_TALANGAN';
+                      
+                      const finApprovedAmt = getFinanceApprovedAmount(req, histories, usageItems);
+                      const transferredAmt = req.adminActionAmount || 0;
+                      const sisaTransfer = finApprovedAmt > 0 ? Math.max(0, finApprovedAmt - transferredAmt) : (req.managerActionAmount || req.jumlahPengajuan || 0);
+                      const nominal = isTalangan ? (finApprovedAmt > 0 ? finApprovedAmt : (req.managerActionAmount || req.jumlahPengajuan || 0)) : (sisaTransfer > 0 ? sisaTransfer : (req.managerActionAmount || req.jumlahPengajuan || 0));
+
+                      let statusBadgeLabel = 'Disetujui';
+                      let statusBadgeStyle = 'bg-emerald-50 text-emerald-700 border-emerald-200/80';
+
+                      if (req.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
+                        statusBadgeLabel = 'Pending Reimburse Talangan';
+                        statusBadgeStyle = 'bg-pink-50 text-pink-700 border-pink-200';
+                      } else if (req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER) {
+                        statusBadgeLabel = 'Pending Transfer Finance';
+                        statusBadgeStyle = 'bg-amber-50 text-amber-700 border-amber-200';
+                      } else if (req.status === RequestStatus.TRANSFER_BERTAHAP || getTransferBertahap(req, histories, usageItems)) {
+                        statusBadgeLabel = 'Transfer Bertahap';
+                        statusBadgeStyle = 'bg-purple-50 text-purple-700 border-purple-200';
+                      } else if (req.status === RequestStatus.PARTIALLY_APPROVED) {
+                        statusBadgeLabel = 'Disetujui Sebagian';
+                        statusBadgeStyle = 'bg-blue-50 text-blue-700 border-blue-200';
+                      }
 
                       return (
                         <div
@@ -289,15 +339,11 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                             </div>
                           </div>
 
-                          {/* Baris 3 (Di bawah Pemohon): Informasi Finance Approval */}
+                          {/* Baris 3 (Di bawah Pemohon): Informasi Status / Finance Approval */}
                           <div className="text-xs flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] text-slate-400 font-semibold">Finance Approval:</span>
-                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200/80 shrink-0">
-                              {req.status === RequestStatus.PARTIALLY_APPROVED
-                                ? 'Disetujui Sebagian'
-                                : req.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-                                ? 'Menunggu Reimburse'
-                                : 'Disetujui'}
+                            <span className="text-[10px] text-slate-400 font-semibold">Status Transfer:</span>
+                            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 ${statusBadgeStyle}`}>
+                              {statusBadgeLabel}
                             </span>
                             {(req.adminComment || req.managerComment) && (
                               <span className="text-[11px] text-slate-500 italic truncate max-w-[240px]">

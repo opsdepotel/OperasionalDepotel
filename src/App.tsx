@@ -4350,6 +4350,8 @@ export default function App() {
           activeRole={activeRole}
           sharedRecord={pendingSharedRecord}
           requests={requests}
+          histories={itemReviewHistories}
+          usageItems={usageItems}
           profiles={profiles}
           onSwitchToFinanceRole={() => {
             setActiveRole(Role.FINANCE);
