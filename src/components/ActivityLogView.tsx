@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
+import { safeSetJson } from '../lib/storage';
 import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone, Wifi, WifiOff, CloudOff, Send, Trash2, CheckCircle2, HardDrive } from 'lucide-react';
 
 export interface OfflineActivityItem {
@@ -228,7 +229,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
     const updated = [newItem, ...offlineQueue];
     setOfflineQueue(updated);
-    localStorage.setItem('op_app_offline_activities', JSON.stringify(updated));
+    safeSetJson('op_app_offline_activities', updated, 20);
     return newItem;
   };
 
@@ -272,7 +273,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     }
 
     setOfflineQueue(remaining);
-    localStorage.setItem('op_app_offline_activities', JSON.stringify(remaining));
+    safeSetJson('op_app_offline_activities', remaining, 20);
     setIsSyncing(false);
 
     if (successCount > 0) {
@@ -290,7 +291,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const handleDeleteOfflineDraft = (id: string) => {
     const updated = offlineQueue.filter(q => q.id !== id);
     setOfflineQueue(updated);
-    localStorage.setItem('op_app_offline_activities', JSON.stringify(updated));
+    safeSetJson('op_app_offline_activities', updated, 20);
   };
   const [selectedPhotoActivity, setSelectedPhotoActivity] = useState<UserActivity | null>(null);
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);

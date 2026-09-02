@@ -127,17 +127,21 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     cachedAccessToken = credential.accessToken;
     const nowTs = Date.now().toString();
-    localStorage.setItem('g_access_token', cachedAccessToken);
-    localStorage.setItem('g_token_timestamp', nowTs);
-    
-    // Serialize some of the user profile so we can restore it offline / on bypass
-    const minimalUser = {
-      uid: result.user.uid,
-      email: result.user.email,
-      displayName: result.user.displayName,
-      photoURL: result.user.photoURL
-    };
-    localStorage.setItem('g_google_user', JSON.stringify(minimalUser));
+    try {
+      localStorage.setItem('g_access_token', cachedAccessToken);
+      localStorage.setItem('g_token_timestamp', nowTs);
+      
+      // Serialize some of the user profile so we can restore it offline / on bypass
+      const minimalUser = {
+        uid: result.user.uid,
+        email: result.user.email,
+        displayName: result.user.displayName,
+        photoURL: result.user.photoURL
+      };
+      localStorage.setItem('g_google_user', JSON.stringify(minimalUser));
+    } catch (storageErr) {
+      console.warn('Failed to cache token to localStorage:', storageErr);
+    }
 
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {

@@ -501,12 +501,14 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
 
 // --- Mock Data Store Helpers for Demo Mode ---
 const getMockData = <T>(key: string, defaultVal: T): T => {
-  const val = localStorage.getItem(key);
-  if (!val) {
-    localStorage.setItem(key, JSON.stringify(defaultVal));
-    return defaultVal;
-  }
   try {
+    const val = localStorage.getItem(key);
+    if (!val) {
+      try {
+        localStorage.setItem(key, JSON.stringify(defaultVal));
+      } catch (e) {}
+      return defaultVal;
+    }
     return JSON.parse(val);
   } catch {
     return defaultVal;
@@ -514,7 +516,11 @@ const getMockData = <T>(key: string, defaultVal: T): T => {
 };
 
 const setMockData = <T>(key: string, data: T): void => {
-  localStorage.setItem(key, JSON.stringify(data));
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch (e) {
+    console.warn(`[MockData] Failed to save ${key} to localStorage:`, e);
+  }
 };
 
 export const defaultUsers: UserProfile[] = [

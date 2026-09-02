@@ -187,7 +187,9 @@ export async function validateDeviceAccessAndBind(
     };
 
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(emailKey, currentDeviceId);
+      try {
+        localStorage.setItem(emailKey, currentDeviceId);
+      } catch (e) {}
     }
 
     if (saveProfileFn) {
@@ -210,7 +212,9 @@ export async function validateDeviceAccessAndBind(
     if (dbDeviceId.toLowerCase() === currentDevId.toLowerCase()) {
       // Direct match!
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(emailKey, dbDeviceId);
+        try {
+          localStorage.setItem(emailKey, dbDeviceId);
+        } catch (e) {}
       }
       return {
         success: true,
@@ -253,7 +257,9 @@ export async function validateDeviceAccessAndBind(
 
     syncDeviceIdToAllStores(currentDevId);
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(emailKey, currentDevId);
+      try {
+        localStorage.setItem(emailKey, currentDevId);
+      } catch (e) {}
     }
 
     if (saveProfileFn) {

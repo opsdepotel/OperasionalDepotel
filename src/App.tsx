@@ -39,6 +39,7 @@ import {
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
 import { validateDeviceAccessAndBind } from './lib/deviceUtils';
+import { safeSetItem, safeSetJson } from './lib/storage';
 
 // Components
 import { Header } from './components/Header';
@@ -214,7 +215,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('op_app_theme', theme);
+    safeSetItem('op_app_theme', theme);
   }, [theme]);
 
   // App Database Context
@@ -364,12 +365,8 @@ export default function App() {
 
   const handleSelectDashboardTab = (tab: 'APPROVAL' | 'SUBMISSION') => {
     setDashboardTab(tab);
-    try {
-      localStorage.setItem('applet_last_dashboard_tab', tab);
-      localStorage.setItem(`applet_last_dashboard_tab_${activeRole}`, tab);
-    } catch (e) {
-      // ignore
-    }
+    safeSetItem('applet_last_dashboard_tab', tab);
+    safeSetItem(`applet_last_dashboard_tab_${activeRole}`, tab);
   };
   const [initialIsTalangan, setInitialIsTalangan] = useState(false);
   const [expandedReportReqIds, setExpandedReportReqIds] = useState<Record<string, boolean>>({});
@@ -612,13 +609,13 @@ export default function App() {
       setResetDeviceLogs(allResetLogs.sort((a, b) => b.id.localeCompare(a.id)));
       setItemReviewHistories(allHistories.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
       setIsTokenExpired(false);
-      localStorage.setItem('op_app_cached_requests', JSON.stringify(sortedReqs));
-      localStorage.setItem('op_app_cached_usage_items', JSON.stringify(allItems));
-      localStorage.setItem('op_app_cached_profiles', JSON.stringify(allProfs));
-      localStorage.setItem('op_app_cached_sites', JSON.stringify(allSites));
-      localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
-      localStorage.setItem('op_app_cached_reset_device_logs', JSON.stringify(allResetLogs));
-      localStorage.setItem('op_app_cached_item_review_histories', JSON.stringify(allHistories));
+      safeSetJson('op_app_cached_requests', sortedReqs, 100);
+      safeSetJson('op_app_cached_usage_items', allItems, 150);
+      safeSetJson('op_app_cached_profiles', allProfs);
+      safeSetJson('op_app_cached_sites', allSites);
+      safeSetJson('op_app_cached_activities', allActs, 30);
+      safeSetJson('op_app_cached_reset_device_logs', allResetLogs, 30);
+      safeSetJson('op_app_cached_item_review_histories', allHistories, 50);
 
       if (selectedRequest) {
         const freshReq = sortedReqs.find(r => r.id === selectedRequest.id);
@@ -827,8 +824,10 @@ export default function App() {
   const handleAppLoginSuccess = async (profile: UserProfile) => {
     setUserProfile(profile);
     if (profile.userId) {
-      localStorage.setItem('op_app_logged_in_user_id', profile.userId);
-      sessionStorage.setItem('op_app_logged_in_user_id', profile.userId);
+      safeSetItem('op_app_logged_in_user_id', profile.userId);
+      try {
+        sessionStorage.setItem('op_app_logged_in_user_id', profile.userId);
+      } catch (e) {}
     }
 
     if (pendingSharedRecord) {
@@ -907,7 +906,7 @@ export default function App() {
 
         fetchedProfs = await fetchProfiles(currentToken, sheetId);
         setProfiles(fetchedProfs);
-        localStorage.setItem('op_app_cached_profiles', JSON.stringify(fetchedProfs));
+        safeSetJson('op_app_cached_profiles', fetchedProfs);
         setIsTokenExpired(false);
       } catch (err: any) {
         console.warn('Google API validation attempt error:', err);
@@ -938,7 +937,7 @@ export default function App() {
               }
               fetchedProfs = await fetchProfiles(reAuth.accessToken, sheetId);
               setProfiles(fetchedProfs);
-              localStorage.setItem('op_app_cached_profiles', JSON.stringify(fetchedProfs));
+              safeSetJson('op_app_cached_profiles', fetchedProfs);
             }
           } catch (reAuthErr) {
             console.warn('Google re-authentication skipped or cancelled, using local user profiles:', reAuthErr);
@@ -990,7 +989,7 @@ export default function App() {
       if (deviceCheck.updatedUser) {
         const updatedProfs = candidateProfiles.map(p => p.email.toLowerCase() === finalUser.email.toLowerCase() ? finalUser : p);
         setProfiles(updatedProfs);
-        localStorage.setItem('op_app_cached_profiles', JSON.stringify(updatedProfs));
+        safeSetJson('op_app_cached_profiles', updatedProfs);
       }
 
       if (currentToken && sheetId && !isTokenExpired) {
@@ -1063,7 +1062,7 @@ export default function App() {
     if (success !== null) {
       setProfiles(prev => prev.map(p => p.email.toLowerCase() === targetUser.email.toLowerCase() ? updatedProfile : p));
       setResetDeviceLogs(prev => [logEntry, ...prev]);
-      localStorage.setItem('op_app_cached_reset_device_logs', JSON.stringify([logEntry, ...resetDeviceLogs]));
+      safeSetJson('op_app_cached_reset_device_logs', [logEntry, ...resetDeviceLogs], 50);
       if (userProfile && userProfile.email.toLowerCase() === targetUser.email.toLowerCase()) {
         setUserProfile(updatedProfile);
       }
@@ -1174,9 +1173,7 @@ export default function App() {
     if (success !== null) {
       setUserProfile(updatedProfile);
       setProfiles(prev => prev.map(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase() ? updatedProfile : p));
-      localStorage.setItem('op_app_cached_profiles', JSON.stringify(
-        profiles.map(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase() ? updatedProfile : p)
-      ));
+      safeSetJson('op_app_cached_profiles', profiles.map(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase() ? updatedProfile : p));
 
       // Reload database profiles ONLY when profile photo changes
       if (currentToken && currentSheetId) {
@@ -1184,7 +1181,7 @@ export default function App() {
           const freshProfiles = await fetchProfiles(currentToken, currentSheetId);
           if (freshProfiles && freshProfiles.length > 0) {
             setProfiles(freshProfiles);
-            localStorage.setItem('op_app_cached_profiles', JSON.stringify(freshProfiles));
+            safeSetJson('op_app_cached_profiles', freshProfiles);
             const freshUser = freshProfiles.find(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase());
             if (freshUser) {
               setUserProfile(freshUser);
@@ -1951,7 +1948,7 @@ export default function App() {
     // Refresh activities state
     const allActs = await fetchUserActivities(token, spreadsheetId);
     setActivities(allActs);
-    localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
+    safeSetJson('op_app_cached_activities', allActs, 30);
   };
 
   const handleUpdateActivity = async (updatedActivity: UserActivity) => {
@@ -1965,7 +1962,7 @@ export default function App() {
       await updateUserActivity(currentToken, currentSheetId, updatedActivity);
       const allActs = await fetchUserActivities(currentToken, currentSheetId);
       setActivities(allActs);
-      localStorage.setItem('op_app_cached_activities', JSON.stringify(allActs));
+      safeSetJson('op_app_cached_activities', allActs, 30);
     } catch (err) {
       console.error('Error updating activity in database:', err);
     }
