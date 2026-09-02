@@ -72,44 +72,83 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
     return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
   };
 
-  // Helper to extract approval time from supervisor (Manager / Direktur)
-  const getApprovalTimeInfo = (req: BudgetRequest) => {
+  // 1. Logika pencarian timestamp & info Approved Manager (Persetujuan Pengajuan Tahap 1)
+  const getApprovedManagerTimestamp = (req: BudgetRequest) => {
     const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
     const defaultSupervisor = (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Direktur' : 'Manager';
 
+    let supervisor = defaultSupervisor;
+    let time: string | null = null;
+
     if (histories && histories.length > 0) {
+      // Log riwayat persetujuan pengajuan awal oleh Manager/Direktur (itemUid === requestUid)
       const approvalLog = histories.find(h =>
         (h.requestUid === req.id || h.itemUid === req.id) &&
+        (h.itemUid === h.requestUid || h.itemUid === req.id) &&
         (h.actionType === 'APPROVAL_MANAGER' || h.actionType === 'APPROVAL_DIREKTUR' || h.actionType === 'REVISI_MANAGER' || h.actionType === 'REVISI_DIREKTUR')
       );
-      if (approvalLog && approvalLog.timestamp) {
-        const supervisor = (approvalLog.actionType === 'APPROVAL_DIREKTUR' || approvalLog.actionType === 'REVISI_DIREKTUR' || approvalLog.actorRole === Role.DIREKTUR) ? 'Direktur' : 'Manager';
-        return {
-          supervisor,
-          time: approvalLog.timestamp
-        };
+      if (approvalLog) {
+        if (approvalLog.actionType === 'APPROVAL_DIREKTUR' || approvalLog.actionType === 'REVISI_DIREKTUR' || approvalLog.actorRole === Role.DIREKTUR) {
+          supervisor = 'Direktur';
+        } else {
+          supervisor = 'Manager';
+        }
+        if (approvalLog.timestamp) {
+          time = approvalLog.timestamp;
+        }
       }
     }
 
-    return {
-      supervisor: defaultSupervisor,
-      time: null
-    };
+    // Fallback timestamp persetujuan manager dari field BudgetRequest
+    if (!time) {
+      time = (req as any).managerApprovedAt || (req as any).managerReviewDate || (req as any).managerActionTime || null;
+    }
+
+    return { supervisor, time };
   };
 
-  // Helper to extract Finance approval info
-  const getFinanceApprovalInfo = (req: BudgetRequest) => {
+  // 2. Logika pencarian timestamp & info Approved Finance (Persetujuan Pengajuan Tahap 2)
+  const getApprovedFinanceTimestamp = (req: BudgetRequest) => {
     let approvedAmount = getFinanceApprovedAmount(req, histories, usageItems);
+    let time: string | null = null;
 
-    let approvalTime: string | null = null;
     if (histories && histories.length > 0) {
+      // Log Utama: Riwayat persetujuan pengajuan oleh Finance (actionType === 'APPROVAL_FINANCE' || 'REVISI_FINANCE', status === 'APPROVED'/'DISETUJUI', itemUid === requestUid)
       const finLog = histories.find(h =>
         (h.requestUid === req.id || h.itemUid === req.id) &&
-        (h.actionType === 'APPROVAL_FINANCE' || (h.actorRole || '').toString().toUpperCase() === 'FINANCE')
+        (h.itemUid === h.requestUid || h.itemUid === req.id) &&
+        (h.actionType === 'APPROVAL_FINANCE' || h.actionType === 'REVISI_FINANCE') &&
+        ((h.status || '').toString().toUpperCase() === 'APPROVED' || (h.status || '').toString().toUpperCase() === 'DISETUJUI')
       );
-      if (finLog && finLog.timestamp) {
-        approvalTime = finLog.timestamp;
-        if (!approvedAmount && finLog.nominal) approvedAmount = finLog.nominal;
+      if (finLog) {
+        if (finLog.timestamp) {
+          time = finLog.timestamp;
+        }
+        if (!approvedAmount && finLog.nominal) {
+          approvedAmount = finLog.nominal;
+        }
+      }
+    }
+
+    // Fallback: Hanya mencari tanggal transfer terakhir UID terkait
+    if (!time) {
+      if (histories && histories.length > 0) {
+        const transferLogs = histories.filter(h =>
+          (h.requestUid === req.id || h.itemUid === req.id) &&
+          ((h.status || '').toString().toUpperCase() === 'TRANSFERRED' ||
+           (h.status || '').toString().toUpperCase() === 'TRANSFER_BERTAHAP' ||
+           (h.actionType || '').toString().toUpperCase().includes('TRANSFER'))
+        );
+        if (transferLogs.length > 0) {
+          const lastTransferLog = transferLogs[transferLogs.length - 1];
+          if (lastTransferLog && lastTransferLog.timestamp) {
+            time = lastTransferLog.timestamp;
+          }
+        }
+      }
+
+      if (!time && req.adminActionTime && req.adminActionTime !== '-') {
+        time = req.adminActionTime;
       }
     }
 
@@ -117,20 +156,28 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       approvedAmount = req.adminActionAmount;
     }
 
-    return {
-      amount: approvedAmount,
-      time: approvalTime
-    };
+    return { amount: approvedAmount, time };
   };
 
-  // Helper to extract Manager Review Info for usage report items (Laporan)
-  const getManagerReportReviewInfo = (req: BudgetRequest) => {
+  // 3. Logika pencarian timestamp & info Review Manager (Pemeriksaan Laporan Penggunaan oleh Manager)
+  const getReviewManagerTimestamp = (req: BudgetRequest) => {
     const reqUsageItems = usageItems.filter(item => item.requestId === req.id);
     const totalItems = reqUsageItems.length;
 
+    // Jika belum ada item laporan penggunaan, kembalikan nilai kosong (time: null)
+    if (totalItems === 0) {
+      return {
+        totalItems: 0,
+        approvedCount: 0,
+        approvedNominal: 0,
+        time: null
+      };
+    }
+
     const itemIds = new Set(reqUsageItems.map(i => i.id));
+    // KHUSUS log riwayat level item laporan penggunaan (BUKAN level pengajuan induk / h.itemUid !== req.id)
     const reportHistories = histories.filter(h =>
-      (h.requestUid && h.requestUid === req.id) || (h.itemUid && itemIds.has(h.itemUid))
+      h.itemUid && itemIds.has(h.itemUid) && h.itemUid !== req.id
     );
 
     const mgrHistories = reportHistories.filter(h => {
@@ -157,7 +204,6 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
     });
 
     const approvedCount = approvedItemIds.size;
-
     const approvedNominal = reqUsageItems.reduce((sum, item) => {
       if (approvedItemIds.has(item.id)) {
         return sum + (Number(item.nominal) || 0);
@@ -165,12 +211,23 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       return sum;
     }, 0);
 
-    let latestTimestamp: string | null = null;
-    const historyListToUse = mgrHistories.length > 0 ? mgrHistories : reportHistories;
-    if (historyListToUse.length > 0) {
+    // Jika belum ada item laporan yang disetujui Manager, waktu wajib null (-)
+    if (approvedCount === 0) {
+      return {
+        totalItems,
+        approvedCount: 0,
+        approvedNominal: 0,
+        time: null
+      };
+    }
+
+    // Timestamp HANYA dicari dari table histories level item laporan (mgrHistories)
+    let time: string | null = null;
+    if (mgrHistories.length > 0) {
       let maxTime = 0;
-      historyListToUse.forEach(h => {
-        if (!h.timestamp) return;
+      let latestEntry: (typeof mgrHistories)[0] | null = null;
+      mgrHistories.forEach(h => {
+        if (!h.timestamp || h.timestamp === '-') return;
         let timeMs = 0;
         const parsed = new Date(h.timestamp);
         if (!isNaN(parsed.getTime())) {
@@ -189,11 +246,11 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
         }
         if (timeMs >= maxTime) {
           maxTime = timeMs;
-          latestTimestamp = h.timestamp;
+          latestEntry = h;
         }
       });
-      if (!latestTimestamp && historyListToUse[historyListToUse.length - 1]?.timestamp) {
-        latestTimestamp = historyListToUse[historyListToUse.length - 1].timestamp;
+      if (latestEntry && latestEntry.timestamp && latestEntry.timestamp !== '-') {
+        time = latestEntry.timestamp;
       }
     }
 
@@ -201,22 +258,29 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       totalItems,
       approvedCount,
       approvedNominal,
-      latestTimestamp
+      time
     };
   };
 
-  const approvalInfo = getApprovalTimeInfo(request);
-  const finInfo = getFinanceApprovalInfo(request);
-  const reportReviewInfo = getManagerReportReviewInfo(request);
-
-  // Helper to extract Finance Review Info for usage report items (Laporan)
-  const getFinanceReportReviewInfo = (req: BudgetRequest) => {
+  // 4. Logika pencarian timestamp & info Review Finance (Pemeriksaan Laporan Penggunaan oleh Finance)
+  const getReviewFinanceTimestamp = (req: BudgetRequest) => {
     const reqUsageItems = usageItems.filter(item => item.requestId === req.id);
     const totalItems = reqUsageItems.length;
 
+    // Jika belum ada item laporan penggunaan, kembalikan nilai kosong (time: null)
+    if (totalItems === 0) {
+      return {
+        totalItems: 0,
+        approvedCount: 0,
+        approvedNominal: 0,
+        time: null
+      };
+    }
+
     const itemIds = new Set(reqUsageItems.map(i => i.id));
+    // KHUSUS log riwayat level item laporan penggunaan (BUKAN level pengajuan induk / h.itemUid !== req.id)
     const reportHistories = histories.filter(h =>
-      (h.requestUid && h.requestUid === req.id) || (h.itemUid && itemIds.has(h.itemUid))
+      h.itemUid && itemIds.has(h.itemUid) && h.itemUid !== req.id
     );
 
     const finHistories = reportHistories.filter(h => {
@@ -241,7 +305,6 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
     });
 
     const approvedCount = approvedItemIds.size;
-
     const approvedNominal = reqUsageItems.reduce((sum, item) => {
       if (approvedItemIds.has(item.id)) {
         return sum + (Number(item.nominal) || 0);
@@ -249,12 +312,23 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       return sum;
     }, 0);
 
-    let latestTimestamp: string | null = null;
-    const historyListToUse = finHistories.length > 0 ? finHistories : reportHistories.filter(h => h.itemUid);
-    if (historyListToUse.length > 0) {
+    // Jika belum ada item laporan yang disetujui Finance, waktu wajib null (-)
+    if (approvedCount === 0) {
+      return {
+        totalItems,
+        approvedCount: 0,
+        approvedNominal: 0,
+        time: null
+      };
+    }
+
+    // Timestamp HANYA dicari dari table histories level item laporan (finHistories)
+    let time: string | null = null;
+    if (finHistories.length > 0) {
       let maxTime = 0;
-      historyListToUse.forEach(h => {
-        if (!h.timestamp) return;
+      let latestEntry: (typeof finHistories)[0] | null = null;
+      finHistories.forEach(h => {
+        if (!h.timestamp || h.timestamp === '-') return;
         let timeMs = 0;
         const parsed = new Date(h.timestamp);
         if (!isNaN(parsed.getTime())) {
@@ -273,41 +347,37 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
         }
         if (timeMs >= maxTime) {
           maxTime = timeMs;
-          latestTimestamp = h.timestamp;
+          latestEntry = h;
         }
       });
-      if (!latestTimestamp && historyListToUse[historyListToUse.length - 1]?.timestamp) {
-        latestTimestamp = historyListToUse[historyListToUse.length - 1].timestamp;
+      if (latestEntry && latestEntry.timestamp && latestEntry.timestamp !== '-') {
+        time = latestEntry.timestamp;
       }
-    }
-
-    if (!latestTimestamp && approvedCount > 0) {
-      reqUsageItems.forEach(item => {
-        if (approvedItemIds.has(item.id) && item.updatedAt) {
-          latestTimestamp = item.updatedAt;
-        }
-      });
     }
 
     return {
       totalItems,
       approvedCount,
       approvedNominal,
-      latestTimestamp
+      time
     };
   };
 
-  const finReportReviewInfo = getFinanceReportReviewInfo(request);
+  // Masing-masing fungsi dipanggil secara independen & terpisah:
+  const approvedManagerInfo = getApprovedManagerTimestamp(request);
+  const approvedFinanceInfo = getApprovedFinanceTimestamp(request);
+  const reviewManagerInfo = getReviewManagerTimestamp(request);
+  const reviewFinanceInfo = getReviewFinanceTimestamp(request);
 
   const submitTime = request.timestamp || request.createdAt || request.date || null;
   const submitAmount = request.jumlahPengajuan || request.nominal || 0;
 
   const hasSubmitTime = Boolean(submitTime && submitTime !== '-');
-  const hasApprovalTime = Boolean(approvalInfo?.time && approvalInfo.time !== '-');
-  const hasFinTime = Boolean(finInfo?.time && finInfo.time !== '-');
+  const hasApprovedManagerTime = Boolean(approvedManagerInfo?.time && approvedManagerInfo.time !== '-');
+  const hasApprovedFinanceTime = Boolean(approvedFinanceInfo?.time && approvedFinanceInfo.time !== '-');
+  const hasReviewManagerTime = Boolean(reviewManagerInfo?.time && reviewManagerInfo.time !== '-');
+  const hasReviewFinanceTime = Boolean(reviewFinanceInfo?.time && reviewFinanceInfo.time !== '-');
   const hasTransferTime = Boolean(request.adminActionTime && request.adminActionTime !== '-');
-  const hasReportReviewTime = Boolean(reportReviewInfo.latestTimestamp && reportReviewInfo.latestTimestamp !== '-');
-  const hasFinReportReviewTime = Boolean(finReportReviewInfo.latestTimestamp && finReportReviewInfo.latestTimestamp !== '-');
 
   const isDark = theme === 'dark';
 
@@ -342,29 +412,29 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
 
             {/* Step 2: Review Manager */}
             <div className="relative text-left">
-              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasReportReviewTime ? (isDark ? 'bg-sky-500 ring-4 ring-sky-950' : 'bg-sky-600 ring-4 ring-sky-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
+              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasReviewManagerTime ? (isDark ? 'bg-sky-500 ring-4 ring-sky-950' : 'bg-sky-600 ring-4 ring-sky-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
               <div className={`flex items-center justify-between text-[10px] font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
-                <span>Review Manager ({reportReviewInfo.approvedCount}/{reportReviewInfo.totalItems})</span>
-                {hasReportReviewTime && reportReviewInfo.approvedNominal > 0 && (
-                  <span className={`font-mono font-bold ${isDark ? 'text-sky-400' : 'text-sky-600'}`}>{formatIDR(reportReviewInfo.approvedNominal)}</span>
+                <span>Review Manager ({reviewManagerInfo.approvedCount}/{reviewManagerInfo.totalItems})</span>
+                {hasReviewManagerTime && reviewManagerInfo.approvedNominal > 0 && (
+                  <span className={`font-mono font-bold ${isDark ? 'text-sky-400' : 'text-sky-600'}`}>{formatIDR(reviewManagerInfo.approvedNominal)}</span>
                 )}
               </div>
               <div className="text-[9px] font-mono text-slate-400">
-                {hasReportReviewTime ? formatTimestamp(reportReviewInfo.latestTimestamp) : '-'}
+                {hasReviewManagerTime ? formatTimestamp(reviewManagerInfo.time) : '-'}
               </div>
             </div>
 
             {/* Step 3: Review Finance */}
             <div className="relative text-left">
-              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasFinReportReviewTime ? (isDark ? 'bg-purple-500 ring-4 ring-purple-950' : 'bg-purple-600 ring-4 ring-purple-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
+              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasReviewFinanceTime ? (isDark ? 'bg-purple-500 ring-4 ring-purple-950' : 'bg-purple-600 ring-4 ring-purple-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
               <div className={`flex items-center justify-between text-[10px] font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
-                <span>Review Finance ({finReportReviewInfo.approvedCount}/{finReportReviewInfo.totalItems})</span>
-                {hasFinReportReviewTime && finReportReviewInfo.approvedNominal > 0 && (
-                  <span className={`font-mono font-bold ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>{formatIDR(finReportReviewInfo.approvedNominal)}</span>
+                <span>Review Finance ({reviewFinanceInfo.approvedCount}/{reviewFinanceInfo.totalItems})</span>
+                {hasReviewFinanceTime && reviewFinanceInfo.approvedNominal > 0 && (
+                  <span className={`font-mono font-bold ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>{formatIDR(reviewFinanceInfo.approvedNominal)}</span>
                 )}
               </div>
               <div className="text-[9px] font-mono text-slate-400">
-                {hasFinReportReviewTime ? formatTimestamp(finReportReviewInfo.latestTimestamp) : '-'}
+                {hasReviewFinanceTime ? formatTimestamp(reviewFinanceInfo.time) : '-'}
               </div>
             </div>
 
@@ -400,29 +470,29 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
 
             {/* Step 2: Approved Manager / Direktur */}
             <div className="relative text-left">
-              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasApprovalTime ? (isDark ? 'bg-indigo-500 ring-4 ring-indigo-950' : 'bg-indigo-600 ring-4 ring-indigo-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
+              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasApprovedManagerTime ? (isDark ? 'bg-indigo-500 ring-4 ring-indigo-950' : 'bg-indigo-600 ring-4 ring-indigo-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
               <div className={`flex items-center justify-between text-[10px] font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
-                <span>Approved {approvalInfo?.supervisor || 'Manager'}</span>
-                {hasApprovalTime && request.managerActionAmount > 0 && (
+                <span>Approved {approvedManagerInfo?.supervisor || 'Manager'}</span>
+                {hasApprovedManagerTime && request.managerActionAmount > 0 && (
                   <span className={`font-mono font-bold ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>{formatIDR(request.managerActionAmount)}</span>
                 )}
               </div>
               <div className="text-[9px] font-mono text-slate-400">
-                {hasApprovalTime ? formatTimestamp(approvalInfo.time) : '-'}
+                {hasApprovedManagerTime ? formatTimestamp(approvedManagerInfo.time) : '-'}
               </div>
             </div>
 
             {/* Step 3: Approved Finance */}
             <div className="relative text-left">
-              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasFinTime ? (isDark ? 'bg-purple-500 ring-4 ring-purple-950' : 'bg-purple-600 ring-4 ring-purple-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
+              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasApprovedFinanceTime ? (isDark ? 'bg-purple-500 ring-4 ring-purple-950' : 'bg-purple-600 ring-4 ring-purple-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
               <div className={`flex items-center justify-between text-[10px] font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
                 <span>Approved Finance</span>
-                {hasFinTime && finInfo?.amount > 0 && (
-                  <span className={`font-mono font-bold ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>{formatIDR(finInfo.amount)}</span>
+                {hasApprovedFinanceTime && approvedFinanceInfo?.amount > 0 && (
+                  <span className={`font-mono font-bold ${isDark ? 'text-purple-400' : 'text-purple-600'}`}>{formatIDR(approvedFinanceInfo.amount)}</span>
                 )}
               </div>
               <div className="text-[9px] font-mono text-slate-400">
-                {hasFinTime ? formatTimestamp(finInfo.time) : '-'}
+                {hasApprovedFinanceTime ? formatTimestamp(approvedFinanceInfo.time) : '-'}
               </div>
             </div>
 
@@ -440,31 +510,31 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
               </div>
             </div>
 
-            {/* Step 5: Review Manager (I/A) */}
+            {/* Step 5: Review Manager (Laporan Penggunaan) */}
             <div className="relative text-left">
-              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasReportReviewTime ? (isDark ? 'bg-sky-500 ring-4 ring-sky-950' : 'bg-sky-600 ring-4 ring-sky-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
+              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasReviewManagerTime ? (isDark ? 'bg-sky-500 ring-4 ring-sky-950' : 'bg-sky-600 ring-4 ring-sky-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
               <div className={`flex items-center justify-between text-[10px] font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
-                <span>Review Manager ({reportReviewInfo.approvedCount}/{reportReviewInfo.totalItems})</span>
-                {hasReportReviewTime && reportReviewInfo.approvedNominal > 0 && (
-                  <span className={`font-mono font-bold ${isDark ? 'text-sky-400' : 'text-sky-600'}`}>{formatIDR(reportReviewInfo.approvedNominal)}</span>
+                <span>Review Manager ({reviewManagerInfo.approvedCount}/{reviewManagerInfo.totalItems})</span>
+                {hasReviewManagerTime && reviewManagerInfo.approvedNominal > 0 && (
+                  <span className={`font-mono font-bold ${isDark ? 'text-sky-400' : 'text-sky-600'}`}>{formatIDR(reviewManagerInfo.approvedNominal)}</span>
                 )}
               </div>
               <div className="text-[9px] font-mono text-slate-400">
-                {hasReportReviewTime ? formatTimestamp(reportReviewInfo.latestTimestamp) : '-'}
+                {hasReviewManagerTime ? formatTimestamp(reviewManagerInfo.time) : '-'}
               </div>
             </div>
 
-            {/* Step 6: Review Finance (I/A) */}
+            {/* Step 6: Review Finance (Laporan Penggunaan) */}
             <div className="relative text-left">
-              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasFinReportReviewTime ? (isDark ? 'bg-emerald-500 ring-4 ring-emerald-950' : 'bg-emerald-600 ring-4 ring-emerald-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
+              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasReviewFinanceTime ? (isDark ? 'bg-emerald-500 ring-4 ring-emerald-950' : 'bg-emerald-600 ring-4 ring-emerald-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
               <div className={`flex items-center justify-between text-[10px] font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
-                <span>Review Finance ({finReportReviewInfo.approvedCount}/{finReportReviewInfo.totalItems})</span>
-                {hasFinReportReviewTime && finReportReviewInfo.approvedNominal > 0 && (
-                  <span className={`font-mono font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatIDR(finReportReviewInfo.approvedNominal)}</span>
+                <span>Review Finance ({reviewFinanceInfo.approvedCount}/{reviewFinanceInfo.totalItems})</span>
+                {hasReviewFinanceTime && reviewFinanceInfo.approvedNominal > 0 && (
+                  <span className={`font-mono font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatIDR(reviewFinanceInfo.approvedNominal)}</span>
                 )}
               </div>
               <div className="text-[9px] font-mono text-slate-400">
-                {hasFinReportReviewTime ? formatTimestamp(finReportReviewInfo.latestTimestamp) : '-'}
+                {hasReviewFinanceTime ? formatTimestamp(reviewFinanceInfo.time) : '-'}
               </div>
             </div>
           </>
