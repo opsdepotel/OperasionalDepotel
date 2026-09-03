@@ -1881,15 +1881,11 @@ export default function App() {
 
     if (photoFile) {
       if (token === 'mock_demo_token') {
-        // Read file as base64 for local preview
-        const reader = new FileReader();
-        const base64Promise = new Promise<string>((resolve) => {
-          reader.onloadend = () => resolve(reader.result as string);
-        });
-        reader.readAsDataURL(photoFile);
-        finalBuktiUrl = await base64Promise;
+        const mockId = `mock_act_file_${Date.now()}`;
+        finalBuktiUrl = `https://drive.google.com/file/d/${mockId}/view`;
+        finalBuktiFileId = mockId;
       } else {
-        const uploadResult = await uploadReceiptFile(token, driveFolderId, photoFile);
+        const uploadResult = await uploadReceiptFile(token, driveFolderId || DRIVE_FOLDER_ID, photoFile);
         finalBuktiUrl = uploadResult.viewUrl;
         finalBuktiFileId = uploadResult.fileId;
       }

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { google } from 'googleapis';
-import { getServiceAccountAuth } from '../../src/lib/serverGoogleAuth.js';
+import { getServerGoogleAuth } from '../../src/lib/serverGoogleAuth.js';
 import stream from 'stream';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -9,11 +9,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const auth = getServiceAccountAuth();
-    if (!auth) {
+    const authObj = await getServerGoogleAuth();
+    if (!authObj) {
       return res.status(503).json({
         success: false,
-        error: 'Google Service Account belum dikonfigurasi.'
+        error: 'Google Auth tidak dapat memverifikasi token (invalid_grant atau belum dikonfigurasi). Silakan periksa GOOGLE_REFRESH_TOKEN.'
       });
     }
 
@@ -25,7 +25,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const drive = google.drive({ version: 'v3', auth });
+    const drive = google.drive({ version: 'v3', auth: authObj.auth });
 
     let cleanBase64 = base64Data;
     let actualMime = mimeType || 'image/jpeg';
@@ -39,11 +39,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const bufferStream = new stream.PassThrough();
     bufferStream.end(buffer);
 
+    const targetFolderId = folderId || '1RZHDhcGEdrEu1S1OJh24Za1qkxfU-1kE';
     const fileMetadata: any = {
-      name: fileName || `bukti_${Date.now()}.jpg`,
+      name: fileName || `bukti_${Date.now()}.jpg`
     };
-    if (folderId) {
-      fileMetadata.parents = [folderId];
+    if (targetFolderId) {
+      fileMetadata.parents = [targetFolderId];
     }
 
     const fileMedia = {
@@ -51,33 +52,62 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body: bufferStream
     };
 
-    const file = await drive.files.create({
-      requestBody: fileMetadata,
-      media: fileMedia,
-      fields: 'id, webViewLink, webContentLink'
-    });
-
-    const fileId = file.data.id;
+    let fileId = '';
+    let viewUrl = '';
 
     try {
-      if (fileId) {
-        await drive.permissions.create({
-          fileId,
-          requestBody: {
-            role: 'reader',
-            type: 'anyone'
-          }
+      let file;
+      try {
+        file = await drive.files.create({
+          requestBody: fileMetadata,
+          media: fileMedia,
+          supportsAllDrives: true,
+          fields: 'id, webViewLink, webContentLink'
+        });
+      } catch (parentErr: any) {
+        console.warn('Upload with parent folder failed, attempting Drive root upload:', parentErr.message || parentErr);
+        delete fileMetadata.parents;
+        const rootStream = new stream.PassThrough();
+        rootStream.end(buffer);
+        file = await drive.files.create({
+          requestBody: fileMetadata,
+          media: { mimeType: actualMime, body: rootStream },
+          supportsAllDrives: true,
+          fields: 'id, webViewLink, webContentLink'
         });
       }
-    } catch (permErr) {
-      console.warn('Warning: Could not set public permission on uploaded file:', permErr);
-    }
 
-    return res.status(200).json({
-      success: true,
-      fileId,
-      viewUrl: file.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`
-    });
+      fileId = file.data.id || '';
+      viewUrl = file.data.webViewLink || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+
+      if (fileId) {
+        try {
+          await drive.permissions.create({
+            fileId,
+            supportsAllDrives: true,
+            requestBody: {
+              role: 'reader',
+              type: 'anyone'
+            }
+          });
+        } catch (permErr) {
+          console.warn('Warning: Could not set public permission on uploaded file:', permErr);
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        fileId,
+        viewUrl,
+        storageMode: authObj.type
+      });
+    } catch (driveErr: any) {
+      console.error('Google Drive API upload failed:', driveErr.message || driveErr);
+      return res.status(500).json({
+        success: false,
+        error: `Gagal mengunggah foto ke Google Drive: ${driveErr.message || driveErr}`
+      });
+    }
   } catch (error: any) {
     console.error('Error in /api/google/upload-receipt:', error);
     return res.status(500).json({
@@ -86,3 +116,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
+

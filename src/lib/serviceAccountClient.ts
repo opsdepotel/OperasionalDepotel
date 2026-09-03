@@ -82,18 +82,21 @@ export async function uploadReceiptViaServiceAccount(
     })
   });
 
-  if (!res.ok) {
-    const errData = await res.json().catch(() => ({}));
-    throw new Error(errData.error || `Gagal mengunggah foto melalui Service Account: HTTP ${res.status}`);
+  const result = await res.json().catch(() => ({}));
+
+  if (!res.ok || !result.success) {
+    throw new Error(result.error || `Gagal mengunggah foto ke Google Drive (HTTP ${res.status}).`);
   }
 
-  const result = await res.json();
-  if (!result.success) {
-    throw new Error(result.error || 'Gagal mengunggah foto');
+  const fileId = result.fileId || '';
+  const viewUrl = result.viewUrl || (fileId ? `https://drive.google.com/file/d/${fileId}/view` : '');
+
+  if (!fileId || !viewUrl) {
+    throw new Error('Servis Google Drive tidak mengembalikan URL berkas yang valid.');
   }
 
   return {
-    fileId: result.fileId,
-    viewUrl: result.viewUrl
+    fileId,
+    viewUrl
   };
 }

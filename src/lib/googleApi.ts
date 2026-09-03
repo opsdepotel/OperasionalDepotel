@@ -4,6 +4,7 @@
  */
 
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from '../types';
+import { uploadReceiptViaServiceAccount } from './serviceAccountClient';
 
 const originalFetch = window.fetch;
 async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
@@ -718,19 +719,138 @@ export async function findOrCreateFolder(token: string): Promise<string> {
   return DRIVE_FOLDER_ID;
 }
 
+// Helper to compress image or data URL so it strictly fits within Google Sheets cell limit (< 50,000 chars)
+export async function compressDataUrlForGoogleSheetsCell(input: string | File): Promise<string> {
+  const MAX_CELL_CHARS = 40000; // Target safe max length
+
+  let rawDataUrl = '';
+  if (typeof input !== 'string') {
+    rawDataUrl = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve((e.target?.result as string) || '');
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(input);
+    });
+  } else {
+    rawDataUrl = input;
+  }
+
+  if (!rawDataUrl || rawDataUrl.length <= MAX_CELL_CHARS) {
+    return rawDataUrl;
+  }
+
+  // Non-browser or missing canvas check
+  if (typeof window === 'undefined' || typeof Image === 'undefined') {
+    return rawDataUrl.substring(0, MAX_CELL_CHARS);
+  }
+
+  return new Promise<string>((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const attemptCompress = (dim: number, q: number): string => {
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > dim) {
+              height = Math.round((height * dim) / width);
+              width = dim;
+            }
+          } else {
+            if (height > dim) {
+              width = Math.round((width * dim) / height);
+              height = dim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.max(width, 1);
+          canvas.height = Math.max(height, 1);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return '';
+          ctx.drawImage(img, 0, 0, width, height);
+          return canvas.toDataURL('image/jpeg', q);
+        };
+
+        let result = attemptCompress(500, 0.45);
+        if (result.length > MAX_CELL_CHARS) {
+          result = attemptCompress(380, 0.35);
+        }
+        if (result.length > MAX_CELL_CHARS) {
+          result = attemptCompress(280, 0.25);
+        }
+        if (result.length > MAX_CELL_CHARS) {
+          result = result.substring(0, MAX_CELL_CHARS);
+        }
+        resolve(result || rawDataUrl.substring(0, MAX_CELL_CHARS));
+      } catch (err) {
+        resolve(rawDataUrl.substring(0, MAX_CELL_CHARS));
+      }
+    };
+    img.onerror = () => {
+      resolve(rawDataUrl.substring(0, MAX_CELL_CHARS));
+    };
+    img.src = rawDataUrl;
+  });
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve((e.target?.result as string) || '');
+    reader.onerror = (e) => reject(e);
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Ensures any photo URL/data is converted to a Google Drive link before saving to Google Sheets.
+ * If input is a base64 Data URL ('data:image/...'), uploads it to Google Drive and returns the webViewLink.
+ */
+export async function ensureDriveUrl(
+  token: string,
+  inputUrl?: string,
+  defaultFileName?: string
+): Promise<{ url: string; fileId?: string }> {
+  if (!inputUrl) return { url: '' };
+
+  // If it's already a Google Drive link or standard URL, return it directly
+  if (!inputUrl.startsWith('data:')) {
+    return { url: inputUrl };
+  }
+
+  // Upload base64 Data URL to Google Drive
+  try {
+    const activeToken = token && token !== 'mock_demo_token' ? token : '';
+    const uploadRes = await uploadBase64Image(
+      activeToken,
+      DRIVE_FOLDER_ID,
+      inputUrl,
+      defaultFileName || `photo_${Date.now()}.jpg`
+    );
+
+    if (uploadRes.viewUrl && !uploadRes.viewUrl.startsWith('data:')) {
+      return { url: uploadRes.viewUrl, fileId: uploadRes.fileId };
+    }
+  } catch (err) {
+    console.warn('Could not convert base64 image to Google Drive link:', err);
+  }
+
+  return { url: inputUrl };
+}
+
 // Upload file & set view permission to "anyone"
 export async function uploadReceiptFile(
   token: string,
   folderId: string,
   file: File
 ): Promise<{ fileId: string; viewUrl: string }> {
+  const targetFolderId = folderId || DRIVE_FOLDER_ID;
+
   if (token === 'mock_demo_token') {
     const fileId = `mock_file_${Date.now()}`;
-    const reader = new FileReader();
-    const viewUrl = await new Promise<string>((resolve) => {
-      reader.onload = (e) => resolve(e.target?.result as string || 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?auto=format&fit=crop&q=80&w=300');
-      reader.readAsDataURL(file);
-    });
+    const viewUrl = `https://drive.google.com/file/d/${fileId}/view`;
     return { fileId, viewUrl };
   }
 
@@ -751,74 +871,91 @@ export async function uploadReceiptFile(
 
   const metadata = {
     name: `bukti_${Date.now()}${ext}`,
-    parents: [folderId]
+    parents: [targetFolderId]
   };
 
-  const formData = new FormData();
-  formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-  formData.append('file', file);
+  try {
+    const formData = new FormData();
+    formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+    formData.append('file', file);
 
-  const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData
-  });
+    const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: formData
+    });
 
-  if (!uploadRes.ok) {
-    const text = await uploadRes.text();
-    throw new Error(`Gagal upload file bukti: ${text}`);
+    if (uploadRes.ok) {
+      const uploadData = await uploadRes.json();
+      const fileId = uploadData.id;
+
+      // Set reader permissions so anyone can view (Manager and Admin can review)
+      try {
+        await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            role: 'reader',
+            type: 'anyone'
+          })
+        });
+      } catch (permErr) {
+        console.warn('Could not set public permission on Drive file:', permErr);
+      }
+
+      // Fetch file metadata to get webViewLink
+      const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true&fields=webViewLink`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const metaData = await metaRes.json().catch(() => ({}));
+
+      return {
+        fileId,
+        viewUrl: metaData.webViewLink || `https://drive.google.com/file/d/${fileId}/view`
+      };
+    } else {
+      const errText = await uploadRes.text();
+      console.warn('Google Drive user token upload failed, attempting backend Service Account upload:', errText);
+    }
+  } catch (driveErr: any) {
+    console.warn('Google Drive direct upload failed with user token, attempting backend Service Account upload:', driveErr.message || driveErr);
   }
 
-  const uploadData = await uploadRes.json();
-  const fileId = uploadData.id;
-
-  // Set reader permissions so anyone can view (Manager and Admin can review)
-  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      role: 'reader',
-      type: 'anyone'
-    })
-  });
-
-  // Fetch file metadata to get webViewLink
-  const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=webViewLink`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  const metaData = await metaRes.json();
-
-  return {
-    fileId,
-    viewUrl: metaData.webViewLink || `https://drive.google.com/file/d/${fileId}/view`
-  };
+  // Upload via backend Service Account to Google Drive
+  try {
+    const base64Data = await fileToBase64(file);
+    const saResult = await uploadReceiptViaServiceAccount(targetFolderId, base64Data, file.name);
+    return saResult;
+  } catch (saErr: any) {
+    console.warn('Service Account upload also failed, using compressed Data URL fallback:', saErr);
+    const base64Data = await fileToBase64(file);
+    return {
+      fileId: `img_b64_${Date.now()}`,
+      viewUrl: base64Data
+    };
+  }
 }
 
 // Upload base64 image data URL to Google Drive
 export async function uploadBase64Image(token: string, folderId: string, base64DataUrl: string, fileName?: string): Promise<{ fileId: string; viewUrl: string }> {
-  try {
-    const parts = base64DataUrl.split(',');
-    if (parts.length < 2) {
-      throw new Error('Format Data URL base64 tidak valid.');
-    }
-    const mimeMatch = parts[0].match(/:(.*?);/);
-    const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-    const bstr = atob(parts[1]);
-    let n = bstr.length;
-    const u8arr = new Uint8Array(n);
-    while (n--) {
-      u8arr[n] = bstr.charCodeAt(n);
-    }
-    const blob = new Blob([u8arr], { type: mime });
-    const file = new File([blob], fileName || `bukti_${Date.now()}.jpg`, { type: mime });
-    return await uploadReceiptFile(token, folderId, file);
-  } catch (err: any) {
-    console.error('Error uploading base64 image to Google Drive:', err);
-    throw new Error(`Gagal mengunggah foto nota ke Google Drive: ${err.message || err}`);
+  const parts = base64DataUrl.split(',');
+  if (parts.length < 2) {
+    throw new Error('Format Data URL base64 tidak valid.');
   }
+  const mimeMatch = parts[0].match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const bstr = atob(parts[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  const blob = new Blob([u8arr], { type: mime });
+  const file = new File([blob], fileName || `bukti_${Date.now()}.jpg`, { type: mime });
+  return await uploadReceiptFile(token, folderId, file);
 }
 
 // Fetch Budget Requests
@@ -943,7 +1080,14 @@ export async function fetchItemReviewHistories(token: string, spreadsheetId: str
 
 // Helper to convert object to spreadsheet row according to header list
 function objectToRow(headers: string[], obj: Record<string, any>): any[] {
-  return headers.map(h => obj[h] !== undefined ? obj[h] : '');
+  return headers.map(h => {
+    let val = obj[h] !== undefined ? obj[h] : '';
+    if (typeof val === 'string' && val.length > 48000) {
+      console.warn(`Cell value for column "${h}" exceeded 48,000 characters (${val.length}). Truncating to safe limit.`);
+      val = val.substring(0, 48000);
+    }
+    return val;
+  });
 }
 
 // Acquire distributed lock helper on Google Sheets to avoid race conditions under concurrency
@@ -1086,6 +1230,15 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     }
     
     req.id = finalUid; // Save back to the request object so caller knows the final unique UID
+
+    // Convert base64 data URL to Google Drive link if needed
+    if (req.buktiTransferUrl && req.buktiTransferUrl.startsWith('data:')) {
+      const driveRes = await ensureDriveUrl(token, req.buktiTransferUrl, `BUKTI_TF_${req.id}.jpg`);
+      if (driveRes.url && !driveRes.url.startsWith('data:')) {
+        req.buktiTransferUrl = driveRes.url;
+        if (driveRes.fileId) req.buktiTransferFileId = driveRes.fileId;
+      }
+    }
 
     const nowTimestamp = req.timestamp ? formatTimestamp(req.timestamp) : formatTimestamp(new Date());
     req.timestamp = nowTimestamp;
@@ -1255,6 +1408,15 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
     const newList = [...list, item];
     setMockData('mock_db_laporan', newList);
     return;
+  }
+
+  // Convert base64 data URL to Google Drive link if needed
+  if (item.buktiUrl && item.buktiUrl.startsWith('data:')) {
+    const driveRes = await ensureDriveUrl(token, item.buktiUrl, `NOTA_${item.id}.jpg`);
+    if (driveRes.url && !driveRes.url.startsWith('data:')) {
+      item.buktiUrl = driveRes.url;
+      if (driveRes.fileId) item.buktiFileId = driveRes.fileId;
+    }
   }
 
   const nowTimestamp = item.timestamp ? formatTimestamp(item.timestamp) : formatTimestamp(new Date());
@@ -1430,6 +1592,15 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
     isUnique = !existingIDs.includes(finalId.toUpperCase());
   }
   activity.id = finalId;
+
+  // Convert base64 data URL to Google Drive link if needed
+  if (activity.buktiUrl && activity.buktiUrl.startsWith('data:')) {
+    const driveRes = await ensureDriveUrl(token, activity.buktiUrl, `KEGIATAN_${activity.id}.jpg`);
+    if (driveRes.url && !driveRes.url.startsWith('data:')) {
+      activity.buktiUrl = driveRes.url;
+      if (driveRes.fileId) activity.buktiFileId = driveRes.fileId;
+    }
+  }
 
   const nowTimestamp = activity.timestamp || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
   activity.timestamp = nowTimestamp;
@@ -1617,6 +1788,17 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
     setMockData('mock_db_item_review_history', [...logs, ...existing]);
     return;
   }
+
+  for (const log of logs) {
+    if (log.buktiUrl && log.buktiUrl.startsWith('data:')) {
+      const driveRes = await ensureDriveUrl(token, log.buktiUrl, `SNAPSHOT_${log.id}.jpg`);
+      if (driveRes.url && !driveRes.url.startsWith('data:')) {
+        log.buktiUrl = driveRes.url;
+        if (driveRes.fileId) log.buktiFileId = driveRes.fileId;
+      }
+    }
+  }
+
   const rowsData = logs.map(log => objectToRow(ITEM_REVIEW_HISTORY_HEADERS, {
     HistoryID: log.id,
     ItemUID: log.itemUid,
