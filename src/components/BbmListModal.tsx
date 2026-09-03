@@ -8,9 +8,11 @@ import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, RequestStatus } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
-import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles } from 'lucide-react';
+import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture } from '../lib/aiRecapture';
+import { AiBbmReceiptModal } from './AiBbmReceiptModal';
+import { AiBbmReceiptResult, requestAiBbmReceiptCheck } from '../lib/aiBbmReceipt';
 import { ZoomableImage } from './ZoomableImage';
 
 interface BbmListModalProps {
@@ -155,6 +157,16 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
   const [aiAnalysisError, setAiAnalysisError] = useState<string | null>(null);
 
+  // AI BBM Receipt Check State (Role Administrator)
+  const [aiBbmReceiptResults, setAiBbmReceiptResults] = useState<Record<string, AiBbmReceiptResult>>({});
+  const [isAiBbmModalOpen, setIsAiBbmModalOpen] = useState(false);
+  const [selectedBbmRequest, setSelectedBbmRequest] = useState<BudgetRequest | null>(null);
+  const [selectedBbmUsageItem, setSelectedBbmUsageItem] = useState<UsageReportItem | null>(null);
+  const [selectedBbmPhotoUrl, setSelectedBbmPhotoUrl] = useState<string | null>(null);
+  const [selectedBbmPhotoFileId, setSelectedBbmPhotoFileId] = useState<string | null>(null);
+  const [isAiBbmAnalyzing, setIsAiBbmAnalyzing] = useState(false);
+  const [aiBbmAnalysisError, setAiBbmAnalysisError] = useState<string | null>(null);
+
   // Helper to extract AI Screen Recapture result from database fields or in-memory state
   const getAiRecaptureResult = (act: UserActivity): AiRecaptureResult | null => {
     if (aiRecaptureResults[act.id]) {
@@ -258,6 +270,43 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   useBackHandler(!!selectedPhotoUrl, () => setSelectedPhotoUrl(null), 'bbmList_photoUrl');
   useBackHandler(!!selectedUserActivityModal, () => setSelectedUserActivityModal(null), 'bbmList_userActivity');
   useBackHandler(isAiRecaptureModalOpen, () => setIsAiRecaptureModalOpen(false), 'bbmList_aiRecapture');
+  useBackHandler(isAiBbmModalOpen, () => setIsAiBbmModalOpen(false), 'bbmList_aiBbmReceipt');
+
+  const handleRunAiBbmReceiptCheck = async (
+    req: BudgetRequest,
+    usageItem?: UsageReportItem,
+    forceReanalyze = false
+  ) => {
+    const firstBuktiUrl = req.buktiTransferUrl ? req.buktiTransferUrl.split('||')[0].trim() : '';
+    const firstFileId = req.buktiTransferFileId ? req.buktiTransferFileId.split('||')[0].trim() : '';
+    const rawBuktiPhoto = usageItem?.buktiUrl || firstBuktiUrl;
+    const rawBuktiFileId = usageItem?.buktiFileId || firstFileId;
+
+    setSelectedBbmRequest(req);
+    setSelectedBbmUsageItem(usageItem || null);
+    setSelectedBbmPhotoUrl(rawBuktiPhoto || null);
+    setSelectedBbmPhotoFileId(rawBuktiFileId || null);
+    setIsAiBbmModalOpen(true);
+    setAiBbmAnalysisError(null);
+
+    if (aiBbmReceiptResults[req.id] && !forceReanalyze) {
+      return;
+    }
+
+    setIsAiBbmAnalyzing(true);
+    try {
+      const res = await requestAiBbmReceiptCheck(req, usageItem || undefined, rawBuktiPhoto, rawBuktiFileId);
+      setAiBbmReceiptResults(prev => ({
+        ...prev,
+        [req.id]: res
+      }));
+    } catch (err: any) {
+      console.error('AI BBM Receipt OCR check failed:', err);
+      setAiBbmAnalysisError(err.message || 'Gagal memeriksa nota BBM Duren Sawit dengan AI.');
+    } finally {
+      setIsAiBbmAnalyzing(false);
+    }
+  };
 
   const handleRunAiRecapture = async (
     act: UserActivity,
@@ -661,6 +710,42 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
 
                   {/* Action Buttons Row */}
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2 flex-wrap">
+                    {/* Administrator AI BBM Receipt Check Button */}
+                    {role === Role.ADMINISTRATOR && (() => {
+                      const aiBbmRes = aiBbmReceiptResults[req.id];
+                      let btnStyle = 'bg-gradient-to-r from-amber-500/10 via-amber-600/10 to-orange-500/10 hover:from-amber-500/20 hover:to-orange-500/20 text-amber-900 border-amber-300/80';
+                      let btnText = 'Cek AI Nota BBM';
+                      let btnTitle = 'Periksa kesesuaian nominal nota BBM Duren Sawit vs nominal input sistem';
+
+                      if (aiBbmRes) {
+                        if (aiBbmRes.statusKesesuaian === 'SESUAI') {
+                          btnStyle = 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300 ring-1 ring-emerald-200';
+                          btnText = '🟢 Nota Sesuai';
+                          btnTitle = `Nota Sesuai 100% (${formatIDR(aiBbmRes.nominalNota)})`;
+                        } else if (aiBbmRes.statusKesesuaian === 'TIDAK_SESUAI') {
+                          btnStyle = 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300 ring-1 ring-rose-200';
+                          btnText = `🔴 Beda Nominal (${formatIDR(aiBbmRes.nominalNota)})`;
+                          btnTitle = `Terdeteksi Perbedaan Nominal: Nota ${formatIDR(aiBbmRes.nominalNota)} vs Input ${formatIDR(aiBbmRes.nominalInput)}`;
+                        } else {
+                          btnStyle = 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 ring-1 ring-amber-200';
+                          btnText = '🟡 Nota Tidak Terbaca';
+                          btnTitle = 'Foto nota buram / tidak terbaca jelas oleh AI';
+                        }
+                      }
+
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => handleRunAiBbmReceiptCheck(req, usageItem)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs border ${btnStyle}`}
+                          title={btnTitle}
+                        >
+                          <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                          <span>{btnText}</span>
+                        </button>
+                      );
+                    })()}
+
                     {rawBuktiPhoto && (
                       <button
                         type="button"
@@ -959,6 +1044,24 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
           }
         }}
         profiles={profiles}
+      />
+
+      {/* AI BBM Receipt OCR Modal (Role Administrator) */}
+      <AiBbmReceiptModal
+        isOpen={isAiBbmModalOpen}
+        onClose={() => setIsAiBbmModalOpen(false)}
+        request={selectedBbmRequest}
+        usageItem={selectedBbmUsageItem}
+        photoUrl={selectedBbmPhotoUrl}
+        fileId={selectedBbmPhotoFileId}
+        result={selectedBbmRequest ? aiBbmReceiptResults[selectedBbmRequest.id] || null : null}
+        isAnalyzing={isAiBbmAnalyzing}
+        error={aiBbmAnalysisError}
+        onReanalyze={() => {
+          if (selectedBbmRequest) {
+            handleRunAiBbmReceiptCheck(selectedBbmRequest, selectedBbmUsageItem || undefined, true);
+          }
+        }}
       />
     </div>,
     document.body

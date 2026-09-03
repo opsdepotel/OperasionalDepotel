@@ -1,4 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
+import { google } from 'googleapis';
+import { getServiceAccountAuth } from '../../src/lib/serverGoogleAuth.js';
 
 let aiClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI {
@@ -19,14 +21,41 @@ function getGenAI(): GoogleGenAI {
   return aiClient;
 }
 
-async function fetchImageAsBase64(urlOrFileId: string): Promise<{ base64: string; mimeType: string }> {
+async function fetchImageAsBase64(
+  urlOrFileId: string,
+  googleAccessToken?: string
+): Promise<{ base64: string; mimeType: string }> {
   let fileId = urlOrFileId;
   if (urlOrFileId.startsWith('http://') || urlOrFileId.startsWith('https://')) {
-    const match = urlOrFileId.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
-                  urlOrFileId.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
-                  urlOrFileId.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    const match = urlOrFileId.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+                  urlOrFileId.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+                  urlOrFileId.match(/[?&]id=([a-zA-Z0-9_-]+)/);
     if (match && match[1]) {
       fileId = match[1];
+    }
+  }
+
+  // 1. If user provided a valid OAuth access token, download directly from Drive API v3
+  if (fileId && !fileId.includes('/') && googleAccessToken) {
+    try {
+      const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+        headers: {
+          Authorization: `Bearer ${googleAccessToken}`,
+        },
+      });
+      if (driveRes.ok) {
+        const contentType = (driveRes.headers.get('content-type') || '').toLowerCase();
+        const arrayBuffer = await driveRes.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        if (buffer.length > 200) {
+          return {
+            base64: buffer.toString('base64'),
+            mimeType: contentType.split(';')[0].trim() || 'image/jpeg',
+          };
+        }
+      }
+    } catch (tokenErr) {
+      console.warn('OAuth token fetch in Vercel failed:', tokenErr);
     }
   }
 
@@ -79,6 +108,31 @@ async function fetchImageAsBase64(urlOrFileId: string): Promise<{ base64: string
     }
   }
 
+  // If public thumbnail URLs failed, try downloading directly using Service Account if available
+  if (fileId && !fileId.includes('/')) {
+    try {
+      const auth = getServiceAccountAuth();
+      if (auth) {
+        const drive = google.drive({ version: 'v3', auth });
+        const res = await drive.files.get(
+          { fileId, alt: 'media' },
+          { responseType: 'arraybuffer' }
+        );
+        if (res.data) {
+          const buffer = Buffer.from(res.data as ArrayBuffer);
+          if (buffer.length > 200) {
+            return {
+              base64: buffer.toString('base64'),
+              mimeType: (res.headers['content-type'] as string) || 'image/jpeg',
+            };
+          }
+        }
+      }
+    } catch (saErr) {
+      console.warn('Service Account direct file download in Vercel failed:', saErr);
+    }
+  }
+
   throw lastFetchErr || new Error('Gagal mengunduh foto bukti dari Google Drive (Izin akses dibatasi). Silakan pastikan akses foto diset ke "Siapa saja yang memiliki link".');
 }
 
@@ -110,7 +164,7 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    const { imageBase64, imageUrl, fileId, activityInfo } = body || {};
+    const { imageBase64, imageUrl, fileId, googleAccessToken, activityInfo } = body || {};
 
     if (!imageBase64 && !imageUrl && !fileId) {
       return res.status(400).json({
@@ -132,7 +186,7 @@ export default async function handler(req: any, res: any) {
         base64Data = imageBase64;
       }
     } else {
-      const fetched = await fetchImageAsBase64(imageUrl || fileId);
+      const fetched = await fetchImageAsBase64(imageUrl || fileId, googleAccessToken);
       base64Data = fetched.base64;
       mimeType = fetched.mimeType;
     }

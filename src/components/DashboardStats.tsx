@@ -10,6 +10,7 @@ import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
+import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
 import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -1118,212 +1119,17 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         </div>
 
         {/* Modal Laporan Transaksi Saldo Operasional User */}
-        {isTransactionReportOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
-            <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in fade-in zoom-in-95 duration-150">
-              {/* Header Modal */}
-              <div className="bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-emerald-900/50">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-2xl bg-emerald-600 border border-emerald-400/30 flex items-center justify-center text-white shrink-0 shadow-md">
-                    <FileSpreadsheet className="w-5 h-5 text-emerald-100" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-display font-bold text-sm sm:text-base text-white tracking-wide truncate">
-                      Laporan Transaksi Saldo Operasional User
-                    </h3>
-                    <p className="text-[11px] text-emerald-200/80 font-medium mt-0.5 truncate">
-                      {userProfile?.nama || email} • {formatDivisiSubDivisi(userProfile?.divisi, userProfile?.subDivisi)}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsTransactionReportOpen(false)}
-                  className="w-9 h-9 rounded-2xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
-                  title="Tutup Modal"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Body Content / Table */}
-              <div className="p-4 sm:p-5 overflow-y-auto flex-1">
-                {(() => {
-                  const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
-                  const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
-
-                  const myUserReqs = requests.filter(r => 
-                    r.userEmail.toLowerCase() === email.toLowerCase() && 
-                    r.status !== RequestStatus.CANCELLED && 
-                    !isBbmReq(r)
-                  ).sort((a, b) => {
-                    const timeA = getTransferTimestampMs(a);
-                    const timeB = getTransferTimestampMs(b);
-                    if (timeA !== timeB) return timeB - timeA;
-                    return b.id.localeCompare(a.id);
-                  });
-
-                  const filteredReqs = myUserReqs;
-
-                  if (filteredReqs.length === 0) {
-                    return (
-                      <div className="py-12 text-center text-slate-400 space-y-2">
-                        <FileSpreadsheet className="w-10 h-10 mx-auto text-slate-300 stroke-1" />
-                        <p className="text-xs font-semibold text-slate-500">
-                          {transactionSearchQuery ? 'Tidak ada transaksi yang cocok dengan kata kunci pencarian.' : 'Belum ada transaksi pengajuan / laporan untuk pengguna ini.'}
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  // Calculate totals for table footer
-                  const totPengajuan = filteredReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
-                  const totTransfer = filteredReqs.reduce((sum, r) => sum + r.adminActionAmount, 0);
-                  const totDilaporkan = filteredReqs.reduce((sum, r) => {
-                    const reqUsage = usageItems.filter(item => 
-                      item.requestId === r.id && 
-                      item.statusManager === ItemStatus.APPROVED && 
-                      item.statusAdmin === ItemStatus.APPROVED && 
-                      !isBbmItem(item)
-                    );
-                    return sum + reqUsage.reduce((sub, u) => sub + u.nominal, 0);
-                  }, 0);
-                  const totSisa = totTransfer - totDilaporkan;
-
-                  return (
-                    <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-xs">
-                      <table className="w-full text-left text-xs border-collapse">
-                        <thead>
-                          <tr className="bg-slate-900 text-white font-bold uppercase tracking-wider text-[10px]">
-                            <th className="py-3.5 px-3 text-center w-12 border-b border-slate-800">No</th>
-                            <th className="py-3.5 px-3 border-b border-slate-800">Tanggal</th>
-                            <th className="py-3.5 px-3 border-b border-slate-800">UID</th>
-                            <th className="py-3.5 px-3 text-right border-b border-slate-800">Pengajuan</th>
-                            <th className="py-3.5 px-3 text-right border-b border-slate-800">Ditransfer</th>
-                            <th className="py-3.5 px-3 text-right border-b border-slate-800">Dilaporkan</th>
-                            <th className="py-3.5 px-3 text-right border-b border-slate-800">Lebih / Sisa</th>
-                            <th className="py-3.5 px-3 text-center border-b border-slate-800">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-150 bg-white">
-                          {filteredReqs.map((r, idx) => {
-                            const reqUsageApproved = usageItems.filter(item => 
-                              item.requestId === r.id && 
-                              item.statusManager === ItemStatus.APPROVED && 
-                              item.statusAdmin === ItemStatus.APPROVED && 
-                              !isBbmItem(item)
-                            );
-                            const reportedApproved = reqUsageApproved.reduce((sum, u) => sum + u.nominal, 0);
-                            const sisa = r.adminActionAmount - reportedApproved;
-
-                            return (
-                              <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
-                                <td className="py-3 px-3 text-center font-bold text-slate-400 font-mono">
-                                  {idx + 1}
-                                </td>
-                                <td className="py-3 px-3 font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">
-                                  {getTransferDateDisplay(r)}
-                                </td>
-                                <td className="py-3 px-3">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">
-                                      {r.id}
-                                    </span>
-                                    {r.siteId && (
-                                      <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200">
-                                        Site: {r.siteId}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-[10px] text-slate-500 font-medium line-clamp-1 mt-0.5 max-w-[240px]" title={r.keterangan}>
-                                    {r.keterangan}
-                                  </p>
-                                </td>
-                                <td className="py-3 px-3 text-right font-mono font-bold text-slate-700">
-                                  {formatIDR(r.jumlahPengajuan)}
-                                </td>
-                                <td className="py-3 px-3 text-right font-mono font-bold text-indigo-700">
-                                  {formatIDR(r.adminActionAmount)}
-                                </td>
-                                <td className="py-3 px-3 text-right font-mono font-bold text-emerald-700">
-                                  {formatIDR(reportedApproved)}
-                                </td>
-                                <td className="py-3 px-3 text-right font-mono font-bold">
-                                  {sisa > 0 ? (
-                                    <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 inline-block">
-                                      +{formatIDR(sisa)}
-                                    </span>
-                                  ) : sisa < 0 ? (
-                                    <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 inline-block">
-                                      {formatIDR(sisa)}
-                                    </span>
-                                  ) : (
-                                    <span className="text-slate-400">Rp 0</span>
-                                  )}
-                                </td>
-                                <td className="py-3 px-3 text-center">
-                                  {renderStatusBadge(r.status)}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                        <tfoot>
-                          <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold text-slate-900 text-xs">
-                            <td colSpan={3} className="py-3.5 px-3 uppercase text-[10px] tracking-wider text-slate-700">
-                              TOTAL REKAPITULASI LAPORAN
-                            </td>
-                            <td className="py-3.5 px-3 text-right font-mono text-slate-800">
-                              {formatIDR(totPengajuan)}
-                            </td>
-                            <td className="py-3.5 px-3 text-right font-mono text-indigo-800">
-                              {formatIDR(totTransfer)}
-                            </td>
-                            <td className="py-3.5 px-3 text-right font-mono text-emerald-800">
-                              {formatIDR(totDilaporkan)}
-                            </td>
-                            <td className="py-3.5 px-3 text-right font-mono text-sm">
-                              <span className={totSisa >= 0 ? 'text-emerald-700 font-black' : 'text-rose-700 font-black'}>
-                                {formatIDR(totSisa)}
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-3 text-center text-[10px] text-slate-500 uppercase">
-                              REKAPITULASI
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* Footer Modal */}
-              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
-                <p className="text-[10px] text-slate-400 font-medium hidden sm:block">
-                  Perhitungan Saldo: Total Transfer dikurangi Total Nota Laporan yang telah disetujui (Approved).
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleExportPDF}
-                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 active:scale-95 text-white font-bold text-xs rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Export PDF</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsTransactionReportOpen(false)}
-                    className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
-                  >
-                    Tutup Laporan
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        <UserOperationalBalanceReportModal
+          isOpen={isTransactionReportOpen}
+          onClose={() => setIsTransactionReportOpen(false)}
+          userProfile={userProfile}
+          userEmail={email}
+          requests={requests}
+          usageItems={usageItems}
+          histories={histories}
+          profiles={profiles}
+          role={role}
+        />
 
         {/* Modal CARI SITE */}
         {isSearchSiteModalOpen && (

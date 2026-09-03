@@ -5,8 +5,10 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
-import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar, AlertTriangle, Lock } from 'lucide-react';
+import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar, AlertTriangle, Lock, Eye, X } from 'lucide-react';
 import { uploadReceiptFile, parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
+import { FinancialReportsModal } from './FinancialReportsModal';
+import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
 
 interface AdjustmentPanelProps {
   profiles: UserProfile[];
@@ -39,6 +41,8 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [unclosedTalanganAlertUser, setUnclosedTalanganAlertUser] = useState<UserProfile | null>(null);
+  const [financialReportsUserEmail, setFinancialReportsUserEmail] = useState<string | null>(null);
+  const [talanganReportUserEmail, setTalanganReportUserEmail] = useState<string | null>(null);
   const [adjustmentType, setAdjustmentType] = useState('');
   const [notes, setNotes] = useState('');
   const [tanggalAdjustment, setTanggalAdjustment] = useState(new Date().toISOString().split('T')[0]);
@@ -99,9 +103,12 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     );
   };
 
-  // Calculate user operational balance
+  // Calculate global user operational balance (including OP-, OPT-, ADJ-, excluding BBM)
   const getUserBalance = (userEmail: string) => {
-    const userReqs = requests.filter(r => r.userEmail.toLowerCase() === userEmail.toLowerCase() && !isBbmRequest(r));
+    const userReqs = requests.filter(r => 
+      r.userEmail.toLowerCase() === userEmail.toLowerCase() && 
+      !isBbmRequest(r)
+    );
     const userReqIds = userReqs.map(r => r.id);
     const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItem(item));
 
@@ -114,9 +121,13 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     return totalTransferred + totalAdjustments - totalReportedApproved;
   };
 
-  // Detailed user financial summary
+  // Detailed user financial summary (strictly OP- / Non-Talangan)
   const getUserSummary = (userEmail: string) => {
-    const userReqs = requests.filter(r => r.userEmail.toLowerCase() === userEmail.toLowerCase() && !isBbmRequest(r));
+    const userReqs = requests.filter(r => 
+      r.userEmail.toLowerCase() === userEmail.toLowerCase() && 
+      !isBbmRequest(r) && 
+      !isTalanganRequest(r)
+    );
     const userReqIds = userReqs.map(r => r.id);
     const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItem(item));
 
@@ -136,15 +147,51 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       totalReportedApproved,
       balance,
       requiredNominal,
-      isPositive
+      isPositive,
+      userReqs,
+      userUsage: userUsage.filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
     };
   };
 
-  // Auto-fill nominal amount when selected user changes
+  // Dedicated financial breakdown summary for Dana Talangan (OPT-)
+  const getTalanganSummary = (userEmail: string) => {
+    const talanganReqs = requests.filter(r => 
+      r.userEmail.toLowerCase() === userEmail.toLowerCase() && 
+      !isBbmRequest(r) && 
+      isTalanganRequest(r)
+    );
+    const talanganReqIds = talanganReqs.map(r => r.id);
+    const talanganUsage = usageItems.filter(item => talanganReqIds.includes(item.requestId) && !isBbmUsageItem(item));
+
+    const totalTalanganTransferred = talanganReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+    const totalTalanganReportedApproved = talanganUsage
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+      .reduce((sum, item) => sum + item.nominal, 0);
+
+    const countTotal = talanganReqs.length;
+    const unclosedList = talanganReqs.filter(r => 
+      r.status !== RequestStatus.CLOSED && 
+      r.status !== RequestStatus.REJECTED && 
+      r.status !== RequestStatus.CANCELLED
+    );
+
+    const unclosedNominal = totalTalanganTransferred - totalTalanganReportedApproved;
+
+    return {
+      countTotal,
+      unclosedCount: unclosedList.length,
+      unclosedNominal,
+      totalTalanganTransferred,
+      totalTalanganReportedApproved,
+      hasTalangan: countTotal > 0
+    };
+  };
+
+  // Auto-fill nominal amount when selected user changes (OP- required nominal)
   useEffect(() => {
     if (selectedUser) {
-      const balance = getUserBalance(selectedUser.email);
-      setInputAmount(Math.round(Math.abs(balance)).toString());
+      const summary = getUserSummary(selectedUser.email);
+      setInputAmount(Math.round(summary.requiredNominal).toString());
     } else {
       setInputAmount('');
     }
@@ -320,6 +367,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   // If a user is selected, render the Adjustment Form
   if (selectedUser) {
     const selectedSummary = getUserSummary(selectedUser.email);
+    const selectedTalanganSummary = getTalanganSummary(selectedUser.email);
     const balance = selectedSummary.balance;
     const isPositiveBalance = selectedSummary.isPositive;
     const selectedUnclosedTalangan = getUnclosedTalanganRequests(selectedUser.email);
@@ -389,7 +437,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
             </div>
           </div>
 
-          {/* Rincian Finansial User */}
+          {/* Rincian Finansial User (Operasional Biasa) */}
           <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-800/80 text-[10px] text-left">
             <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800">
               <span className="text-[8px] text-slate-400 uppercase block font-semibold">Total Transfer</span>
@@ -404,6 +452,46 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
               <span className="font-bold font-mono text-slate-300">{formatIDR(selectedSummary.totalAdjustments)}</span>
             </div>
           </div>
+
+          {/* Badge Breakdown Khusus Dana Talangan (OPT-) di Form Jika Ada */}
+          {selectedTalanganSummary.hasTalangan && (
+            <div 
+              onClick={() => setTalanganReportUserEmail(selectedUser.email)}
+              className="bg-slate-950/80 hover:bg-slate-900/90 p-2.5 rounded-xl border border-amber-500/30 hover:border-amber-400/60 text-[10px] space-y-1.5 text-left cursor-pointer transition-all active:scale-98 group/talangan shadow-2xs"
+              title="Klik untuk melihat Laporan Transaksi Khusus Dana Talangan (OPT-) User"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-1">
+                <span className="text-[9px] font-bold text-amber-400 uppercase flex items-center gap-1.5">
+                  <Coins className="w-3.5 h-3.5 text-amber-400 group-hover/talangan:scale-110 transition-transform" />
+                  Rincian Khusus Dana Talangan (OPT-)
+                </span>
+                <span className="text-[8px] font-mono text-amber-300/80">
+                  {selectedTalanganSummary.countTotal} Transaksi
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[9px]">
+                <div>
+                  <span className="text-[8px] text-slate-400 uppercase block">Total Transfer</span>
+                  <span className="font-bold font-mono text-slate-200">{formatIDR(selectedTalanganSummary.totalTalanganTransferred)}</span>
+                </div>
+                <div>
+                  <span className="text-[8px] text-slate-400 uppercase block">Laporan Disetujui</span>
+                  <span className="font-bold font-mono text-emerald-400">{formatIDR(selectedTalanganSummary.totalTalanganReportedApproved)}</span>
+                </div>
+                <div>
+                  <span className="text-[8px] text-slate-400 uppercase block font-semibold">Talangan Belum Closed</span>
+                  <span className={`font-bold font-mono ${selectedTalanganSummary.unclosedNominal > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                    {formatIDR(selectedTalanganSummary.unclosedNominal)}
+                    {selectedTalanganSummary.unclosedCount > 0 && (
+                      <span className="text-[8px] font-normal text-amber-300/80 ml-1">
+                        ({selectedTalanganSummary.unclosedCount})
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="text-[9px] text-slate-400 leading-relaxed bg-slate-950 p-2 rounded-xl border border-slate-800/80">
             {projectedBalance === 0 ? (
@@ -760,34 +848,29 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       {unbalancedUsers.length > 0 ? (
         <div className="grid grid-cols-1 gap-3.5">
           {unbalancedUsers.map((user, idx) => {
+            const userGlobalBalance = getUserBalance(user.email);
             const summary = getUserSummary(user.email);
-            const isPositive = summary.isPositive;
+            const talanganSummary = getTalanganSummary(user.email);
+            const isGlobalPositive = userGlobalBalance > 0;
+            const isGlobalNegative = userGlobalBalance < 0;
             const unclosedTalanganList = getUnclosedTalanganRequests(user.email);
 
             return (
               <div
                 key={`${user.email}_${user.userId || idx}`}
-                onClick={() => {
-                  if (unclosedTalanganList.length > 0) {
-                    setUnclosedTalanganAlertUser(user);
-                  } else {
-                    setSelectedUser(user);
-                    setError(null);
-                  }
-                }}
-                className={`bg-white border rounded-2xl p-4 shadow-sm hover:shadow-md transition-all cursor-pointer relative overflow-hidden group space-y-3 ${
-                  unclosedTalanganList.length > 0 ? 'border-amber-300 hover:border-amber-400' : 'border-slate-200 hover:border-indigo-300'
+                className={`bg-white border rounded-2xl p-4 shadow-sm transition-all relative overflow-hidden space-y-3 ${
+                  unclosedTalanganList.length > 0 ? 'border-amber-300' : 'border-slate-200'
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
-                      unclosedTalanganList.length > 0 ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-slate-50 text-slate-600 group-hover:bg-indigo-50 group-hover:text-indigo-600 border-slate-100'
+                      unclosedTalanganList.length > 0 ? 'bg-amber-50 text-amber-600 border-amber-200' : 'bg-slate-50 text-slate-600 border-slate-100'
                     }`}>
                       <User className="w-5 h-5" />
                     </div>
                     <div>
-                      <h4 className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors flex items-center gap-1.5">
+                      <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                         <span>{user.nama || user.userId}</span>
                         {unclosedTalanganList.length > 0 && (
                           <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" title="Adjustment diblokir: Ada Dana Talangan belum CLOSED" />
@@ -802,11 +885,11 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
 
                   <div className="text-right">
                     <span className="text-[8px] font-bold text-slate-400 block uppercase tracking-wider">Saldo Operasional</span>
-                    <span className={`text-sm font-bold font-mono font-display mt-0.5 block ${isPositive ? 'text-blue-600' : 'text-rose-600'}`}>
-                      {isPositive ? `+${formatIDR(summary.balance)}` : formatIDR(summary.balance)}
+                    <span className={`text-sm font-bold font-mono font-display mt-0.5 block ${isGlobalPositive ? 'text-blue-600' : isGlobalNegative ? 'text-rose-600' : 'text-slate-600'}`}>
+                      {isGlobalPositive ? `+${formatIDR(userGlobalBalance)}` : formatIDR(userGlobalBalance)}
                     </span>
-                    <span className={`inline-block text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${isPositive ? 'bg-blue-50 text-blue-600 border border-blue-200' : 'bg-rose-50 text-rose-600 border border-rose-200'}`}>
-                      {isPositive ? 'Lebih Saldo' : 'Saldo Kurang'}
+                    <span className={`inline-block text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${isGlobalPositive ? 'bg-blue-50 text-blue-600 border border-blue-200' : isGlobalNegative ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-50 text-slate-600 border border-slate-200'}`}>
+                      {isGlobalPositive ? 'Lebih Saldo' : isGlobalNegative ? 'Saldo Kurang' : 'Balance'}
                     </span>
                   </div>
                 </div>
@@ -824,7 +907,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                   </div>
                 )}
 
-                {/* Detailed Financial Breakdown & Required Adjustment Nominal */}
+                {/* Detailed Financial Breakdown & Required Adjustment Nominal (Operasional Biasa) */}
                 <div className="bg-slate-50/90 rounded-xl p-2.5 border border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-2 text-left">
                   <div>
                     <span className="block text-[8px] font-bold text-slate-400 uppercase">Total Transfer</span>
@@ -838,10 +921,91 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                     <span className="block text-[8px] font-bold text-slate-400 uppercase">Adjustment Lalu</span>
                     <span className="text-[10px] font-bold font-mono text-slate-600">{formatIDR(summary.totalAdjustments)}</span>
                   </div>
-                  <div className="bg-indigo-50/90 p-1.5 rounded-lg border border-indigo-100 col-span-2 sm:col-span-1">
-                    <span className="block text-[8px] font-extrabold text-indigo-500 uppercase">Jumlah Nominal Adjustment</span>
-                    <span className="text-[11px] font-extrabold font-mono text-indigo-700 block">{formatIDR(summary.requiredNominal)}</span>
+                  <div 
+                    onClick={() => setFinancialReportsUserEmail(user.email)}
+                    title="Klik untuk membuka Laporan Transaksi Saldo Operasional user terkait (Mengecualikan UID OPT-)"
+                    className="bg-indigo-50/90 hover:bg-indigo-100/90 p-2 rounded-xl border border-indigo-200 col-span-2 sm:col-span-1 cursor-pointer transition-all hover:scale-[1.02] active:scale-95 group/badge relative overflow-hidden shadow-2xs flex flex-col justify-between"
+                  >
+                    <div>
+                      <span className="block text-[8px] font-extrabold text-indigo-600 uppercase">Jumlah Nominal Adjustment</span>
+                      <span className="text-[11px] font-extrabold font-mono text-indigo-700 block mt-0.5">{formatIDR(summary.requiredNominal)}</span>
+                    </div>
                   </div>
+                </div>
+
+                {/* Badge Breakdown Khusus Dana Talangan (OPT-) Jika Ada */}
+                {talanganSummary.hasTalangan && (
+                  <div 
+                    onClick={() => setTalanganReportUserEmail(user.email)}
+                    className="bg-amber-50/80 hover:bg-amber-100/90 rounded-xl p-2.5 border border-amber-200/80 hover:border-amber-300 space-y-1.5 text-left cursor-pointer transition-all hover:scale-[1.01] active:scale-95 group/talangan shadow-2xs"
+                    title="Klik untuk melihat Laporan Transaksi Khusus Dana Talangan (OPT-) User"
+                  >
+                    <div className="flex items-center justify-between gap-2 border-b border-amber-200/60 pb-1">
+                      <div className="flex items-center gap-1.5">
+                        <Coins className="w-3.5 h-3.5 text-amber-600 shrink-0 group-hover/talangan:scale-110 transition-transform" />
+                        <span className="text-[9px] font-extrabold text-amber-900 uppercase tracking-wide">
+                          Breakdown Khusus Dana Talangan (OPT-)
+                        </span>
+                      </div>
+                      <span className="text-[8px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded border border-amber-200 font-mono">
+                        {talanganSummary.countTotal} Transaksi
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[9px]">
+                      <div>
+                        <span className="block text-[8px] font-semibold text-amber-800/80 uppercase">Total Transfer</span>
+                        <span className="font-bold font-mono text-amber-950">{formatIDR(talanganSummary.totalTalanganTransferred)}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[8px] font-semibold text-amber-800/80 uppercase">Laporan Disetujui</span>
+                        <span className="font-bold font-mono text-emerald-700">{formatIDR(talanganSummary.totalTalanganReportedApproved)}</span>
+                      </div>
+                      <div className="col-span-2 sm:col-span-1">
+                        <span className="block text-[8px] font-semibold text-amber-800/80 uppercase">Talangan Belum Closed</span>
+                        <span className={`font-bold font-mono ${talanganSummary.unclosedNominal > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                          {formatIDR(talanganSummary.unclosedNominal)}
+                          {talanganSummary.unclosedCount > 0 && (
+                            <span className="text-[8px] font-normal text-amber-800/70 ml-1">
+                              ({talanganSummary.unclosedCount})
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Tombol Proses Adjustment di Bagian Kanan Bawah Kartu */}
+                <div className="flex items-center justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (unclosedTalanganList.length > 0) {
+                        setUnclosedTalanganAlertUser(user);
+                      } else {
+                        setSelectedUser(user);
+                        setError(null);
+                      }
+                    }}
+                    className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 ${
+                      unclosedTalanganList.length > 0
+                        ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-100'
+                        : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100'
+                    }`}
+                  >
+                    {unclosedTalanganList.length > 0 ? (
+                      <>
+                        <Lock className="w-3.5 h-3.5 text-white shrink-0" />
+                        <span>Proses Adjustment</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="w-3.5 h-3.5 text-white shrink-0" />
+                        <span>Proses Adjustment</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             );
@@ -972,6 +1136,34 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           </div>
         );
       })()}
+
+      {/* Popup modal Laporan Transaksi Saldo Operasional User saat Badge JUMLAH NOMINAL ADJUSTMENT di-klik (Kriteria pengecualian UID OPT-) */}
+      {financialReportsUserEmail && (
+        <UserOperationalBalanceReportModal
+          isOpen={!!financialReportsUserEmail}
+          onClose={() => setFinancialReportsUserEmail(null)}
+          userProfile={profiles.find(p => p.email.toLowerCase() === financialReportsUserEmail.toLowerCase())}
+          userEmail={financialReportsUserEmail}
+          requests={requests}
+          usageItems={usageItems}
+          profiles={profiles}
+          excludeTalangan={true}
+        />
+      )}
+
+      {/* Popup modal Laporan Transaksi Khusus Dana Talangan (OPT-) saat Badge Breakdown Khusus Dana Talangan di-klik */}
+      {talanganReportUserEmail && (
+        <UserOperationalBalanceReportModal
+          isOpen={!!talanganReportUserEmail}
+          onClose={() => setTalanganReportUserEmail(null)}
+          userProfile={profiles.find(p => p.email.toLowerCase() === talanganReportUserEmail.toLowerCase())}
+          userEmail={talanganReportUserEmail}
+          requests={requests}
+          usageItems={usageItems}
+          profiles={profiles}
+          onlyTalangan={true}
+        />
+      )}
     </div>
   );
 };

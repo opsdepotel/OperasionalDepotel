@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { 
   ShieldCheck, 
   ShieldAlert, 
@@ -115,9 +116,9 @@ export const AiScreenRecaptureModal: React.FC<AiScreenRecaptureModalProps> = ({
 
   const style = getVerdictStyle();
 
-  return (
+  return createPortal(
     <div 
-      className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-[1000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in"
+      className="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-[1000000] flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in"
       onClick={onClose}
     >
       <div 
@@ -377,6 +378,7 @@ export const AiScreenRecaptureModal: React.FC<AiScreenRecaptureModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

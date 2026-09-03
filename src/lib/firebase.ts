@@ -6,6 +6,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { fetchServiceAccountToken } from './serviceAccountClient';
 
 let app: any = null;
 let auth: any = null;
@@ -28,10 +29,35 @@ let isSigningIn = false;
 let cachedAccessToken: string | null = null;
 
 // Initialize auth state listener. Call this on app load.
-export const initAuth = (
+export const initAuth = async (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // First, check if backend has a configured Google Service Account
+  try {
+    const saData = await fetchServiceAccountToken();
+    if (saData && saData.token) {
+      cachedAccessToken = saData.token;
+      localStorage.setItem('g_access_token', saData.token);
+      localStorage.setItem('g_token_timestamp', Date.now().toString());
+      localStorage.setItem('g_is_service_account', 'true');
+      
+      const saUser = {
+        uid: 'service_account',
+        email: saData.email || 'service-account@google.iam.gserviceaccount.com',
+        displayName: 'Google Service Account (Auto)',
+        photoURL: ''
+      } as unknown as User;
+      
+      if (onAuthSuccess) {
+        onAuthSuccess(saUser, saData.token);
+        return () => {};
+      }
+    }
+  } catch (saErr) {
+    console.warn('Service account auto-auth check skipped:', saErr);
+  }
+
   // If we have a stored token, check if it's already expired
   const storedToken = localStorage.getItem('g_access_token');
   if (storedToken) {
@@ -170,6 +196,10 @@ export const getAccessToken = async (): Promise<string | null> => {
  * Checks whether the stored Google OAuth token is expired (older than 55 minutes, as Google tokens expire in 60 minutes)
  */
 export const isGoogleTokenExpired = (): boolean => {
+  // If running via server-side Service Account, token is managed & auto-renewed by server
+  if (localStorage.getItem('g_is_service_account') === 'true') {
+    return false;
+  }
   const token = localStorage.getItem('g_access_token');
   if (!token) return true;
   const tsStr = localStorage.getItem('g_token_timestamp');

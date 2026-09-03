@@ -252,19 +252,6 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
         )}
       </form>
 
-      {/* Switch Google Account Option */}
-      {onResetGoogle && (
-        <div className="pt-4 border-t border-slate-100">
-          <button
-            type="button"
-            onClick={onResetGoogle}
-            className="w-full py-2.5 bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 font-bold text-[11px] rounded-xl border border-slate-200/80 transition-all cursor-pointer text-center uppercase tracking-wider shadow-sm"
-          >
-            SWITCH GOOGLE ACCOUNT
-          </button>
-        </div>
-      )}
-
       {/* Popup Notifikasi Login Ditolak */}
       {isModalOpen && activeError && (
         <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4 animate-fade-in">

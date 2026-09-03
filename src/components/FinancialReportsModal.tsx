@@ -13,6 +13,9 @@ interface FinancialReportsModalProps {
   usageItems: UsageReportItem[];
   profiles: UserProfile[];
   role?: Role;
+  initialTab?: 'TRANSFER' | 'PENDING_TRANSFER' | 'SALDO';
+  initialUserEmail?: string;
+  excludeTalangan?: boolean;
 }
 
 // Helper to convert image URL to Base64 Data URL for jsPDF
@@ -48,6 +51,9 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   requests,
   usageItems,
   profiles,
+  initialTab,
+  initialUserEmail,
+  excludeTalangan = false,
 }) => {
   useBackHandler(isOpen, onClose, 'isFinancialReportsModalOpen');
 
@@ -72,6 +78,20 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   const [saldoSearchQuery, setSaldoSearchQuery] = useState<string>('');
   // Status filter: UNBALANCED (default, sisa saldo != 0) or ALL
   const [saldoStatusFilter, setSaldoStatusFilter] = useState<'UNBALANCED' | 'ALL'>('UNBALANCED');
+
+  // Sync initialTab and initialUserEmail when modal opens
+  React.useEffect(() => {
+    if (isOpen) {
+      if (initialTab) {
+        setActiveTab(initialTab);
+      }
+      if (initialUserEmail) {
+        setSaldoUser(initialUserEmail);
+        setSaldoStatusFilter('ALL');
+        setTransferUserName(initialUserEmail);
+      }
+    }
+  }, [isOpen, initialTab, initialUserEmail]);
 
   // Format Currency
   const formatIDR = (val: number) => {
@@ -178,13 +198,18 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
     new Set(uniqueProfiles.map(p => p.divisi?.trim()).filter((d): d is string => !!d))
   ).sort();
 
-  // Helper check for BBMDS requests
-  const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+  // Helper check for BBMDS & Talangan requests
+  const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.siteId === 'OPT-DUREN SAWIT';
   const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+
+  const isTalanganRequestAdmin = (r: BudgetRequest) => (r.id.startsWith('OPT-') || r.siteId?.startsWith('OPT-') || (r.keterangan || '').toUpperCase().includes('TALANGAN')) && !isBbmRequestAdmin(r);
 
   // 1. FILTERED TRANSFER DATA
   const filteredTransfers = useMemo(() => {
     return requests.filter(r => {
+      if (isBbmRequestAdmin(r)) return false;
+      if (excludeTalangan && isTalanganRequestAdmin(r)) return false;
+
       // Must be a transfer made by Finance (adminActionAmount > 0)
       const hasTransferAmount = (r.adminActionAmount || 0) > 0;
       if (!hasTransferAmount) return false;
@@ -215,7 +240,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
       return true;
     }).sort((a, b) => b.id.localeCompare(a.id));
-  }, [requests, uniqueProfiles, transferUserName, transferDivisi, transferStartDate, transferEndDate]);
+  }, [requests, uniqueProfiles, transferUserName, transferDivisi, transferStartDate, transferEndDate, excludeTalangan]);
 
   const totalTransferAmount = useMemo(() => {
     return filteredTransfers.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
@@ -235,6 +260,9 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   // 2. FILTERED PENDING TRANSFER DATA (Menunggu Transfer)
   const filteredPendingTransfers = useMemo(() => {
     return requests.filter(r => {
+      if (isBbmRequestAdmin(r)) return false;
+      if (excludeTalangan && isTalanganRequestAdmin(r)) return false;
+
       // Must be in a status that is waiting for transfer
       const isPendingTransfer =
         r.status === RequestStatus.APPROVED ||
@@ -272,7 +300,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
       return true;
     }).sort((a, b) => b.id.localeCompare(a.id));
-  }, [requests, uniqueProfiles, pendingSearchQuery, pendingDivisi, pendingStartDate, pendingEndDate, usageItems]);
+  }, [requests, uniqueProfiles, pendingSearchQuery, pendingDivisi, pendingStartDate, pendingEndDate, usageItems, excludeTalangan]);
 
   const totalPendingTransferAmount = useMemo(() => {
     return filteredPendingTransfers.reduce((sum, r) => sum + getPendingTransferAmount(r), 0);
@@ -299,7 +327,11 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
       return true;
     }).map(user => {
-      const userReqs = requests.filter(r => r.userEmail.toLowerCase() === user.email.toLowerCase() && !isBbmRequestAdmin(r));
+      const userReqs = requests.filter(r => 
+        r.userEmail.toLowerCase() === user.email.toLowerCase() && 
+        !isBbmRequestAdmin(r) &&
+        (!excludeTalangan || !isTalanganRequestAdmin(r))
+      );
       const userReqIds = userReqs.map(r => r.id);
       const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItemAdmin(item));
 
@@ -1090,8 +1122,8 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn overflow-y-auto">
-      <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-slate-100 flex flex-col max-h-[92vh] overflow-hidden my-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn overflow-y-auto">
+      <div className="bg-white w-full max-w-[98vw] sm:max-w-[96vw] xl:max-w-[98vw] rounded-2xl shadow-2xl border border-slate-100 flex flex-col max-h-[92vh] overflow-hidden my-auto">
         {/* Header Modal */}
         <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">

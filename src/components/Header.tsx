@@ -5,7 +5,6 @@
 
 import React from 'react';
 import { UserProfile, Role } from '../types';
-import { User } from 'lucide-react';
 
 interface HeaderProps {
   userProfile?: UserProfile | null;
@@ -18,37 +17,23 @@ interface HeaderProps {
   onOpenSettings?: () => void;
   activeView?: string;
   onOpenDiomsLogo?: () => void;
-  isTokenExpired?: boolean;
   token?: string | null;
-  onRenewToken?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   userProfile,
   onOpenDiomsLogo,
-  isTokenExpired,
   token,
-  onRenewToken,
 }) => {
-  const isGoogleConnected = Boolean(token && !isTokenExpired);
+  const isConnected = Boolean(token || userProfile);
 
   const handleLogoClick = () => {
-    if (!isGoogleConnected) {
-      if (onRenewToken) {
-        onRenewToken();
-      } else if (onOpenDiomsLogo) {
-        onOpenDiomsLogo();
-      }
-    } else {
-      if (onOpenDiomsLogo) {
-        onOpenDiomsLogo();
-      }
+    if (onOpenDiomsLogo) {
+      onOpenDiomsLogo();
     }
   };
 
-  const statusTitle = !isGoogleConnected
-    ? 'Sesi Google Expired / Terputus! Klik logo DIOMS untuk memperbarui koneksi (1-Klik Connect)'
-    : `Koneksi Google Terhubung (${userProfile?.email || 'ops.depotel@gmail.com'}). Klik untuk memperbesar logo DIOMS`;
+  const statusTitle = `DIOMS - Depotel Integrated Operation Monitoring System (${userProfile?.email || 'ops.depotel@gmail.com'})`;
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-100 shadow-sm px-4 py-2.5">
@@ -63,16 +48,12 @@ export const Header: React.FC<HeaderProps> = ({
           />
         </div>
 
-        {/* Right Side Controls: DIOMS Logo with Google Connection Indicator */}
+        {/* Right Side Controls: DIOMS Logo with Connection Indicator */}
         <div className="flex items-center gap-2.5">
           <button
             type="button"
             onClick={handleLogoClick}
-            className={`relative shrink-0 flex items-center justify-center p-1 rounded-xl transition-all cursor-pointer group focus:outline-none ${
-              !isGoogleConnected
-                ? 'bg-amber-50 border border-amber-300 ring-2 ring-amber-300/60 ring-offset-1 animate-pulse hover:bg-amber-100'
-                : 'hover:opacity-85'
-            }`}
+            className="relative shrink-0 flex items-center justify-center p-1 rounded-xl transition-all cursor-pointer group focus:outline-none hover:opacity-85"
             title={statusTitle}
           >
             <img 
@@ -82,16 +63,9 @@ export const Header: React.FC<HeaderProps> = ({
               referrerPolicy="no-referrer" 
             />
 
-            {/* Google Connection Status Indicator Dot at Bottom-Right of DIOMS Logo */}
+            {/* Connection Status Indicator Dot at Bottom-Right of DIOMS Logo */}
             <span className="absolute -bottom-1 -right-1 flex h-3.5 w-3.5 items-center justify-center pointer-events-none">
-              {!isGoogleConnected ? (
-                <>
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500 border-2 border-white shadow-xs" />
-                </>
-              ) : (
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-white shadow-xs" />
-              )}
+              <span className={`relative inline-flex rounded-full h-3 w-3 ${isConnected ? 'bg-emerald-500' : 'bg-slate-400'} border-2 border-white shadow-xs`} />
             </span>
           </button>
         </div>
@@ -99,4 +73,3 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
-

@@ -1,11 +1,13 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { AiRecaptureResult } from '../components/AiScreenRecaptureModal';
 import { UserActivity } from '../types';
+import { getAccessToken } from './firebase';
 
 export interface AiRecapturePayload {
   imageBase64?: string;
   imageUrl?: string;
   fileId?: string;
+  googleAccessToken?: string;
   activityInfo?: {
     siteId?: string;
     siteName?: string;
@@ -13,6 +15,57 @@ export interface AiRecapturePayload {
     userEmail?: string;
     keterangan?: string;
   };
+}
+
+/**
+ * Extracts Google Drive file ID from various URL formats or ID string
+ */
+export function extractDriveFileId(urlOrId?: string | null): string | null {
+  if (!urlOrId) return null;
+  const trimmed = urlOrId.trim();
+  if (!trimmed.includes('/') && !trimmed.includes('?') && !trimmed.includes(':') && trimmed.length >= 10) {
+    return trimmed;
+  }
+  const match = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+                trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+                trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  return match && match[1] ? match[1] : null;
+}
+
+/**
+ * Attempts to download a Google Drive file directly in the browser using the user's OAuth access token
+ */
+async function downloadDriveFileAsBase64Client(fileId: string, token?: string | null): Promise<string | null> {
+  if (!fileId) return null;
+  const authToken = token || await getAccessToken();
+  if (!authToken) return null;
+
+  try {
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    });
+
+    if (!res.ok) {
+      console.warn(`Drive API fetch via client OAuth returned status ${res.status}`);
+      return null;
+    }
+
+    const blob = await res.blob();
+    return new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result as string;
+        resolve(result && result.startsWith('data:') ? result : null);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch (err) {
+    console.warn('downloadDriveFileAsBase64Client error:', err);
+    return null;
+  }
 }
 
 /**
@@ -36,24 +89,31 @@ async function clientSideGeminiAnalysis(
     } else {
       base64Data = payload.imageBase64;
     }
-  } else if (payload.imageUrl || payload.fileId) {
-    let targetUrl = payload.imageUrl || payload.fileId || '';
-    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-      targetUrl = `https://lh3.googleusercontent.com/d/${payload.fileId}=w1200`;
+  } else {
+    const targetFileId = payload.fileId || extractDriveFileId(payload.imageUrl);
+    if (targetFileId) {
+      const clientDownloaded = await downloadDriveFileAsBase64Client(targetFileId, payload.googleAccessToken);
+      if (clientDownloaded && clientDownloaded.startsWith('data:')) {
+        const parts = clientDownloaded.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        if (mimeMatch) mimeType = mimeMatch[1];
+        base64Data = parts[1];
+      }
     }
-    const res = await fetch(targetUrl);
-    if (!res.ok) {
-      throw new Error(`Gagal mengunduh foto untuk analisis AI (status: ${res.status}).`);
+
+    if (!base64Data && payload.imageUrl) {
+      const canvasBase64 = await urlToBase64Client(payload.imageUrl);
+      if (canvasBase64 && canvasBase64.startsWith('data:')) {
+        const parts = canvasBase64.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        if (mimeMatch) mimeType = mimeMatch[1];
+        base64Data = parts[1];
+      }
     }
-    const arrayBuffer = await res.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < bytes.byteLength; i += chunkSize) {
-      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize) as any);
-    }
-    base64Data = btoa(binary);
-    mimeType = res.headers.get('content-type')?.split(';')[0].trim() || 'image/jpeg';
+  }
+
+  if (!base64Data) {
+    throw new Error('Foto tidak dapat diunduh untuk analisis AI. Pastikan izin akses foto Google Drive terbuka.');
   }
 
   const prompt = `Anda adalah seorang ahli forensik digital spesialis Deteksi Pemalsuan & Foto Ulang Layar (Screen Recapture / Spoofing Detection) untuk audit kegiatan operasional lapangan.
@@ -222,6 +282,9 @@ export async function requestAiScreenRecapture(
   photoUrl: string | null,
   fileId?: string | null
 ): Promise<AiRecaptureResult> {
+  const token = await getAccessToken();
+  const targetFileId = fileId || extractDriveFileId(photoUrl) || extractDriveFileId(activity.buktiUrl);
+
   let processedPhotoUrl = photoUrl;
   if (photoUrl?.startsWith('data:')) {
     try {
@@ -229,7 +292,19 @@ export async function requestAiScreenRecapture(
     } catch {
       processedPhotoUrl = photoUrl;
     }
-  } else if (photoUrl && photoUrl.startsWith('http')) {
+  } else if (targetFileId && token) {
+    // 1. Try downloading image directly using user's active Google OAuth session
+    try {
+      const clientDownloaded = await downloadDriveFileAsBase64Client(targetFileId, token);
+      if (clientDownloaded && clientDownloaded.startsWith('data:')) {
+        processedPhotoUrl = await compressDataUrlIfNeeded(clientDownloaded);
+      }
+    } catch (e) {
+      console.warn('OAuth direct client fetch failed:', e);
+    }
+  }
+
+  if (!processedPhotoUrl?.startsWith('data:') && photoUrl && photoUrl.startsWith('http')) {
     try {
       const clientConverted = await urlToBase64Client(photoUrl);
       if (clientConverted) {
@@ -243,7 +318,8 @@ export async function requestAiScreenRecapture(
   const payload: AiRecapturePayload = {
     imageBase64: processedPhotoUrl?.startsWith('data:') ? processedPhotoUrl : undefined,
     imageUrl: !processedPhotoUrl?.startsWith('data:') ? (processedPhotoUrl || activity.buktiUrl) : undefined,
-    fileId: fileId || undefined,
+    fileId: targetFileId || undefined,
+    googleAccessToken: token || undefined,
     activityInfo: {
       siteId: activity.siteId,
       siteName: activity.siteName,
@@ -266,29 +342,26 @@ export async function requestAiScreenRecapture(
         body: JSON.stringify(payload),
       });
 
-      const contentType = res.headers.get('content-type') || '';
-      const rawText = await res.text();
+      let rawText = '';
+      try {
+        rawText = await res.text();
+      } catch {
+        throw new Error('Gagal membaca respons dari server AI.');
+      }
 
-      // Check if response is HTML instead of JSON (typical when Vercel or static host returns 404 HTML page)
-      const isHtmlResponse = rawText.trim().startsWith('<') || 
-        rawText.includes('<!DOCTYPE html>') || 
-        rawText.toLowerCase().includes('<html') ||
-        rawText.includes('The page c') ||
-        rawText.includes('The page could not be found') ||
-        !contentType.includes('application/json');
-
-      if (isHtmlResponse) {
-        console.warn('Backend API endpoint returned non-JSON / HTML response:', rawText.slice(0, 150));
-        primaryError = `Endpoint Serverless Vercel /api/ai/check-screen-recapture belum terhubung (Status: ${res.status}).`;
-        break;
-      } else {
-        let data: any = null;
-        try {
-          data = JSON.parse(rawText);
-        } catch (parseErr) {
-          throw new Error(`Respons server tidak valid (Bukan JSON: ${rawText.slice(0, 80)}...)`);
+      // Try parsing JSON first directly
+      let data: any = null;
+      let isJson = false;
+      try {
+        data = JSON.parse(rawText);
+        if (data && typeof data === 'object') {
+          isJson = true;
         }
+      } catch {
+        isJson = false;
+      }
 
+      if (isJson) {
         if (!res.ok || !data?.success) {
           const errorMsg = data?.error || `Gagal menjalankan analisis AI (Status: ${res.status})`;
           throw new Error(errorMsg);
@@ -298,6 +371,20 @@ export async function requestAiScreenRecapture(
           ...data.data,
           checkedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
         };
+      }
+
+      // Check if response is HTML page (typical when a static host returns 404 HTML fallback)
+      const isHtmlResponse = rawText.trim().startsWith('<') || 
+        rawText.includes('<!DOCTYPE html>') || 
+        rawText.toLowerCase().includes('<html') ||
+        rawText.includes('The page could not be found');
+
+      if (isHtmlResponse) {
+        console.warn('Backend API endpoint returned HTML fallback response:', rawText.slice(0, 150));
+        primaryError = `Endpoint server /api/ai/check-screen-recapture belum terhubung (Status: ${res.status}).`;
+        break;
+      } else {
+        throw new Error(`Respons server tidak valid (Bukan format JSON yang diharapkan): ${rawText.slice(0, 80)}`);
       }
     } catch (apiErr: any) {
       console.warn(`API route call attempt ${fetchAttempts} error:`, apiErr);
@@ -322,7 +409,7 @@ export async function requestAiScreenRecapture(
       if (cleanFallbackMsg.includes('Failed to fetch') || cleanFallbackMsg.includes('NetworkError')) {
         throw new Error(primaryError || 'Gagal menghubungi server API Gemini. Silakan periksa koneksi dan coba beberapa saat lagi.');
       }
-      throw new Error(`Gagal analisis AI: ${cleanFallbackMsg || primaryError}`);
+      throw new Error(`Gagal analisis AI: ${primaryError || cleanFallbackMsg}`);
     }
   }
 
