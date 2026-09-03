@@ -24,8 +24,9 @@ export const Header: React.FC<HeaderProps> = ({
   userProfile,
   onOpenDiomsLogo,
   token,
+  spreadsheetId,
 }) => {
-  const isConnected = Boolean(token || userProfile);
+  const isConnected = Boolean(token || spreadsheetId || userProfile);
 
   const handleLogoClick = () => {
     if (onOpenDiomsLogo) {

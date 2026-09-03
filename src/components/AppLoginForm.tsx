@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { UserProfile, Role } from '../types';
 import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw } from 'lucide-react';
 import { validateDeviceAccessAndBind, getOrCreateDeviceId } from '../lib/deviceUtils';
+import { mergeUserProfiles, findMatchingUser, defaultUsers } from '../lib/googleApi';
 
 interface AppLoginFormProps {
   profiles: UserProfile[];
@@ -97,15 +98,12 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
         triggerError(msg);
       });
     } else {
-      // Find user by matching UserID and Password
-      const matched = profiles.find(
-        (p) =>
-          p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
-          p.password === password
-      );
+      // Find user by matching UserID/Email and Password against merged candidate profiles
+      const candidateProfiles = mergeUserProfiles(profiles, defaultUsers);
+      const matched = findMatchingUser(candidateProfiles, userId, password);
 
       if (matched) {
-        const deviceCheck = await validateDeviceAccessAndBind(matched, undefined, profiles);
+        const deviceCheck = await validateDeviceAccessAndBind(matched, undefined, candidateProfiles);
         if (!deviceCheck.success) {
           triggerError(deviceCheck.errorMessage || 'Akses ditolak.');
           return;

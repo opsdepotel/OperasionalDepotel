@@ -36,7 +36,11 @@ import {
   purgeOrphanItemReviewHistories,
   parseNumericValue,
   formatDivisiSubDivisi,
-  defaultUsers
+  defaultUsers,
+  mergeUserProfiles,
+  findMatchingUser,
+  SPREADSHEET_ID,
+  DRIVE_FOLDER_ID
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
 import { validateDeviceAccessAndBind } from './lib/deviceUtils';
@@ -215,8 +219,8 @@ export default function App() {
   }, [theme]);
 
   // App Database Context
-  const [spreadsheetId, setSpreadsheetId] = useState<string | null>(null);
-  const [driveFolderId, setDriveFolderId] = useState<string | null>(null);
+  const [spreadsheetId, setSpreadsheetId] = useState<string | null>(() => localStorage.getItem('op_company_sheet_id') || SPREADSHEET_ID);
+  const [driveFolderId, setDriveFolderId] = useState<string | null>(() => localStorage.getItem('op_company_folder_id') || DRIVE_FOLDER_ID);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -242,9 +246,10 @@ export default function App() {
   const [profiles, setProfiles] = useState<UserProfile[]>(() => {
     try {
       const cached = localStorage.getItem('op_app_cached_profiles');
-      return cached ? JSON.parse(cached) : [];
+      const cachedProfs = cached ? JSON.parse(cached) : [];
+      return mergeUserProfiles(cachedProfs, defaultUsers);
     } catch {
-      return [];
+      return mergeUserProfiles([], defaultUsers);
     }
   });
   const [sites, setSites] = useState<SiteInfo[]>(() => {
@@ -284,9 +289,11 @@ export default function App() {
       const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
       if (savedUserId) {
         const cachedProfsStr = localStorage.getItem('op_app_cached_profiles');
-        const candidateProfiles: UserProfile[] = cachedProfsStr ? JSON.parse(cachedProfsStr) : defaultUsers;
+        const cachedList = cachedProfsStr ? JSON.parse(cachedProfsStr) : [];
+        const candidateProfiles = mergeUserProfiles(cachedList, defaultUsers);
+        const cleanSavedId = savedUserId.trim().toLowerCase();
         const matched = candidateProfiles.find(
-          p => p.userId?.toLowerCase() === savedUserId.toLowerCase() || p.email?.toLowerCase() === savedUserId.toLowerCase()
+          p => (p.userId || '').trim().toLowerCase() === cleanSavedId || (p.email || '').trim().toLowerCase() === cleanSavedId
         );
         if (matched) return matched;
       }
@@ -612,21 +619,36 @@ export default function App() {
         return req;
       });
 
+      const mergedProfs = mergeUserProfiles(allProfs, profiles, defaultUsers);
+
       const sortedReqs = synchronizedReqs.sort((a, b) => b.id.localeCompare(a.id));
       setRequests(sortedReqs); // Newest first
       setUsageItems(allItems);
-      setProfiles(allProfs);
+      setProfiles(mergedProfs);
       setSites(allSites);
       setActivities(allActs);
       setResetDeviceLogs(allResetLogs.sort((a, b) => b.id.localeCompare(a.id)));
       setItemReviewHistories(allHistories.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
       safeSetJson('op_app_cached_requests', sortedReqs, 100);
       safeSetJson('op_app_cached_usage_items', allItems, 150);
-      safeSetJson('op_app_cached_profiles', allProfs);
+      safeSetJson('op_app_cached_profiles', mergedProfs);
       safeSetJson('op_app_cached_sites', allSites);
       safeSetJson('op_app_cached_activities', allActs, 30);
       safeSetJson('op_app_cached_reset_device_logs', allResetLogs, 30);
       safeSetJson('op_app_cached_item_review_histories', allHistories, 50);
+
+      // Background: ensure all default users are present in Google Sheets DB
+      if (accessToken && sheetId) {
+        for (const defUser of defaultUsers) {
+          const existsInSheet = allProfs.some(
+            p => (p.email && p.email.toLowerCase() === defUser.email.toLowerCase()) ||
+                 (p.userId && p.userId.toLowerCase() === defUser.userId.toLowerCase())
+          );
+          if (!existsInSheet) {
+            saveUserProfile(accessToken, sheetId, defUser).catch(e => console.warn('Background sync default user to sheet error:', e));
+          }
+        }
+      }
 
       if (selectedRequest) {
         const freshReq = sortedReqs.find(r => r.id === selectedRequest.id);
@@ -637,9 +659,9 @@ export default function App() {
 
       // If the user is already logged in, keep their active session and update with the latest data
       const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
-      const activeUserProf = userProfile || (savedUserId ? allProfs.find(p => p.userId?.toLowerCase() === savedUserId.toLowerCase() || p.email?.toLowerCase() === savedUserId.toLowerCase()) : null);
+      const activeUserProf = userProfile || (savedUserId ? mergedProfs.find(p => p.userId?.toLowerCase() === savedUserId.toLowerCase() || p.email?.toLowerCase() === savedUserId.toLowerCase()) : null);
       if (activeUserProf) {
-        const updatedProfile = allProfs.find(
+        const updatedProfile = mergedProfs.find(
           p => p.userId?.toLowerCase() === activeUserProf.userId?.toLowerCase() || p.email?.toLowerCase() === activeUserProf.email?.toLowerCase()
         );
         if (updatedProfile) {
@@ -787,7 +809,7 @@ export default function App() {
     setDriveFolderId(null);
     setRequests([]);
     setUsageItems([]);
-    setProfiles([]);
+    setProfiles(mergeUserProfiles([], defaultUsers));
     setUserProfile(null);
     setActiveView('dashboard');
   };
@@ -835,12 +857,12 @@ export default function App() {
   ) => {
     setError(null);
     let currentToken = token;
-    let currentUser = user;
+
+    setIsLoading(true);
+    setLoadingStep('Menghubungkan ke database Google Sheets...');
 
     // 1. If token is missing, fetch Service Account token
     if (!currentToken) {
-      setIsLoading(true);
-      setLoadingStep('Menghubungkan ke database...');
       try {
         const saData = await fetchServiceAccountToken();
         if (saData && saData.token) {
@@ -853,46 +875,49 @@ export default function App() {
       }
     }
 
-    // 2. Validate credentials against Google Sheets or Cached profiles
-    setIsLoading(true);
-    setLoadingStep('Memverifikasi kredensial login...');
+    let sheetId = spreadsheetId || SPREADSHEET_ID;
+    if (!spreadsheetId) {
+      setSpreadsheetId(sheetId);
+    }
 
+    // 2. Validate credentials directly against live Google Sheets database
+    setLoadingStep('Memverifikasi kredensial ke database Google Sheets...');
     let fetchedProfs: UserProfile[] | null = null;
-    let sheetId = spreadsheetId;
 
     if (currentToken) {
       try {
-        if (!sheetId) {
-          sheetId = await findOrCreateDatabase(currentToken);
-          setSpreadsheetId(sheetId);
-        }
         if (!driveFolderId) {
           const folderId = await findOrCreateFolder(currentToken);
           setDriveFolderId(folderId);
         }
 
         fetchedProfs = await fetchProfiles(currentToken, sheetId);
-        setProfiles(fetchedProfs);
-        safeSetJson('op_app_cached_profiles', fetchedProfs);
       } catch (err: any) {
         console.warn('Google API validation attempt error:', err);
       }
     }
 
-    // Get candidate profiles list from fetched, state, localStorage, or defaults
+    // 3. Build candidate profiles list: Live Google Sheets profiles take absolute precedence!
     let cachedProfsList: UserProfile[] = [];
     try {
       const cachedStr = localStorage.getItem('op_app_cached_profiles');
       if (cachedStr) cachedProfsList = JSON.parse(cachedStr);
     } catch {}
 
-    const candidateProfiles = fetchedProfs || (profiles.length > 0 ? profiles : (cachedProfsList.length > 0 ? cachedProfsList : defaultUsers));
+    let candidateProfiles: UserProfile[];
+    if (fetchedProfs && fetchedProfs.length > 0) {
+      // Live database data from Google Sheets is authoritative
+      candidateProfiles = mergeUserProfiles(fetchedProfs, defaultUsers);
+    } else {
+      // Offline / fallback cache
+      candidateProfiles = mergeUserProfiles(profiles, cachedProfsList, defaultUsers);
+    }
 
-    const matched = candidateProfiles.find(
-      (p) =>
-        p.userId?.toLowerCase() === userId.trim().toLowerCase() &&
-        p.password === password
-    );
+    setProfiles(candidateProfiles);
+    safeSetJson('op_app_cached_profiles', candidateProfiles);
+
+    // 4. Match credentials against candidate profiles
+    const matched = findMatchingUser(candidateProfiles, userId, password);
 
     if (matched) {
       const deviceCheck = await validateDeviceAccessAndBind(
@@ -954,6 +979,11 @@ export default function App() {
     if (success !== null) {
       setUserProfile(newProfile);
       setActiveRole(newProfile.role);
+      setProfiles(prev => {
+        const next = prev.map(p => (p.email && p.email.toLowerCase() === newProfile.email.toLowerCase()) || (p.userId && p.userId.toLowerCase() === newProfile.userId.toLowerCase()) ? newProfile : p);
+        safeSetJson('op_app_cached_profiles', next);
+        return next;
+      });
       setActiveView('dashboard');
       await handleManualRefresh();
     }
@@ -993,7 +1023,11 @@ export default function App() {
     );
 
     if (success !== null) {
-      setProfiles(prev => prev.map(p => p.email.toLowerCase() === targetUser.email.toLowerCase() ? updatedProfile : p));
+      setProfiles(prev => {
+        const next = prev.map(p => p.email.toLowerCase() === targetUser.email.toLowerCase() ? updatedProfile : p);
+        safeSetJson('op_app_cached_profiles', next);
+        return next;
+      });
       setResetDeviceLogs(prev => [logEntry, ...prev]);
       safeSetJson('op_app_cached_reset_device_logs', [logEntry, ...resetDeviceLogs], 50);
       if (userProfile && userProfile.email.toLowerCase() === targetUser.email.toLowerCase()) {
@@ -1046,7 +1080,11 @@ export default function App() {
 
     if (success !== null) {
       setUserProfile(updatedProfile);
-      setProfiles(prev => prev.map(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase() ? updatedProfile : p));
+      setProfiles(prev => {
+        const next = prev.map(p => (p.email && p.email.toLowerCase() === updatedProfile.email.toLowerCase()) || (p.userId && p.userId.toLowerCase() === updatedProfile.userId.toLowerCase()) ? updatedProfile : p);
+        safeSetJson('op_app_cached_profiles', next);
+        return next;
+      });
       return true;
     }
     return false;
@@ -1113,9 +1151,10 @@ export default function App() {
         try {
           const freshProfiles = await fetchProfiles(currentToken, currentSheetId);
           if (freshProfiles && freshProfiles.length > 0) {
-            setProfiles(freshProfiles);
-            safeSetJson('op_app_cached_profiles', freshProfiles);
-            const freshUser = freshProfiles.find(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase());
+            const merged = mergeUserProfiles(freshProfiles, profiles, defaultUsers);
+            setProfiles(merged);
+            safeSetJson('op_app_cached_profiles', merged);
+            const freshUser = merged.find(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase());
             if (freshUser) {
               setUserProfile(freshUser);
             }

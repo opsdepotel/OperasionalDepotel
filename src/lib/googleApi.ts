@@ -232,14 +232,25 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
   const rawFotoProfile = row.FotoProfile ?? row.fotoProfile ?? row.FotoProfileUrl ?? row.fotoProfileUrl ?? '';
   const rawFotoProfileFileId = row.FotoProfileFileId ?? row.fotoProfileFileId ?? '';
 
+  const rawEmail = String(row.Email || row.email || '').trim();
+  const rawUserId = String(row.UserID || row.userId || row['User ID'] || row.User_ID || rawEmail || '').trim();
+  const rawPassword = String(row.Password || row.password || row.Pass || row.KataSandi || '').trim();
+  const rawNama = String(row.Nama || row.nama || row.Name || '').trim();
+  const rawManagerEmail = String(row.ManagerEmail || row.managerEmail || row['Manager Email'] || '').trim();
+  const rawDivisi = String(row.Divisi || row.divisi || '').trim();
+
+  const finalEmail = rawEmail;
+  const finalUserId = rawUserId || (finalEmail ? finalEmail.split('@')[0] : '');
+  const finalPassword = rawPassword || '123456';
+
   return {
-    userId: String(row.UserID || row.userId || row.Email || ''),
-    password: String(row.Password || row.password || ''),
-    nama: String(row.Nama || row.nama || ''),
-    email: String(row.Email || row.email || ''),
+    userId: finalUserId,
+    password: finalPassword,
+    nama: rawNama,
+    email: finalEmail,
     role: roleVal,
-    managerEmail: String(row.ManagerEmail || row.managerEmail || ''),
-    divisi: String(row.Divisi || row.divisi || ''),
+    managerEmail: rawManagerEmail,
+    divisi: rawDivisi,
     subDivisi: rawSubDiv,
     aksesBBM: isAksesBBM,
     mobile: isMobile,
@@ -530,6 +541,77 @@ export const defaultUsers: UserProfile[] = [
   { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: 'margono@depotel.com', divisi: 'JKT-SOUTH-02', aksesBBM: false },
   { userId: 'staff', password: 'staff123', nama: 'Staff Lapangan', email: 'staff@company.com', role: Role.USER, managerEmail: 'manager@company.com', divisi: 'JKT-SOUTH-02', aksesBBM: true }
 ];
+
+/**
+ * Safely merges multiple sources of UserProfile arrays.
+ * Deduplicates by email (or userId) so no valid user profile is lost during partial syncs or network glitches.
+ */
+export function mergeUserProfiles(...sources: (UserProfile[] | null | undefined)[]): UserProfile[] {
+  const merged: UserProfile[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const list of sources) {
+    if (!list || !Array.isArray(list)) continue;
+    for (const u of list) {
+      if (!u) continue;
+      const cleanEmail = (u.email || '').trim().toLowerCase();
+      const cleanUserId = (u.userId || '').trim().toLowerCase();
+      const primaryKey = cleanEmail || cleanUserId;
+
+      if (!primaryKey) continue;
+
+      if (!seenKeys.has(primaryKey)) {
+        seenKeys.add(primaryKey);
+        if (cleanUserId && cleanUserId !== primaryKey) {
+          seenKeys.add(cleanUserId);
+        }
+        if (cleanEmail && cleanEmail !== primaryKey) {
+          seenKeys.add(cleanEmail);
+        }
+
+        const normalizedProfile: UserProfile = {
+          ...u,
+          userId: (u.userId || '').trim() || (cleanEmail ? cleanEmail.split('@')[0] : ''),
+          password: (u.password || '').trim() || '123456',
+          email: (u.email || '').trim(),
+          nama: (u.nama || '').trim(),
+          managerEmail: (u.managerEmail || '').trim(),
+          divisi: (u.divisi || '').trim(),
+          subDivisi: (u.subDivisi || '').trim(),
+          deviceId: (u.deviceId || '').trim()
+        };
+        merged.push(normalizedProfile);
+      }
+    }
+  }
+
+  return merged;
+}
+
+/**
+ * Robust user credential matcher comparing input userId/email & password against candidate profiles.
+ */
+export function findMatchingUser(
+  candidateProfiles: UserProfile[],
+  inputId: string,
+  inputPassword: string
+): UserProfile | undefined {
+  const cleanId = (inputId || '').trim().toLowerCase();
+  const cleanPassword = (inputPassword || '').trim();
+
+  if (!cleanId) return undefined;
+
+  return candidateProfiles.find(p => {
+    const pUserId = (p.userId || '').trim().toLowerCase();
+    const pEmail = (p.email || '').trim().toLowerCase();
+    const pPassword = (p.password || '').trim() || '123456';
+
+    const idMatches = (pUserId && pUserId === cleanId) || (pEmail && pEmail === cleanId);
+    const pwdMatches = pPassword === cleanPassword;
+
+    return idMatches && pwdMatches;
+  });
+}
 
 const defaultRequests: BudgetRequest[] = [
   {
