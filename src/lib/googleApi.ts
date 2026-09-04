@@ -8,7 +8,7 @@ import { uploadReceiptViaServiceAccount } from './serviceAccountClient';
 
 const originalFetch = window.fetch;
 async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
-  const { timeout = 30000, ...restOptions } = options;
+  const { timeout = 15000, ...restOptions } = options;
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
@@ -19,7 +19,7 @@ async function fetchWithTimeout(resource: string | Request, options: RequestInit
     return response;
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      throw new Error('Permintaan ke Google API mengalami timeout (melebihi batas 30 detik). Silakan periksa koneksi internet Anda atau gunakan Mode Demo (Offline).');
+      throw new Error('Permintaan ke Google API mengalami timeout. Silakan periksa koneksi internet Anda atau gunakan Mode Demo (Offline).');
     }
     if (err.message === 'Failed to fetch' || (err.message && err.message.includes('Failed to fetch'))) {
       throw new Error('Gagal terhubung ke Google API (Koneksi jaringan terputus atau diblokir). Silakan periksa koneksi internet Anda dan coba lagi.');
@@ -614,7 +614,7 @@ export function findMatchingUser(
   });
 }
 
-const defaultRequests: BudgetRequest[] = [
+export const defaultRequests: BudgetRequest[] = [
   {
     id: 'OP-20260712-4321',
     userEmail: 'staff@company.com',
@@ -665,7 +665,7 @@ const defaultRequests: BudgetRequest[] = [
   }
 ];
 
-const defaultUsageItems: UsageReportItem[] = [
+export const defaultUsageItems: UsageReportItem[] = [
   {
     id: 'ITEM-1',
     requestId: 'OPT-20260711-8899',

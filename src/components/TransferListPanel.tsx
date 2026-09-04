@@ -18,6 +18,8 @@ interface TransferListPanelProps {
   googleToken: string;
   driveFolderId: string;
   histories?: ItemReviewHistory[];
+  userProfile?: UserProfile;
+  activeRole?: Role;
   onClose: () => void;
   onPreviewDocument?: (doc: { url: string; fileId?: string; title: string }) => void;
   onUpdateTransfer?: (requestId: string, adminComment: string, file: File | null) => Promise<void>;
@@ -32,6 +34,8 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
   googleToken,
   driveFolderId,
   histories = [],
+  userProfile,
+  activeRole,
   onClose,
   onPreviewDocument,
   onUpdateTransfer,
@@ -248,6 +252,11 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
   const transferredRequests = useMemo(() => {
     return requests.filter(r => {
       if (isBbmRequest(r) || r.status === RequestStatus.CANCELLED) return false;
+      if (activeRole === Role.USER || userProfile?.role === Role.USER) {
+        if (userProfile?.email && r.userEmail.toLowerCase() !== userProfile.email.toLowerCase()) {
+          return false;
+        }
+      }
       return (r.adminActionAmount || 0) > 0;
     }).sort((a, b) => {
       const getTimestamp = (req: BudgetRequest) => {

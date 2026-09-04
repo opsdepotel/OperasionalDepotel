@@ -16,6 +16,8 @@ import {
   fetchBudgetRequests,
   fetchUsageItems,
   fetchProfiles,
+  defaultRequests,
+  defaultUsageItems,
   createBudgetRequest,
   updateBudgetRequest,
   createUsageItem,
@@ -538,46 +540,59 @@ export default function App() {
         err.message.toLowerCase().includes('unauthorized') ||
         err.message.toLowerCase().includes('token')
       );
+
+      // Attempt automatic background token renewal via Service Account
+      try {
+        const saData = await fetchServiceAccountToken();
+        if (saData && saData.token && saData.token !== token) {
+          setToken(saData.token);
+          const sheetId = await findOrCreateDatabase(saData.token);
+          setSpreadsheetId(sheetId);
+          const folderId = await findOrCreateFolder(saData.token);
+          setDriveFolderId(folderId);
+          await syncAllData(saData.token, sheetId);
+          return;
+        }
+      } catch (retryErr) {
+        console.warn('Auto-retry with fresh Service Account token failed:', retryErr);
+      }
+
       if (isAuthError) {
         console.warn('Google API returned 401 Unauthorized. Sesi token Google expired.');
         await handleGoogleAuthError();
       } else {
-        const hasCachedProfiles = !!localStorage.getItem('op_app_cached_profiles');
-        if (hasCachedProfiles && (err.message?.includes('Gagal terhubung') || err.message?.includes('Failed to fetch') || err.message?.includes('timeout') || err.message?.includes('SiteID'))) {
-          console.warn('Google API network/CORS issue, restoring cached data from localStorage...');
-          try {
-            const cachedReqs = JSON.parse(localStorage.getItem('op_app_cached_requests') || '[]');
-            const cachedItems = JSON.parse(localStorage.getItem('op_app_cached_usage_items') || '[]');
-            const cachedProfs = JSON.parse(localStorage.getItem('op_app_cached_profiles') || '[]');
-            const cachedSites = JSON.parse(localStorage.getItem('op_app_cached_sites') || '[]');
-            const cachedActs = JSON.parse(localStorage.getItem('op_app_cached_activities') || '[]');
-            const cachedLogs = JSON.parse(localStorage.getItem('op_app_cached_reset_device_logs') || '[]');
-            const cachedHist = JSON.parse(localStorage.getItem('op_app_cached_item_review_histories') || '[]');
+        // Fallback to local cached data or default profiles so app remains responsive
+        try {
+          const cachedReqs = JSON.parse(localStorage.getItem('op_app_cached_requests') || '[]');
+          const cachedItems = JSON.parse(localStorage.getItem('op_app_cached_usage_items') || '[]');
+          const cachedProfs = JSON.parse(localStorage.getItem('op_app_cached_profiles') || '[]');
+          const cachedSites = JSON.parse(localStorage.getItem('op_app_cached_sites') || '[]');
+          const cachedActs = JSON.parse(localStorage.getItem('op_app_cached_activities') || '[]');
+          const cachedLogs = JSON.parse(localStorage.getItem('op_app_cached_reset_device_logs') || '[]');
+          const cachedHist = JSON.parse(localStorage.getItem('op_app_cached_item_review_histories') || '[]');
 
-            if (cachedProfs.length > 0) {
-              setRequests(cachedReqs);
-              setUsageItems(cachedItems);
-              setProfiles(cachedProfs);
-              setSites(cachedSites);
-              setActivities(cachedActs);
-              setResetDeviceLogs(cachedLogs);
-              setItemReviewHistories(cachedHist);
+          const activeProfs = cachedProfs.length > 0 ? cachedProfs : defaultUsers;
+          setRequests(cachedReqs.length > 0 ? cachedReqs : defaultRequests);
+          setUsageItems(cachedItems.length > 0 ? cachedItems : defaultUsageItems);
+          setProfiles(activeProfs);
+          if (cachedSites.length > 0) setSites(cachedSites);
+          setActivities(cachedActs);
+          setResetDeviceLogs(cachedLogs);
+          setItemReviewHistories(cachedHist);
 
-              const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
-              if (savedUserId) {
-                const matchedUser = cachedProfs.find((u: any) => u.userId?.toLowerCase() === savedUserId.toLowerCase() || u.email?.toLowerCase() === savedUserId.toLowerCase());
-                if (matchedUser) {
-                  setUserProfile(matchedUser);
-                  setActiveRole(matchedUser.role);
-                }
-              }
-
-              setError('Koneksi ke Google API terganggu. Aplikasi berjalan menggunakan data lokal (Offline). Anda dapat menekan tombol "Coba Sinkron Ulang" saat koneksi terhubung.');
-              return;
+          const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
+          if (savedUserId) {
+            const matchedUser = activeProfs.find((u: any) => u.userId?.toLowerCase() === savedUserId.toLowerCase() || u.email?.toLowerCase() === savedUserId.toLowerCase());
+            if (matchedUser) {
+              setUserProfile(matchedUser);
+              setActiveRole(matchedUser.role);
             }
-          } catch (restoreErr) {
-            console.error('Gagal memuat cache lokal:', restoreErr);
           }
+
+          setError('Koneksi ke Google API terganggu atau mengalami timeout. Aplikasi berjalan menggunakan Mode Lokal / Offline. Anda dapat menekan tombol "Coba Sinkron Ulang" saat koneksi terhubung.');
+          return;
+        } catch (restoreErr) {
+          console.error('Gagal memuat cache lokal:', restoreErr);
         }
         setError(err.message || 'Gagal menginisialisasi Google Workspace.');
       }
@@ -2778,6 +2793,8 @@ export default function App() {
             googleToken={token!}
             driveFolderId={driveFolderId || ''}
             histories={itemReviewHistories}
+            userProfile={userProfile}
+            activeRole={activeRole}
             onClose={() => setActiveView('dashboard')}
             onPreviewDocument={setPreviewDocument}
             onUpdateTransfer={handleUpdateTransferDetails}

@@ -924,6 +924,44 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const closedCount = myReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
     const rejectedCount = taskRejected;
 
+    const parseDateToYYYYMMDD = (dateInput: string | Date | undefined): string => {
+      if (!dateInput) return '';
+      const str = String(dateInput).trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+        return str.substring(0, 10);
+      }
+      return '';
+    };
+
+    const getTodayStr = () => {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const todayStr = getTodayStr();
+
+    const userEmailToMatch = (userProfile?.email || email || '').toLowerCase();
+    const transferredReqsList = requests.filter(r => 
+      !isBbmRequest(r) && 
+      r.status !== RequestStatus.CANCELLED &&
+      (r.adminActionAmount || 0) > 0 &&
+      r.userEmail.toLowerCase() === userEmailToMatch
+    );
+    const todayTransferredReqs = transferredReqsList.filter(r => {
+      const dateAdminActionTime = parseDateToYYYYMMDD(r.adminActionTime);
+      const datePemakaian = parseDateToYYYYMMDD(r.tanggalPemakaian);
+      const dateCreatedAt = parseDateToYYYYMMDD(r.createdAt);
+      const dateTimestamp = parseDateToYYYYMMDD(r.timestamp);
+      if (dateAdminActionTime) {
+        return dateAdminActionTime === todayStr;
+      }
+      return datePemakaian === todayStr || dateCreatedAt === todayStr || dateTimestamp === todayStr;
+    });
+    const todayTransferredCount = todayTransferredReqs.length;
+    const todayTransferredTotal = todayTransferredReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+
     return (
       <div className="space-y-4">
         {/* Urgent Task Card */}
@@ -1117,6 +1155,39 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </span>
           </div>
         </div>
+
+        {/* Kartu DAFTAR TRANSFER - ROLE USER */}
+        {onOpenTransferList && (
+          <div 
+            onClick={onOpenTransferList}
+            id="user-transfer-list-card"
+            className={`p-5 rounded-2xl border shadow-sm transition-all cursor-pointer hover:border-emerald-400 hover:shadow-md group ${
+              activeFilter === 'TRANSFER_LIST' ? 'border-emerald-500 bg-emerald-100/40 ring-2 ring-emerald-500/20' : 'bg-emerald-50/40 border-emerald-200/80 hover:bg-emerald-50/70'
+            }`}
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-[10px] font-bold text-emerald-800/70 uppercase tracking-widest">DAFTAR TRANSFER</p>
+                <h4 className="font-display font-black text-slate-800 text-xs mt-1 group-hover:text-emerald-700 transition-colors">List Transfer UID</h4>
+              </div>
+            </div>
+
+            <div className="flex items-end justify-between mt-3">
+              <div>
+                <span className="text-3xl font-display font-bold text-slate-900 block">
+                  {todayTransferredCount} <span className="text-xs text-slate-400 font-normal">UID Hari Ini</span>
+                </span>
+                <p className="text-[11px] font-bold text-emerald-600 mt-0.5">
+                  Total: {formatIDR(todayTransferredTotal)}
+                </p>
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-500 mt-2.5 font-medium border-t border-emerald-100/80 pt-2">
+              Lihat daftar pengajuan UID yang telah ditransfer dana oleh Finance beserta rincian bukti transfer.
+            </p>
+          </div>
+        )}
 
         {/* Modal Laporan Transaksi Saldo Operasional User */}
         <UserOperationalBalanceReportModal
