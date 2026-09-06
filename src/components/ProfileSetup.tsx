@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { UserProfile, Role, BudgetRequest, ResetDeviceLog, formatTimestamp } from '../types';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
-import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel, Smartphone, RotateCcw, CheckCircle2, History, FileSpreadsheet, Clock, Tag, Trash2, Loader2, RefreshCw } from 'lucide-react';
+import { User, Shield, Briefcase, Mail, Save, AlertCircle, Plus, Edit2, ArrowLeft, Search, Lock, Fuel, Smartphone, RotateCcw, CheckCircle2, History, FileSpreadsheet, Clock, Tag, Trash2, Loader2, RefreshCw, BellRing } from 'lucide-react';
 
 interface ProfileSetupProps {
   profiles: UserProfile[];
@@ -55,33 +55,6 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
   const [resetModalUser, setResetModalUser] = useState<UserProfile | null>(null);
   const [resetReason, setResetReason] = useState<string>('User ganti perangkat HP baru');
   const [isResetting, setIsResetting] = useState<boolean>(false);
-
-  // Orphan Data Cleanup state
-  const [isPurging, setIsPurging] = useState(false);
-  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
-  const [purgeMsg, setPurgeMsg] = useState<string | null>(null);
-
-  const handlePurgeOrphan = async () => {
-    if (!onPurgeOrphanHistories) return;
-    setIsPurging(true);
-    setPurgeMsg(null);
-    setError(null);
-    try {
-      const res = await onPurgeOrphanHistories();
-      if (res) {
-        if (res.purgedCount > 0) {
-          setPurgeMsg(`Berhasil membersihkan ${res.purgedCount} data orphan! Tersisa ${res.remainingCount} riwayat valid.`);
-        } else {
-          setPurgeMsg(`Tabel sudah bersih! Semua (${res.remainingCount}) riwayat terhubung dengan pengajuan valid.`);
-        }
-      }
-      setShowPurgeConfirm(false);
-    } catch (err: any) {
-      setError(err.message || 'Gagal melakukan pembersihan orphan data.');
-    } finally {
-      setIsPurging(false);
-    }
-  };
 
   // Filter profiles based on search
   const filteredProfiles = profiles.filter(p => {
@@ -605,77 +578,6 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
             </div>
           </div>
 
-          {/* Maintenance / Orphan Data Cleanup Banner */}
-          {onPurgeOrphanHistories && (
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs flex flex-col gap-3">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <div>
-                  <p className="font-bold text-slate-800 flex items-center gap-1.5">
-                    <Trash2 className="w-4 h-4 text-rose-500" />
-                    <span>Pembersihan Orphan Data (ItemReviewHistory)</span>
-                  </p>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Hapus baris riwayat review yang tidak memiliki referensi Pengajuan/Laporan valid.
-                  </p>
-                </div>
-                {!showPurgeConfirm && (
-                  <button
-                    type="button"
-                    onClick={() => { setPurgeMsg(null); setShowPurgeConfirm(true); }}
-                    disabled={isPurging}
-                    className="py-1.5 px-3 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                    <span>Bersihkan Orphan Data</span>
-                  </button>
-                )}
-              </div>
-
-              {showPurgeConfirm && (
-                <div className="p-3 bg-rose-50/80 border border-rose-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 animate-fade-in">
-                  <div className="flex items-start gap-2">
-                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                    <span className="text-slate-700 font-medium">
-                      Konfirmasi: Yakin ingin membersihkan data <code className="font-mono text-rose-700 font-bold">ItemReviewHistory</code> orphan?
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setShowPurgeConfirm(false)}
-                      disabled={isPurging}
-                      className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
-                    >
-                      Batal
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePurgeOrphan}
-                      disabled={isPurging}
-                      className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      {isPurging ? (
-                        <>
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          <span>Membersihkan...</span>
-                        </>
-                      ) : (
-                        <span>Ya, Bersihkan Sekarang</span>
-                      )}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {purgeMsg && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center gap-2 animate-fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>{purgeMsg}</span>
-            </div>
-          )}
-
           {/* Search Box Log */}
           <div className="relative">
             <input
@@ -854,6 +756,12 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
                       {p.deviceId && (
                         <span className="text-[9px] text-slate-500 bg-slate-50 px-2 py-0.5 rounded-md border border-slate-200 font-mono truncate max-w-full">
                           Device ID: <strong className="text-slate-700">{p.deviceId}</strong>
+                        </span>
+                      )}
+                      {p.pushSubscriptions && p.pushSubscriptions.length > 5 && (
+                        <span className="text-[9px] font-bold bg-emerald-50 text-emerald-700 px-1.5 py-0.5 rounded-md border border-emerald-200/60 flex items-center gap-1">
+                          <BellRing className="w-2.5 h-2.5 text-emerald-600" />
+                          Push Aktif
                         </span>
                       )}
                     </div>

@@ -10,19 +10,39 @@ export const safeSetItem = (key: string, value: string): void => {
   }
 };
 
+/**
+ * Strips sensitive passwords before saving user profiles to local storage.
+ */
+export const sanitizeProfilesForStorage = (data: any): any => {
+  if (Array.isArray(data)) {
+    return data.map(item => {
+      if (item && typeof item === 'object') {
+        const clean = { ...item };
+        delete clean.password;
+        return clean;
+      }
+      return item;
+    });
+  }
+  return data;
+};
+
 export const safeSetJson = (key: string, data: any, maxTrimItems: number = 50): void => {
   try {
-    localStorage.setItem(key, JSON.stringify(data));
+    const toStore = key === 'op_app_cached_profiles' ? sanitizeProfilesForStorage(data) : data;
+    localStorage.setItem(key, JSON.stringify(toStore));
   } catch (error) {
     console.warn(`[SafeStorage] localStorage quota exceeded for key "${key}", attempting fallback trimming...`, error);
     if (Array.isArray(data) && data.length > 0) {
       try {
-        const trimmed = data.slice(0, maxTrimItems);
+        const sanitized = key === 'op_app_cached_profiles' ? sanitizeProfilesForStorage(data) : data;
+        const trimmed = sanitized.slice(0, maxTrimItems);
         localStorage.setItem(key, JSON.stringify(trimmed));
         return;
       } catch (err2) {
         try {
-          const minimalTrimmed = data.slice(0, Math.min(15, maxTrimItems));
+          const sanitized = key === 'op_app_cached_profiles' ? sanitizeProfilesForStorage(data) : data;
+          const minimalTrimmed = sanitized.slice(0, Math.min(15, maxTrimItems));
           localStorage.setItem(key, JSON.stringify(minimalTrimmed));
           return;
         } catch (err3) {

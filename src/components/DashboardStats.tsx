@@ -11,7 +11,9 @@ import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
 import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp } from 'lucide-react';
+import { ReopenUidModal } from './ReopenUidModal';
+import { AdminPushTestCard } from './AdminPushTestCard';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -37,6 +39,8 @@ interface DashboardStatsProps {
   histories?: ItemReviewHistory[];
   activeTab?: 'APPROVAL' | 'SUBMISSION';
   onSelectTab?: (tab: 'APPROVAL' | 'SUBMISSION') => void;
+  onPurgeOrphanHistories?: () => Promise<{ purgedCount: number; remainingCount: number } | null>;
+  onReopenRequest?: (req: BudgetRequest) => Promise<boolean>;
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -60,7 +64,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onOpenBbmListModal,
   histories = [],
   activeTab,
-  onSelectTab
+  onSelectTab,
+  onPurgeOrphanHistories,
+  onReopenRequest
 }) => {
   const [internalTab, setInternalTab] = useState<'APPROVAL' | 'SUBMISSION'>('APPROVAL');
   const currentTab = activeTab !== undefined ? activeTab : internalTab;
@@ -68,6 +74,32 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     setInternalTab(newTab);
     if (onSelectTab) {
       onSelectTab(newTab);
+    }
+  };
+
+  // Orphan Data Cleanup state
+  const [isPurging, setIsPurging] = useState(false);
+  const [showPurgeConfirm, setShowPurgeConfirm] = useState(false);
+  const [purgeMsg, setPurgeMsg] = useState<string | null>(null);
+
+  const handlePurgeOrphan = async () => {
+    if (!onPurgeOrphanHistories) return;
+    setIsPurging(true);
+    setPurgeMsg(null);
+    try {
+      const res = await onPurgeOrphanHistories();
+      if (res) {
+        if (res.purgedCount > 0) {
+          setPurgeMsg(`Berhasil membersihkan ${res.purgedCount} data orphan! Tersisa ${res.remainingCount} riwayat valid.`);
+        } else {
+          setPurgeMsg(`Tabel sudah bersih! Semua (${res.remainingCount}) riwayat terhubung dengan pengajuan valid.`);
+        }
+      }
+      setShowPurgeConfirm(false);
+    } catch (err: any) {
+      setPurgeMsg(err.message || 'Gagal melakukan pembersihan orphan data.');
+    } finally {
+      setIsPurging(false);
     }
   };
   const [isTransactionReportOpen, setIsTransactionReportOpen] = useState(false);
@@ -91,6 +123,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [expandedManagerTimelines, setExpandedManagerTimelines] = useState<Record<string, boolean>>({});
 
   useBackHandler(isManagerActiveUidModalOpen, () => setIsManagerActiveUidModalOpen(false), 'dashboardStats_managerActiveUidModal');
+
+  // Reopen UID Modal States (Administrator)
+  const [isReopenUidModalOpen, setIsReopenUidModalOpen] = useState(false);
+  useBackHandler(isReopenUidModalOpen, () => setIsReopenUidModalOpen(false), 'dashboardStats_reopenUidModal');
 
   const defaultSitesList: SiteInfo[] = [
     { siteId: 'JKT-SOUTH-02', siteName: 'Depotel JKT South 02', coordinates: '-6.2088, 106.8456' },
@@ -1207,16 +1243,16 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
             <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in fade-in zoom-in-95 duration-150">
               {/* Header Modal */}
-              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-indigo-900/50">
+              <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-700 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-indigo-500/30 shadow-sm">
                 <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-2xl bg-indigo-600 border border-indigo-400/30 flex items-center justify-center text-white shrink-0 shadow-md">
-                    <MapPin className="w-5 h-5 text-indigo-100" />
+                  <div className="w-10 h-10 rounded-2xl bg-white/20 border border-white/30 backdrop-blur-xs flex items-center justify-center text-white shrink-0 shadow-md">
+                    <MapPin className="w-5 h-5 text-white" />
                   </div>
                   <div className="min-w-0">
                     <h3 className="font-display font-bold text-sm sm:text-base text-white tracking-wide truncate">
                       Pencarian Site & Navigasi Lokasi
                     </h3>
-                    <p className="text-[11px] text-indigo-200/80 font-medium mt-0.5 truncate">
+                    <p className="text-[11px] text-indigo-100 font-medium mt-0.5 truncate">
                       Masukkan Site ID untuk alamat lengkap & rute Google Maps
                     </p>
                   </div>
@@ -1224,7 +1260,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsSearchSiteModalOpen(false)}
-                  className="w-9 h-9 rounded-2xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
+                  className="w-9 h-9 rounded-2xl bg-white/15 hover:bg-white/25 text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
                   title="Tutup Modal"
                 >
                   <X className="w-5 h-5" />
@@ -2246,32 +2282,125 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
-        {/* Card: Cek GPS Perangkat */}
+        {/* Administrator Push Notification Test Card */}
+        <AdminPushTestCard
+          profiles={profiles}
+          currentAdminEmail={email}
+        />
+
+        {/* Card: Reopen UID (Mengubah status CLOSED menjadi REPORTING) */}
         <div
-          onClick={handleOpenGpsCheck}
-          className="p-5 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/60 shadow-md hover:shadow-lg hover:border-emerald-400 transition-all cursor-pointer group flex items-center justify-between gap-4"
-          id="admin-check-gps-card"
+          onClick={() => setIsReopenUidModalOpen(true)}
+          className="p-5 rounded-2xl border border-amber-200 bg-gradient-to-br from-amber-50/90 via-white to-orange-50/50 shadow-md hover:shadow-lg hover:border-amber-400 transition-all cursor-pointer group flex items-center justify-between gap-4"
+          id="admin-reopen-uid-card"
         >
           <div className="flex items-center gap-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-200 group-hover:scale-105 transition-transform">
-              <MapPin className="w-6 h-6" />
+            <div className="w-12 h-12 rounded-2xl bg-amber-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-200 group-hover:scale-105 transition-transform">
+              <RotateCcw className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-emerald-600 transition-colors flex items-center gap-2">
-                Cek GPS Perangkat System
-                <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full uppercase">
-                  Diagnostik GPS
+              <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-amber-600 transition-colors flex items-center gap-2">
+                Reopen UID
+                <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full uppercase">
+                  {requests.filter(r => r.status === RequestStatus.CLOSED && r.id.startsWith('OP-')).length} Closed (OP-)
                 </span>
               </h3>
               <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                Uji parameter akurasi GPS hardware, elevasi, kecepatan, timestamp &amp; deteksi indikasi Fake GPS perangkat ini.
+                Buka kembali status UID CLOSED menjadi REPORTING khusus UID Pengajuan (prefix OP-).
               </p>
             </div>
           </div>
-          <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+          <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
             &rarr;
           </div>
         </div>
+
+        {/* Card: Pembersihan Orphan Data (ItemReviewHistory) */}
+        {onPurgeOrphanHistories && (
+          <div
+            className="p-4 sm:p-5 rounded-2xl border border-rose-100 bg-white shadow-sm flex flex-col gap-3 transition-all"
+            id="admin-orphan-cleanup-card"
+          >
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display font-bold text-slate-800 text-sm flex items-center gap-2">
+                  <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
+                  <span>Pembersihan Orphan Data (ItemReviewHistory)</span>
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Hapus baris riwayat review yang tidak memiliki referensi Pengajuan/Laporan valid.
+                </p>
+              </div>
+
+              {!showPurgeConfirm && (
+                <button
+                  type="button"
+                  onClick={() => { setPurgeMsg(null); setShowPurgeConfirm(true); }}
+                  disabled={isPurging}
+                  className="py-2 px-3.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/80 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50 shrink-0 shadow-sm"
+                  id="btn-admin-bersihkan-orphan-data"
+                >
+                  <Trash2 className="w-4 h-4 text-rose-600" />
+                  <span>Bersihkan Orphan Data</span>
+                </button>
+              )}
+            </div>
+
+            {/* Confirmation prompt */}
+            {showPurgeConfirm && (
+              <div className="p-3 bg-rose-50/90 border border-rose-200 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 animate-fade-in">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <span className="text-slate-700 font-medium text-xs">
+                    Konfirmasi: Yakin ingin membersihkan data <code className="font-mono text-rose-700 font-bold">ItemReviewHistory</code> orphan?
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setShowPurgeConfirm(false)}
+                    disabled={isPurging}
+                    className="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 rounded-lg text-xs font-semibold cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePurgeOrphan}
+                    disabled={isPurging}
+                    className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-sm"
+                  >
+                    {isPurging ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Membersihkan...</span>
+                      </>
+                    ) : (
+                      <span>Ya, Bersihkan Sekarang</span>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Result / notification message */}
+            {purgeMsg && (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs flex items-center justify-between gap-2 animate-fade-in">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="font-medium">{purgeMsg}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPurgeMsg(null)}
+                  className="text-emerald-600 hover:text-emerald-800 text-xs font-bold px-1.5 py-0.5 rounded cursor-pointer"
+                >
+                  &times;
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Stats Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -2917,6 +3046,17 @@ User Agent: ${navigator.userAgent}`;
             </div>
           </div>
         )}
+
+        {/* Modal Reopen UID (Administrator) */}
+        <ReopenUidModal
+          isOpen={isReopenUidModalOpen}
+          onClose={() => setIsReopenUidModalOpen(false)}
+          requests={requests}
+          profiles={profiles}
+          usageItems={usageItems}
+          histories={histories}
+          onReopenRequest={onReopenRequest || (async () => false)}
+        />
       </div>
     );
   }

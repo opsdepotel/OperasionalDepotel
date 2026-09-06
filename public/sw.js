@@ -116,3 +116,73 @@ self.addEventListener('fetch', (event) => {
       })
   );
 });
+
+// ==========================================
+// Web Push Notifications Handling
+// ==========================================
+
+self.addEventListener('push', (event) => {
+  let data = {};
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch (err) {
+      data = {
+        title: 'DIOMS Notifikasi Status UID',
+        body: event.data.text() || 'Ada pembaruan status pengajuan Anda.',
+      };
+    }
+  }
+
+  const title = data.title || 'DIOMS Notifikasi Status UID';
+  const options = {
+    body: data.body || 'Ada pembaruan status pengajuan Anda.',
+    icon: data.icon || '/DIOMS-icon192.png',
+    badge: data.badge || '/DIOMS-icon192.png',
+    image: data.image || undefined,
+    vibrate: [200, 100, 200],
+    data: {
+      url: data.url || '/',
+      requestId: data.requestId,
+      timestamp: Date.now(),
+      ...(data.extra || {}),
+    },
+    actions: [
+      { action: 'open', title: 'Buka Aplikasi' },
+      { action: 'close', title: 'Tutup' },
+    ],
+    tag: data.tag || 'dioms-push-notification',
+    renotify: true,
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  if (event.action === 'close') return;
+
+  const urlToOpen =
+    event.notification.data && event.notification.data.url
+      ? event.notification.data.url
+      : '/';
+
+  event.waitUntil(
+    clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((windowClients) => {
+        for (const client of windowClients) {
+          if (client.url.includes(self.location.origin) && 'focus' in client) {
+            if ('navigate' in client && urlToOpen !== '/') {
+              client.navigate(urlToOpen);
+            }
+            return client.focus();
+          }
+        }
+        if (clients.openWindow) {
+          return clients.openWindow(urlToOpen);
+        }
+      })
+  );
+});
+

@@ -50,7 +50,7 @@ const LAPORAN_HEADERS = [
 ];
 
 const USERS_HEADERS = [
-  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'SubDivisi', 'AksesBBM', 'Mobile', 'DeviceID', 'FotoProfile', 'FotoProfileFileId'
+  'UserID', 'Password', 'Nama', 'Email', 'Role', 'ManagerEmail', 'Divisi', 'SubDivisi', 'AksesBBM', 'Mobile', 'DeviceID', 'FotoProfile', 'FotoProfileFileId', 'PushSubscriptions'
 ];
 
 const ACTIVITY_HEADERS = [
@@ -232,6 +232,7 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
 
   const rawFotoProfile = row.FotoProfile ?? row.fotoProfile ?? row.FotoProfileUrl ?? row.fotoProfileUrl ?? '';
   const rawFotoProfileFileId = row.FotoProfileFileId ?? row.fotoProfileFileId ?? '';
+  const rawPushSubscriptions = row.PushSubscriptions ?? row['Push Subscriptions'] ?? row.pushSubscriptions ?? row.PushSubscription ?? '';
 
   const rawEmail = String(row.Email || row.email || '').trim();
   const rawUserId = String(row.UserID || row.userId || row['User ID'] || row.User_ID || rawEmail || '').trim();
@@ -257,7 +258,8 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
     mobile: isMobile,
     deviceId: deviceIdVal,
     fotoProfile: String(rawFotoProfile).trim(),
-    fotoProfileFileId: String(rawFotoProfileFileId).trim()
+    fotoProfileFileId: String(rawFotoProfileFileId).trim(),
+    pushSubscriptions: String(rawPushSubscriptions || '').trim()
   };
 }
 
@@ -467,7 +469,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
       data: [
         { range: 'Pengajuan!A1:Q1', values: [PENGAJUAN_HEADERS] },
         { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
-        { range: 'Users!A1:M1', values: [USERS_HEADERS] },
+        { range: 'Users!A1:N1', values: [USERS_HEADERS] },
         { range: 'Activity!A1:S1', values: [ACTIVITY_HEADERS] },
         { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
         { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
@@ -1936,7 +1938,7 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
   const profiles = await fetchProfiles(token, spreadsheetId);
   const existingIdx = profiles.findIndex(p => p.email.toLowerCase() === profile.email.toLowerCase());
 
-  const rowData = objectToRow(USERS_HEADERS, {
+    const rowData = objectToRow(USERS_HEADERS, {
     UserID: profile.userId || (profile.email ? profile.email.split('@')[0] : `user_${Date.now()}`),
     Password: profile.password || '123456',
     Nama: profile.nama || '',
@@ -1949,13 +1951,14 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
     Mobile: profile.mobile ? 'TRUE' : 'FALSE',
     DeviceID: profile.deviceId || '',
     FotoProfile: profile.fotoProfile || '',
-    FotoProfileFileId: profile.fotoProfileFileId || ''
+    FotoProfileFileId: profile.fotoProfileFileId || '',
+    PushSubscriptions: profile.pushSubscriptions || (existingIdx !== -1 ? profiles[existingIdx].pushSubscriptions || '' : '')
   });
 
   if (existingIdx !== -1) {
     // Row is at existingIdx + 2 (since header is row 1, and index is 0-based index of slice(1))
     const sheetRowIdx = existingIdx + 2;
-    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:M${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+    await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A${sheetRowIdx}:N${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1977,6 +1980,94 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
         values: [rowData]
       })
     });
+  }
+}
+
+/**
+ * Saves or updates Web Push Subscription directly to Column N (PushSubscriptions) in Users sheet.
+ */
+export async function saveUserPushSubscriptionToSheet(
+  token: string,
+  spreadsheetId: string,
+  email: string,
+  subscription: object | string,
+  options?: { userAgent?: string; deviceId?: string }
+): Promise<boolean> {
+  if (!email || !spreadsheetId || !token) return false;
+
+  if (token === 'mock_demo_token') {
+    const list = getMockData<UserProfile[]>('mock_db_users', []);
+    const idx = list.findIndex(p => p.email.toLowerCase() === email.toLowerCase());
+    if (idx !== -1) {
+      list[idx].pushSubscriptions = typeof subscription === 'string' ? subscription : JSON.stringify(subscription);
+      setMockData('mock_db_users', list);
+    }
+    return true;
+  }
+
+  try {
+    const profiles = await fetchProfiles(token, spreadsheetId);
+    const existingIdx = profiles.findIndex(p => p.email.toLowerCase() === email.toLowerCase());
+    if (existingIdx === -1) {
+      console.warn('[PushToSheets] User not found in Users sheet:', email);
+      return false;
+    }
+
+    const sheetRowIdx = existingIdx + 2;
+    const existingSubRaw = profiles[existingIdx].pushSubscriptions || '';
+
+    // Parse existing subscriptions or start new list
+    let subsList: any[] = [];
+    if (existingSubRaw) {
+      try {
+        const parsed = JSON.parse(existingSubRaw);
+        if (Array.isArray(parsed)) {
+          subsList = parsed;
+        } else if (parsed && typeof parsed === 'object') {
+          subsList = [parsed];
+        }
+      } catch {
+        // Not valid JSON, ignore
+      }
+    }
+
+    const newSubObj = typeof subscription === 'string' ? JSON.parse(subscription) : subscription;
+    const endpoint = (newSubObj as any)?.endpoint;
+
+    // Filter out same endpoint if exists, then add updated
+    subsList = subsList.filter(s => s?.endpoint !== endpoint);
+    subsList.push({
+      ...newSubObj,
+      userAgent: options?.userAgent || (typeof navigator !== 'undefined' ? navigator.userAgent : ''),
+      deviceId: options?.deviceId || profiles[existingIdx].deviceId || '',
+      updatedAt: new Date().toISOString()
+    });
+
+    const subString = JSON.stringify(subsList);
+
+    // Write to Column N (PushSubscriptions)
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!N${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        values: [[subString]]
+      })
+    });
+
+    if (!res.ok) {
+      console.warn('[PushToSheets] Failed to write to Column N:', res.status, res.statusText);
+      return false;
+    }
+
+    // Update in-memory profile
+    profiles[existingIdx].pushSubscriptions = subString;
+    return true;
+  } catch (err) {
+    console.error('[PushToSheets] Error saving push subscription to sheet:', err);
+    return false;
   }
 }
 

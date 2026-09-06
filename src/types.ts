@@ -84,6 +84,7 @@ export interface UserProfile {
   deviceId?: string;
   fotoProfile?: string;
   fotoProfileFileId?: string;
+  pushSubscriptions?: string;
 }
 
 export interface SiteInfo {

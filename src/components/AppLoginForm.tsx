@@ -5,9 +5,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { UserProfile, Role } from '../types';
-import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw } from 'lucide-react';
+import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw, Smartphone, CheckCircle2 } from 'lucide-react';
 import { validateDeviceAccessAndBind, getOrCreateDeviceId } from '../lib/deviceUtils';
 import { mergeUserProfiles, findMatchingUser, defaultUsers } from '../lib/googleApi';
+import { DevicePermissionsStatus } from '../lib/devicePermissions';
 
 interface AppLoginFormProps {
   profiles: UserProfile[];
@@ -18,6 +19,8 @@ interface AppLoginFormProps {
   externalError?: string | null;
   onClearExternalError?: () => void;
   hasSharedReceipt?: boolean;
+  permissionsStatus?: DevicePermissionsStatus | null;
+  onOpenPermissions?: () => void;
 }
 
 export const AppLoginForm: React.FC<AppLoginFormProps> = ({
@@ -28,7 +31,9 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   onLoginWithCredentials,
   externalError,
   onClearExternalError,
-  hasSharedReceipt
+  hasSharedReceipt,
+  permissionsStatus,
+  onOpenPermissions,
 }) => {
   const [rememberMe, setRememberMe] = useState<boolean>(() => {
     return localStorage.getItem('op_app_remember_me') === 'true';
@@ -37,10 +42,7 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
     const isRemembered = localStorage.getItem('op_app_remember_me') === 'true';
     return isRemembered ? localStorage.getItem('op_app_saved_user_id') || '' : '';
   });
-  const [password, setPassword] = useState(() => {
-    const isRemembered = localStorage.getItem('op_app_remember_me') === 'true';
-    return isRemembered ? localStorage.getItem('op_app_saved_password') || '' : '';
-  });
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
@@ -48,18 +50,23 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
 
   useEffect(() => {
     setDeviceId(getOrCreateDeviceId());
+    // Security audit: Clean up any legacy plaintext password stored in localStorage
+    try {
+      localStorage.removeItem('op_app_saved_password');
+    } catch {}
   }, []);
 
-  const saveRememberMeState = (uid: string, pwd: string, shouldRemember: boolean) => {
-    if (shouldRemember) {
-      localStorage.setItem('op_app_remember_me', 'true');
-      localStorage.setItem('op_app_saved_user_id', uid.trim());
-      localStorage.setItem('op_app_saved_password', pwd);
-    } else {
-      localStorage.removeItem('op_app_remember_me');
-      localStorage.removeItem('op_app_saved_user_id');
+  const saveRememberMeState = (uid: string, shouldRemember: boolean) => {
+    try {
+      if (shouldRemember) {
+        localStorage.setItem('op_app_remember_me', 'true');
+        localStorage.setItem('op_app_saved_user_id', uid.trim());
+      } else {
+        localStorage.removeItem('op_app_remember_me');
+        localStorage.removeItem('op_app_saved_user_id');
+      }
       localStorage.removeItem('op_app_saved_password');
-    }
+    } catch {}
   };
 
   const activeError = externalError || error;
@@ -93,7 +100,7 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
     }
 
     if (onLoginWithCredentials) {
-      saveRememberMeState(userId, password, rememberMe);
+      saveRememberMeState(userId, rememberMe);
       onLoginWithCredentials(userId, password, (msg) => {
         triggerError(msg);
       });
@@ -108,7 +115,7 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           triggerError(deviceCheck.errorMessage || 'Akses ditolak.');
           return;
         }
-        saveRememberMeState(userId, password, rememberMe);
+        saveRememberMeState(userId, rememberMe);
         onLoginSuccess(deviceCheck.updatedUser || matched);
       } else {
         triggerError('User ID atau Password salah. Silakan coba lagi.');
@@ -137,6 +144,28 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           <p className="text-[11px] text-blue-700 leading-relaxed">
             Gambar resi telah disimpan. Silakan login menggunakan akun <strong>Finance</strong> untuk memproses OCR &amp; pencocokan transaksi otomatis.
           </p>
+        </div>
+      )}
+
+      {/* Device Readiness Status Banner */}
+      {permissionsStatus && !permissionsStatus.allGranted && onOpenPermissions && (
+        <div className="bg-amber-50/80 border border-amber-200/90 rounded-2xl p-3 text-xs flex items-center justify-between gap-2.5 shadow-2xs animate-fade-in">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-2xs">
+              <Smartphone className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <p className="font-bold text-amber-950 text-xs truncate">Kesiapan Perangkat Belum Lengkap</p>
+              <p className="text-[11px] text-amber-800 truncate">Notifikasi, GPS, atau Kamera belum aktif</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenPermissions}
+            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shrink-0 cursor-pointer shadow-xs"
+          >
+            Aktifkan
+          </button>
         </div>
       )}
 
@@ -192,7 +221,7 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           </div>
         </div>
 
-        {/* Checkmark Ingat Saya */}
+        {/* Checkmark Ingat Saya (User ID saja) */}
         <div className="flex items-center justify-between pt-0.5">
           <label 
             htmlFor="remember-me-checkbox" 
@@ -205,20 +234,21 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
               onChange={(e) => {
                 const checked = e.target.checked;
                 setRememberMe(checked);
-                if (!checked) {
-                  localStorage.removeItem('op_app_remember_me');
-                  localStorage.removeItem('op_app_saved_user_id');
+                try {
+                  if (!checked) {
+                    localStorage.removeItem('op_app_remember_me');
+                    localStorage.removeItem('op_app_saved_user_id');
+                  } else if (userId.trim()) {
+                    localStorage.setItem('op_app_remember_me', 'true');
+                    localStorage.setItem('op_app_saved_user_id', userId.trim());
+                  }
                   localStorage.removeItem('op_app_saved_password');
-                } else if (userId.trim()) {
-                  localStorage.setItem('op_app_remember_me', 'true');
-                  localStorage.setItem('op_app_saved_user_id', userId.trim());
-                  localStorage.setItem('op_app_saved_password', password);
-                }
+                } catch {}
               }}
               className="w-4 h-4 rounded text-amber-600 border-slate-300 focus:ring-amber-500 cursor-pointer accent-amber-600 transition-all"
             />
             <span className="text-xs font-semibold text-slate-600 group-hover:text-slate-800 transition-colors">
-              Ingat saya
+              Ingat User ID
             </span>
           </label>
         </div>

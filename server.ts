@@ -5,6 +5,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
 import { google } from 'googleapis';
 import { googleAuthRouter } from './src/api/googleRoutes';
+import { pushRouter } from './src/api/pushRoutes';
 import { getServiceAccountAuth } from './src/lib/serverGoogleAuth';
 
 dotenv.config();
@@ -158,6 +159,9 @@ async function startServer() {
 
   // Google Service Account & Drive Proxy Endpoints
   app.use('/api/google', googleAuthRouter);
+
+  // Web Push Notifications Endpoints (VAPID)
+  app.use('/api/push', pushRouter);
 
   // AI Screen Recapture & Spoofing Detection Endpoint
   app.post('/api/ai/check-screen-recapture', async (req, res) => {
@@ -610,218 +614,6 @@ Instruksi Ekstraksi & Verifikasi:
       ) {
         userFacingError =
           'Batas kuota gratis (Rate Limit 429) API Gemini tercapai. Silakan tunggu sekitar 30–45 detik lalu coba lagi.';
-      }
-
-      return res.status(500).json({
-        success: false,
-        error: userFacingError,
-      });
-    }
-  });
-
-  // AI Transfer Receipt OCR Endpoint
-  app.post('/api/ai/ocr-transfer-receipt', async (req, res) => {
-    try {
-      const { imageBase64, imageUrl, fileId } = req.body;
-
-      if (!imageBase64 && !imageUrl && !fileId) {
-        return res.status(400).json({
-          error: 'Parameter gambar (imageBase64, imageUrl, atau fileId) wajib disertakan.',
-        });
-      }
-
-      let base64Data = '';
-      let mimeType = 'image/jpeg';
-
-      if (imageBase64) {
-        if (imageBase64.startsWith('data:')) {
-          const parts = imageBase64.split(',');
-          const mimeMatch = parts[0].match(/:(.*?);/);
-          if (mimeMatch) mimeType = mimeMatch[1];
-          base64Data = parts[1];
-        } else {
-          base64Data = imageBase64;
-        }
-      } else {
-        const fetched = await fetchImageAsBase64(imageUrl || fileId);
-        base64Data = fetched.base64;
-        mimeType = fetched.mimeType;
-      }
-
-      const ai = getGenAI();
-
-      const currentYear = new Date().getFullYear();
-      const prompt = `Anda adalah sistem OCR cerdas khusus analisis resi bukti transfer bank & e-wallet Indonesia (seperti BRImo, BCA Mobile, Mandiri Livin, BNI Mobile, QRIS, Dana, GoPay, OVO, ShopeePay, dll).
-
-Tugas Anda:
-Analisis foto/skrinsut resi bukti transfer terlampir, lalu ekstrak informasi berikut secara tepat dan terstruktur:
-
-1. **tanggalTransaksi**: Tanggal terjadinya transaksi transfer dalam format YYYY-MM-DD. Jika tanggal pada resi menggunakan format Indonesia (misal 22/08/2026 atau 22 Ags 2026), ubah ke YYYY-MM-DD. Jika tidak tertera tahun, asumsi tahun ${currentYear}.
-2. **waktuTransaksi**: Jam dan menit terjadinya transaksi jika ada pada resi (contoh: "14:30:25" atau "08:15"). Jika tidak ada, isi string kosong "".
-3. **tanggalWaktuFormatted**: Tanggal dan waktu lengkap transfer sesuai resi (contoh: "22/08/2026, 14.30.25" atau "2026-08-22 14:30:25"). Jika waktu tidak ada, isi dengan tanggal saja.
-4. **nominalTransaksi**: Nominal total jumlah uang yang ditransfer dalam bentuk ANGKA BULAT SAJA (misal: 1500000, tanpa titik/koma/simbol Rp).
-5. **catatan**: Catatan, berita transfer, ID transaksi, atau keterangan transaksi jika ada pada resi (contoh: "Operasional Site A", "Ref 123", dll). Jika tidak ada, isi string kosong "".
-6. **namaTujuan**: Nama lengkap pemilik rekening penerima / nama tujuan transfer (contoh: "BUDI SANTOSO", "PT DEPOTEL"). Jika tidak ada, isi string kosong "".
-7. **bankPenerima**: Nama bank atau e-wallet penerima/tujuan (contoh: "BRI", "BCA", "MANDIRI", "BNI", "DANA"). Jika tidak ada, isi string kosong "".
-8. **noReferensi**: Nomor referensi unik, No. Ref, ID Transaksi bank dari resi jika ada.
-
-Berikan analisis dalam format JSON murni.`;
-
-      // Candidate models ordered from primary to fallback models
-      const candidateModels = [
-        'gemini-flash-latest',
-        'gemini-3.1-flash-lite',
-      ];
-
-      let response: any = null;
-      let lastModelError: any = null;
-
-      for (const modelName of candidateModels) {
-        let attempts = 0;
-        const maxAttempts = 2;
-
-        while (attempts < maxAttempts) {
-          try {
-            attempts++;
-            response = await ai.models.generateContent({
-              model: modelName,
-              contents: {
-                parts: [
-                  {
-                    inlineData: {
-                      data: base64Data,
-                      mimeType: mimeType || 'image/jpeg',
-                    },
-                  },
-                  {
-                    text: prompt,
-                  },
-                ],
-              },
-              config: {
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    tanggalTransaksi: {
-                      type: Type.STRING,
-                      description: 'Tanggal transaksi dalam format YYYY-MM-DD (contoh: 2026-08-22)',
-                    },
-                    waktuTransaksi: {
-                      type: Type.STRING,
-                      description: 'Jam/waktu transaksi jika tertera pada resi (contoh: 14:30:25 atau 08:15)',
-                    },
-                    tanggalWaktuFormatted: {
-                      type: Type.STRING,
-                      description: 'Tanggal dan waktu gabungan sesuai resi (contoh: 22/08/2026, 14.30.25 atau 2026-08-22 14:30:25)',
-                    },
-                    nominalTransaksi: {
-                      type: Type.NUMBER,
-                      description: 'Nominal transfer murni dalam angka bulat (contoh: 1500000)',
-                    },
-                    catatan: {
-                      type: Type.STRING,
-                      description: 'Catatan, berita, atau keterangan transfer dari resi',
-                    },
-                    namaTujuan: {
-                      type: Type.STRING,
-                      description: 'Nama rekening penerima atau tujuan transfer',
-                    },
-                    bankPenerima: {
-                      type: Type.STRING,
-                      description: 'Nama bank atau provider e-wallet penerima',
-                    },
-                    noReferensi: {
-                      type: Type.STRING,
-                      description: 'Nomor referensi atau ID transaksi bank dari resi',
-                    },
-                  },
-                  required: ['tanggalTransaksi', 'nominalTransaksi', 'catatan', 'namaTujuan'],
-                },
-              },
-            });
-
-            if (response && response.text) {
-              break;
-            }
-          } catch (modelErr: any) {
-            lastModelError = modelErr;
-            const errMsg = String(modelErr?.message || '');
-            const isTransientOrQuota =
-              errMsg.includes('503') ||
-              errMsg.includes('UNAVAILABLE') ||
-              errMsg.includes('high demand') ||
-              errMsg.includes('429') ||
-              errMsg.includes('RESOURCE_EXHAUSTED') ||
-              errMsg.includes('quota');
-
-            if (isTransientOrQuota && attempts < maxAttempts) {
-              await new Promise((r) => setTimeout(r, 500));
-            } else {
-              break; // Try next model candidate
-            }
-          }
-        }
-
-        if (response && response.text) {
-          break;
-        }
-      }
-
-      if (!response || !response.text) {
-        throw lastModelError || new Error('Gagal memproses OCR resi dengan AI.');
-      }
-
-      const resultText = (response.text || '{}').trim();
-      let cleanText = resultText;
-      if (cleanText.startsWith('```')) {
-        cleanText = cleanText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
-      }
-
-      let parsedResult;
-      try {
-        parsedResult = JSON.parse(cleanText);
-      } catch {
-        parsedResult = {
-          tanggalTransaksi: new Date().toISOString().split('T')[0],
-          nominalTransaksi: 0,
-          catatan: '',
-          namaTujuan: '',
-          bankPenerima: '',
-          noReferensi: '',
-        };
-      }
-
-      return res.json({
-        success: true,
-        data: parsedResult,
-      });
-    } catch (error: any) {
-      console.error('Error in ocr-transfer-receipt:', error);
-      let userFacingError = error.message || 'Gagal membaca data resi transfer dengan AI.';
-      if (typeof userFacingError === 'string' && userFacingError.includes('{')) {
-        try {
-          const jsonMatch = userFacingError.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (parsed?.error?.message) {
-              userFacingError = parsed.error.message;
-            }
-          }
-        } catch {
-          // keep original
-        }
-      }
-
-      // Format quota / rate limit errors into clear user-friendly Indonesian
-      if (
-        userFacingError.includes('429') ||
-        userFacingError.toLowerCase().includes('quota exceeded') ||
-        userFacingError.includes('RESOURCE_EXHAUSTED') ||
-        userFacingError.toLowerCase().includes('rate limit')
-      ) {
-        userFacingError =
-          'Batas kuota gratis (Rate Limit 429) API Gemini tercapai. Silakan tunggu sekitar 30–45 detik lalu klik tombol "Coba Lagi OCR".';
       }
 
       return res.status(500).json({

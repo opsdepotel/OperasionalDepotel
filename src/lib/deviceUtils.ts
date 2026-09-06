@@ -248,31 +248,12 @@ export async function validateDeviceAccessAndBind(
       };
     }
 
-    // Auto-heal / Auto-update Device ID for this authenticated user on their mobile phone!
-    console.info(`Auto-binding updated Device ID (${currentDevId}) for mobile user ${user.email}`);
-    const updatedUser: UserProfile = {
-      ...user,
-      deviceId: currentDevId
-    };
-
-    syncDeviceIdToAllStores(currentDevId);
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(emailKey, currentDevId);
-      } catch (e) {}
-    }
-
-    if (saveProfileFn) {
-      try {
-        await saveProfileFn(updatedUser);
-      } catch (err) {
-        console.warn('Failed to auto-heal deviceId in sheet:', err);
-      }
-    }
-
+    // If device ID differs and does not match bound device:
+    // Reject access and require Admin to Reset Device ID
+    console.warn(`Device mismatch for mobile user ${user.email}. Bound: ${dbDeviceId}, Current: ${currentDevId}`);
     return {
-      success: true,
-      updatedUser
+      success: false,
+      errorMessage: `Akses Ditolak: Akun Anda telah terikat dengan perangkat lain (${dbDeviceId}). Untuk menggunakan HP ini (${currentDevId}), silakan hubungi Administrator untuk melakukan Reset Device ID.`
     };
   }
 }

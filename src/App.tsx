@@ -72,6 +72,9 @@ import { PwaInstallBanner } from './components/PwaInstallBanner';
 import { FinanceSharedReceiptModal } from './components/FinanceSharedReceiptModal';
 import { OP_TimeLine } from './components/OP_TimeLine';
 import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt, clearAllSharedReceipts } from './lib/sharedReceiptStorage';
+import { DevicePermissionsModal } from './components/DevicePermissionsModal';
+import { checkAllDevicePermissions, DevicePermissionsStatus } from './lib/devicePermissions';
+import { subscribeToPushNotifications, triggerPushNotification } from './lib/pushNotifications';
 
 // Icons
 import {
@@ -80,7 +83,7 @@ import {
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight, Edit2,
   Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel, X,
   Settings, LogOut, ShieldCheck, History, UserCheck, ShieldAlert, Share2, UploadCloud,
-  ChevronDown, ChevronUp
+  ChevronDown, ChevronUp, Smartphone
 } from 'lucide-react';
 
 export const isOpBiasaRequest = (req: BudgetRequest) => {
@@ -391,6 +394,65 @@ export default function App() {
     userRole: string;
   } | null>(null);
 
+  // Device Permissions State (Notification, Geolocation, Camera)
+  const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
+  const [permissionsStatus, setPermissionsStatus] = useState<DevicePermissionsStatus | null>(null);
+
+  // Monitor device permissions continuously & proactively
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkStatus = async (autoPrompt = false) => {
+      try {
+        const current = await checkAllDevicePermissions();
+        if (!isMounted) return;
+
+        setPermissionsStatus((prev) => {
+          // If previous was fully granted, and now revoked, immediately pop up modal!
+          if (prev && prev.allGranted && !current.allGranted) {
+            setIsPermissionsModalOpen(true);
+          }
+          return current;
+        });
+
+        // If not all granted on initial load, auto-prompt if not dismissed in this session
+        if (!current.allGranted && autoPrompt) {
+          const dismissedInSession = sessionStorage.getItem('op_permissions_modal_dismissed_session');
+          if (!dismissedInSession) {
+            setIsPermissionsModalOpen(true);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to check device permissions:', err);
+      }
+    };
+
+    // Run check on initial load
+    checkStatus(true);
+
+    // Re-check permissions when user refocuses window (e.g. returns from browser settings)
+    const handleFocus = () => {
+      checkStatus(false);
+    };
+
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+
+  // Proactively register Web Push Subscription for active user if notification permission is granted
+  useEffect(() => {
+    if (userProfile && userProfile.email && typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'granted') {
+        subscribeToPushNotifications(userProfile).catch((err) => {
+          console.warn('[WebPush] Background registration error:', err);
+        });
+      }
+    }
+  }, [userProfile?.email]);
+
   // Check for received shared receipts from IndexedDB
   useEffect(() => {
     let isMounted = true;
@@ -634,7 +696,7 @@ export default function App() {
         return req;
       });
 
-      const mergedProfs = mergeUserProfiles(allProfs, profiles, defaultUsers);
+      const mergedProfs = allProfs && allProfs.length > 0 ? allProfs : mergeUserProfiles(profiles, defaultUsers);
 
       const sortedReqs = synchronizedReqs.sort((a, b) => b.id.localeCompare(a.id));
       setRequests(sortedReqs); // Newest first
@@ -651,19 +713,6 @@ export default function App() {
       safeSetJson('op_app_cached_activities', allActs, 30);
       safeSetJson('op_app_cached_reset_device_logs', allResetLogs, 30);
       safeSetJson('op_app_cached_item_review_histories', allHistories, 50);
-
-      // Background: ensure all default users are present in Google Sheets DB
-      if (accessToken && sheetId) {
-        for (const defUser of defaultUsers) {
-          const existsInSheet = allProfs.some(
-            p => (p.email && p.email.toLowerCase() === defUser.email.toLowerCase()) ||
-                 (p.userId && p.userId.toLowerCase() === defUser.userId.toLowerCase())
-          );
-          if (!existsInSheet) {
-            saveUserProfile(accessToken, sheetId, defUser).catch(e => console.warn('Background sync default user to sheet error:', e));
-          }
-        }
-      }
 
       if (selectedRequest) {
         const freshReq = sortedReqs.find(r => r.id === selectedRequest.id);
@@ -922,7 +971,7 @@ export default function App() {
     let candidateProfiles: UserProfile[];
     if (fetchedProfs && fetchedProfs.length > 0) {
       // Live database data from Google Sheets is authoritative
-      candidateProfiles = mergeUserProfiles(fetchedProfs, defaultUsers);
+      candidateProfiles = fetchedProfs;
     } else {
       // Offline / fallback cache
       candidateProfiles = mergeUserProfiles(profiles, cachedProfsList, defaultUsers);
@@ -1166,7 +1215,7 @@ export default function App() {
         try {
           const freshProfiles = await fetchProfiles(currentToken, currentSheetId);
           if (freshProfiles && freshProfiles.length > 0) {
-            const merged = mergeUserProfiles(freshProfiles, profiles, defaultUsers);
+            const merged = freshProfiles;
             setProfiles(merged);
             safeSetJson('op_app_cached_profiles', merged);
             const freshUser = merged.find(p => p.email.toLowerCase() === updatedProfile.email.toLowerCase());
@@ -1452,6 +1501,19 @@ export default function App() {
     if (success !== null) {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
+
+      // Trigger Web Push Notification to Applicant
+      if (reviewBudgetReq.userEmail) {
+        const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
+        triggerPushNotification({
+          email: reviewBudgetReq.userEmail,
+          title: `Pengajuan UID ${reviewBudgetReq.id} Disetujui`,
+          body: `Pengajuan Anda telah disetujui oleh ${actorLabel}. Status: ${updated.status}.`,
+          requestId: reviewBudgetReq.id,
+          url: `/?search=${reviewBudgetReq.id}`,
+        }).catch(console.warn);
+      }
+
       setReviewBudgetReq(null);
       await handleManualRefresh();
     }
@@ -1498,6 +1560,19 @@ export default function App() {
     if (success !== null) {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
+
+      // Trigger Web Push Notification to Applicant
+      if (reviewBudgetReq.userEmail) {
+        const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
+        triggerPushNotification({
+          email: reviewBudgetReq.userEmail,
+          title: `Pengajuan UID ${reviewBudgetReq.id} Memerlukan Revisi`,
+          body: `Pengajuan Anda ditinjau oleh ${actorLabel}. Catatan: ${reason || '-'}`,
+          requestId: reviewBudgetReq.id,
+          url: `/?search=${reviewBudgetReq.id}`,
+        }).catch(console.warn);
+      }
+
       setReviewBudgetReq(null);
       await handleManualRefresh();
     }
@@ -1605,6 +1680,19 @@ export default function App() {
       await clearAllSharedReceipts();
       setSharedFilePrefill(null);
       setItemReviewHistories(prev => [historyLog, ...prev]);
+
+      // Trigger Web Push Notification to Applicant
+      if (transferReq.userEmail) {
+        const transferNominalFormatted = new Intl.NumberFormat('id-ID').format(transferredAmount);
+        triggerPushNotification({
+          email: transferReq.userEmail,
+          title: `Dana UID ${transferReq.id} Telah Ditransfer`,
+          body: `Finance telah mentransfer dana Rp ${transferNominalFormatted} untuk pengajuan ${transferReq.siteName || transferReq.siteId}.`,
+          requestId: transferReq.id,
+          url: `/?search=${transferReq.id}`,
+        }).catch(console.warn);
+      }
+
       setTransferReq(null);
       await handleManualRefresh();
     }
@@ -1650,6 +1738,18 @@ export default function App() {
       await clearAllSharedReceipts();
       setSharedFilePrefill(null);
       setItemReviewHistories(prev => [historyLog, ...prev]);
+
+      // Trigger Web Push Notification to Applicant
+      if (transferReq.userEmail) {
+        triggerPushNotification({
+          email: transferReq.userEmail,
+          title: `Pengajuan UID ${transferReq.id} Memerlukan Revisi Transfer`,
+          body: `Catatan Finance: ${reason || '-'}`,
+          requestId: transferReq.id,
+          url: `/?search=${transferReq.id}`,
+        }).catch(console.warn);
+      }
+
       setTransferReq(null);
       await handleManualRefresh();
     }
@@ -2086,6 +2186,42 @@ export default function App() {
     if (success !== null) {
       await handleManualRefresh();
     }
+  };
+
+  // Workflow Action: Administrator Reopen UID (CLOSED -> REPORTING) - Khusus UID Pengajuan (prefix OP-)
+  const handleReopenRequest = async (req: BudgetRequest): Promise<boolean> => {
+    if (!req.id.startsWith('OP-')) {
+      alert('Hanya UID Pengajuan (prefix OP-) yang dapat dibuka kembali (Reopen).');
+      return false;
+    }
+    if (!token || !spreadsheetId) {
+      alert('Sesi Google Sheets belum siap. Silakan periksa koneksi.');
+      return false;
+    }
+    const updatedReq: BudgetRequest = {
+      ...req,
+      status: RequestStatus.REPORTING
+    };
+    const success = await runGoogleAction(
+      () => updateBudgetRequest(token, spreadsheetId, updatedReq),
+      'Gagal mengubah status UID menjadi REPORTING.'
+    );
+    if (success !== null) {
+      // Update local state immediately
+      setRequests(prev => prev.map(r => r.id === req.id ? updatedReq : r));
+      try {
+        const cached = localStorage.getItem('op_app_cached_requests');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          const updated = parsed.map((r: any) => r.id === req.id ? updatedReq : r);
+          localStorage.setItem('op_app_cached_requests', JSON.stringify(updated));
+        }
+      } catch {}
+
+      await handleManualRefresh();
+      return true;
+    }
+    return false;
   };
 
   const handleUpdateTransferDetails = async (
@@ -2654,6 +2790,8 @@ export default function App() {
         activeView={activeView}
         onOpenDiomsLogo={() => setIsDiomsLogoModalOpen(true)}
         token={token}
+        permissionsStatus={permissionsStatus}
+        onOpenPermissions={() => setIsPermissionsModalOpen(true)}
       />
 
       {/* Main Container */}
@@ -2711,6 +2849,8 @@ export default function App() {
             externalError={loginRejectError}
             onClearExternalError={() => setLoginRejectError(null)}
             hasSharedReceipt={!!pendingSharedRecord}
+            permissionsStatus={permissionsStatus}
+            onOpenPermissions={() => setIsPermissionsModalOpen(true)}
           />
         ) : activeView === 'setup-profile' ? (
           <ProfileSetup
@@ -2883,27 +3023,30 @@ export default function App() {
                     >
                       <Settings className="w-4 h-4" />
                     </button>
-
-                    {/* Refresh Button */}
-                    <button
-                      onClick={handleManualRefresh}
-                      disabled={isLoading}
-                      className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-50 rounded-xl transition-all cursor-pointer"
-                      title="Sinkronisasi Data"
-                    >
-                      <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-blue-600' : ''}`} />
-                    </button>
-
-                    {/* User Sign Out */}
-                    <button
-                      onClick={handleLogout}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all cursor-pointer"
-                      title="Keluar"
-                    >
-                      <LogOut className="w-4 h-4" />
-                    </button>
                   </div>
                 </div>
+
+                {/* Device Permissions Warning Banner if any permission is incomplete */}
+                {permissionsStatus && !permissionsStatus.allGranted && (
+                  <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3 text-xs flex items-center justify-between gap-2.5 shadow-2xs animate-slide-up">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-2xs">
+                        <Smartphone className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-bold text-amber-950 text-xs truncate">Kesiapan Perangkat Belum Lengkap</p>
+                        <p className="text-[11px] text-amber-800 truncate">Izin Notifikasi, Lokasi, atau Kamera belum aktif</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsPermissionsModalOpen(true)}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shrink-0 cursor-pointer shadow-xs"
+                    >
+                      Aktifkan
+                    </button>
+                  </div>
+                )}
 
                 {/* Core Stats Section */}
                 <DashboardStats
@@ -2928,6 +3071,8 @@ export default function App() {
                   histories={itemReviewHistories}
                   activeTab={dashboardTab}
                   onSelectTab={handleSelectDashboardTab}
+                  onPurgeOrphanHistories={handlePurgeOrphanHistories}
+                  onReopenRequest={handleReopenRequest}
                 />
               </>
             ) : (
@@ -4394,6 +4539,26 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Device Permissions Modal (Notifikasi, Lokasi/GPS, Kamera) */}
+      <DevicePermissionsModal
+        isOpen={isPermissionsModalOpen}
+        onClose={() => {
+          setIsPermissionsModalOpen(false);
+          try {
+            sessionStorage.setItem('op_permissions_modal_dismissed_session', 'true');
+          } catch {}
+        }}
+        onPermissionsUpdated={(newStatus) => {
+          setPermissionsStatus(newStatus);
+          if (newStatus.allGranted) {
+            try {
+              sessionStorage.removeItem('op_permissions_modal_dismissed_session');
+            } catch {}
+          }
+        }}
+        userProfile={userProfile}
+      />
     </div>
   );
 }

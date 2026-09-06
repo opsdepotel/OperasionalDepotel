@@ -64,16 +64,31 @@ export function getServiceAccountAuth() {
     'https://www.googleapis.com/auth/drive.file'
   ];
 
-  const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  const serviceAccountJson = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   if (serviceAccountJson) {
     try {
-      const credentials = typeof serviceAccountJson === 'string' 
-        ? JSON.parse(serviceAccountJson) 
-        : serviceAccountJson;
+      let rawJson = serviceAccountJson;
+      if (!rawJson.startsWith('{') && !rawJson.startsWith('"')) {
+        // Might be base64 encoded in Vercel environment variables
+        try {
+          rawJson = Buffer.from(rawJson, 'base64').toString('utf-8');
+        } catch {}
+      }
+      if (rawJson.startsWith('"') && rawJson.endsWith('"')) {
+        rawJson = JSON.parse(rawJson);
+      }
+      const credentials = typeof rawJson === 'string' 
+        ? JSON.parse(rawJson) 
+        : rawJson;
       
+      let pKey = credentials.private_key || '';
+      if (pKey.includes('\\n')) {
+        pKey = pKey.replace(/\\n/g, '\n');
+      }
+
       const auth = new google.auth.JWT({
         email: credentials.client_email,
-        key: credentials.private_key,
+        key: pKey,
         scopes
       });
       cachedAuthClient = auth;
@@ -83,8 +98,8 @@ export function getServiceAccountAuth() {
     }
   }
 
-  const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  let privateKey = process.env.GOOGLE_PRIVATE_KEY;
+  const clientEmail = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
+  let privateKey = cleanEnvVal(process.env.GOOGLE_PRIVATE_KEY);
 
   if (clientEmail && privateKey) {
     // Handle escaped newlines in private key string if present

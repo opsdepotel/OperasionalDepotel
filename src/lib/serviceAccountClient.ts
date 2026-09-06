@@ -10,6 +10,7 @@ export interface ServiceAccountStatus {
 
 let cachedServiceToken: string | null = null;
 let cachedTokenExpiry = 0;
+let inFlightTokenPromise: Promise<{ token: string; email: string } | null> | null = null;
 
 /**
  * Checks if the backend server has a Google Service Account configured.
@@ -33,6 +34,7 @@ export async function checkServiceAccountStatus(): Promise<ServiceAccountStatus>
 /**
  * Retrieves a valid OAuth token from the Service Account backend.
  * Automatically caches for up to 50 minutes before requesting a fresh one.
+ * Deduplicates simultaneous calls to prevent duplicate token requests.
  */
 export async function fetchServiceAccountToken(): Promise<{ token: string; email: string } | null> {
   const now = Date.now();
@@ -41,25 +43,35 @@ export async function fetchServiceAccountToken(): Promise<{ token: string; email
     return { token: cachedServiceToken, email };
   }
 
-  try {
-    const res = await fetch('/api/google/token');
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.success && data.accessToken) {
-      cachedServiceToken = data.accessToken;
-      cachedTokenExpiry = now + 3000 * 1000; // ~50 minutes
-      if (data.serviceAccountEmail) {
-        localStorage.setItem('op_service_account_email', data.serviceAccountEmail);
-      }
-      return {
-        token: data.accessToken,
-        email: data.serviceAccountEmail || 'service-account@google.iam.gserviceaccount.com'
-      };
-    }
-  } catch (err) {
-    console.warn('Failed to fetch token from Service Account endpoint:', err);
+  if (inFlightTokenPromise) {
+    return inFlightTokenPromise;
   }
-  return null;
+
+  inFlightTokenPromise = (async () => {
+    try {
+      const res = await fetch('/api/google/token');
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.success && data.accessToken) {
+        cachedServiceToken = data.accessToken;
+        cachedTokenExpiry = Date.now() + 3000 * 1000; // ~50 minutes
+        if (data.serviceAccountEmail) {
+          localStorage.setItem('op_service_account_email', data.serviceAccountEmail);
+        }
+        return {
+          token: data.accessToken,
+          email: data.serviceAccountEmail || 'service-account@google.iam.gserviceaccount.com'
+        };
+      }
+    } catch (err) {
+      console.warn('Failed to fetch token from Service Account endpoint:', err);
+    } finally {
+      inFlightTokenPromise = null;
+    }
+    return null;
+  })();
+
+  return inFlightTokenPromise;
 }
 
 /**

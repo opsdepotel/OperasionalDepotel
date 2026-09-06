@@ -6,12 +6,16 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, Type } from '@google/genai';
 
+let aiClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY environment variable is missing.');
+  if (!aiClient) {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY environment variable is missing.');
+    }
+    aiClient = new GoogleGenAI({ apiKey });
   }
-  return new GoogleGenAI({ apiKey });
+  return aiClient;
 }
 
 async function fetchImageAsBase64(

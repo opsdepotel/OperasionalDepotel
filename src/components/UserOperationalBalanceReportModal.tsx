@@ -302,22 +302,28 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
       <div className="bg-white w-full max-w-[98vw] sm:max-w-[96vw] xl:max-w-[98vw] rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] my-auto animate-in fade-in zoom-in-95 duration-150">
         {/* Header Modal */}
-        <div className={`p-4 sm:p-5 flex items-center justify-between shrink-0 border-b text-white ${
+        <div className={`p-4 sm:p-5 flex items-center justify-between shrink-0 border-b ${
           onlyTalangan 
-            ? 'bg-gradient-to-r from-slate-900 via-amber-950 to-slate-900 border-amber-900/50' 
-            : 'bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 border-emerald-900/50'
+            ? 'bg-gradient-to-r from-amber-500/10 via-amber-50 to-amber-100/60 border-amber-200/80' 
+            : 'bg-gradient-to-r from-emerald-500/10 via-emerald-50 to-teal-100/60 border-emerald-200/80'
         }`}>
           <div className="flex items-center gap-3 min-w-0">
-            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-md border ${
-              onlyTalangan ? 'bg-amber-600 border-amber-400/30' : 'bg-emerald-600 border-emerald-400/30'
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-white shrink-0 shadow-sm ring-4 ${
+              onlyTalangan 
+                ? 'bg-gradient-to-br from-amber-500 to-amber-600 ring-amber-500/15' 
+                : 'bg-gradient-to-br from-emerald-500 to-emerald-600 ring-emerald-500/15'
             }`}>
-              <FileSpreadsheet className={`w-5 h-5 ${onlyTalangan ? 'text-amber-100' : 'text-emerald-100'}`} />
+              <FileSpreadsheet className="w-5 h-5 text-white" />
             </div>
             <div className="min-w-0">
-              <h3 className="font-display font-bold text-sm sm:text-base text-white tracking-wide truncate">
+              <h3 className={`font-display font-bold text-sm sm:text-base tracking-wide truncate ${
+                onlyTalangan ? 'text-amber-950' : 'text-emerald-950'
+              }`}>
                 {onlyTalangan ? 'Laporan Transaksi Khusus Dana Talangan (OPT-) User' : 'Laporan Transaksi Saldo Operasional User'}
               </h3>
-              <p className={`text-[11px] font-medium mt-0.5 truncate ${onlyTalangan ? 'text-amber-200/80' : 'text-emerald-200/80'}`}>
+              <p className={`text-[11px] font-semibold mt-0.5 truncate ${
+                onlyTalangan ? 'text-amber-800/80' : 'text-emerald-800/80'
+              }`}>
                 {userProfile?.nama || userEmail} • {formatDivisiSubDivisi(userProfile?.divisi, userProfile?.subDivisi)}
               </p>
             </div>
@@ -325,7 +331,11 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
           <button
             type="button"
             onClick={onClose}
-            className="w-9 h-9 rounded-2xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white flex items-center justify-center transition-all cursor-pointer shrink-0"
+            className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all cursor-pointer shrink-0 border shadow-2xs ${
+              onlyTalangan
+                ? 'bg-white hover:bg-amber-100/80 text-amber-800 border-amber-200/80'
+                : 'bg-white hover:bg-emerald-100/80 text-emerald-800 border-emerald-200/80'
+            }`}
             title="Tutup Modal"
           >
             <X className="w-5 h-5" />
@@ -345,15 +355,15 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
             <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-xs">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="bg-slate-900 text-white font-bold uppercase tracking-wider text-[10px]">
-                    <th className="py-3.5 px-3 text-center w-12 border-b border-slate-800">No</th>
-                    <th className="py-3.5 px-3 border-b border-slate-800">Tanggal</th>
-                    <th className="py-3.5 px-3 border-b border-slate-800">UID</th>
-                    <th className="py-3.5 px-3 text-right border-b border-slate-800">Pengajuan</th>
-                    <th className="py-3.5 px-3 text-right border-b border-slate-800">Ditransfer</th>
-                    <th className="py-3.5 px-3 text-right border-b border-slate-800">Dilaporkan</th>
-                    <th className="py-3.5 px-3 text-right border-b border-slate-800">Lebih / Sisa</th>
-                    <th className="py-3.5 px-3 text-center border-b border-slate-800">Status</th>
+                  <tr className="bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100 text-slate-700 font-bold uppercase tracking-wider text-[10px]">
+                    <th className="py-3.5 px-3 text-center w-12 border-b border-slate-200">No</th>
+                    <th className="py-3.5 px-3 border-b border-slate-200">Tanggal</th>
+                    <th className="py-3.5 px-3 border-b border-slate-200">UID</th>
+                    <th className="py-3.5 px-3 text-right border-b border-slate-200">Pengajuan</th>
+                    <th className="py-3.5 px-3 text-right border-b border-slate-200">Ditransfer</th>
+                    <th className="py-3.5 px-3 text-right border-b border-slate-200">Dilaporkan</th>
+                    <th className="py-3.5 px-3 text-right border-b border-slate-200">Lebih / Sisa</th>
+                    <th className="py-3.5 px-3 text-center border-b border-slate-200">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-150 bg-white">
