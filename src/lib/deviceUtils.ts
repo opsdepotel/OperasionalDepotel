@@ -70,8 +70,9 @@ export function generateHardwareFingerprint(): string {
  * 2. localStorage backup ('op_app_device_id_backup')
  * 3. sessionStorage
  * 4. Document Cookie (10-year expiry)
+ * 5. IndexedDB ('DIOMS_DEVICE_DB') for extreme durability against Safari/iOS ITP resets
  */
-export function syncDeviceIdToAllStores(deviceId: string): void {
+export function syncDeviceIdToAllStores(deviceId: string, userEmail?: string): void {
   if (typeof window === 'undefined' || !deviceId || !deviceId.trim()) return;
   const KEY = 'op_app_device_id';
   const BACKUP_KEY = 'op_app_device_id_backup';
@@ -81,9 +82,158 @@ export function syncDeviceIdToAllStores(deviceId: string): void {
     localStorage.setItem(BACKUP_KEY, deviceId);
     sessionStorage.setItem(KEY, deviceId);
     setCookie(KEY, deviceId, 3650);
+    if (userEmail && userEmail.trim()) {
+      localStorage.setItem(`op_app_user_bound_device_${userEmail.toLowerCase().trim()}`, deviceId);
+    }
   } catch (e) {
     console.warn('Storage sync error:', e);
   }
+
+  // Non-blocking asynchronous sync to IndexedDB for Safari/iOS persistence
+  saveDeviceIdToIndexedDB(deviceId, userEmail).catch(() => {});
+}
+
+/**
+ * Opens or initializes the persistent IndexedDB for Device ID metadata.
+ */
+function openDeviceDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined' || !('indexedDB' in window)) {
+      reject(new Error('IndexedDB not supported in this browser'));
+      return;
+    }
+    try {
+      const request = indexedDB.open('DIOMS_DEVICE_DB', 1);
+      request.onupgradeneeded = (event) => {
+        const db = (event.target as IDBOpenDBRequest).result;
+        if (!db.objectStoreNames.contains('device_meta')) {
+          db.createObjectStore('device_meta', { keyPath: 'key' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('Failed to open IndexedDB'));
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+/**
+ * Reads persistent Device ID from IndexedDB.
+ */
+export async function getDeviceIdFromIndexedDB(): Promise<string | null> {
+  try {
+    const db = await openDeviceDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(['device_meta'], 'readonly');
+      const store = tx.objectStore('device_meta');
+      const req = store.get('op_device_id');
+      req.onsuccess = () => {
+        const res = req.result;
+        if (res && res.value && typeof res.value === 'string' && res.value.trim()) {
+          resolve(res.value.trim());
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads user-specific bound Device ID from IndexedDB.
+ */
+export async function getUserBoundDeviceIdFromIndexedDB(email: string): Promise<string | null> {
+  if (!email || !email.trim()) return null;
+  try {
+    const db = await openDeviceDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(['device_meta'], 'readonly');
+      const store = tx.objectStore('device_meta');
+      const req = store.get(`bound_device_${email.toLowerCase().trim()}`);
+      req.onsuccess = () => {
+        const res = req.result;
+        if (res && res.value && typeof res.value === 'string' && res.value.trim()) {
+          resolve(res.value.trim());
+        } else {
+          resolve(null);
+        }
+      };
+      req.onerror = () => resolve(null);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Saves persistent Device ID to IndexedDB.
+ */
+export async function saveDeviceIdToIndexedDB(deviceId: string, userEmail?: string): Promise<void> {
+  if (!deviceId || !deviceId.trim()) return;
+  try {
+    const db = await openDeviceDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(['device_meta'], 'readwrite');
+      const store = tx.objectStore('device_meta');
+      store.put({ key: 'op_device_id', value: deviceId.trim(), updatedAt: Date.now() });
+      if (userEmail && userEmail.trim()) {
+        store.put({
+          key: `bound_device_${userEmail.toLowerCase().trim()}`,
+          value: deviceId.trim(),
+          updatedAt: Date.now()
+        });
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    // Ignore storage quota or disabled errors silently
+  }
+}
+
+/**
+ * Asynchronously gets or generates a persistent Device ID with IndexedDB multi-layer fallback.
+ * Essential for Safari/iPhone where localStorage is often wiped by ITP or session changes.
+ */
+export async function getOrCreateDeviceIdAsync(userEmail?: string): Promise<string> {
+  if (typeof window === 'undefined') return '';
+
+  const KEY = 'op_app_device_id';
+  const BACKUP_KEY = 'op_app_device_id_backup';
+
+  // 1. Read from multi-layer synchronous storage
+  let deviceId =
+    localStorage.getItem(KEY) ||
+    getCookie(KEY) ||
+    sessionStorage.getItem(KEY) ||
+    localStorage.getItem(BACKUP_KEY);
+
+  // 2. If missing from synchronous storage, attempt recovery from persistent IndexedDB
+  if (!deviceId || !deviceId.trim()) {
+    const idbDeviceId = await getDeviceIdFromIndexedDB();
+    if (idbDeviceId) {
+      deviceId = idbDeviceId;
+    } else if (userEmail) {
+      const userBoundIdb = await getUserBoundDeviceIdFromIndexedDB(userEmail);
+      if (userBoundIdb) {
+        deviceId = userBoundIdb;
+      }
+    }
+  }
+
+  // 3. If completely missing from all storage, generate new hardware fingerprint
+  if (!deviceId || !deviceId.trim()) {
+    deviceId = generateHardwareFingerprint();
+  }
+
+  // 4. Re-sync to all storage layers (localStorage, cookie, sessionStorage, IndexedDB)
+  syncDeviceIdToAllStores(deviceId, userEmail);
+
+  return deviceId;
 }
 
 /**
@@ -111,6 +261,97 @@ export function getOrCreateDeviceId(): string {
   syncDeviceIdToAllStores(deviceId);
 
   return deviceId;
+}
+
+export interface InAppBrowserInfo {
+  isInApp: boolean;
+  name: string;
+  isIos: boolean;
+}
+
+/**
+ * Detects if the current user is accessing the app from an In-App Browser (e.g. WhatsApp, Instagram, Telegram, LINE).
+ * In-app browsers have isolated/volatile storage that wipes Device ID when closed.
+ */
+export function getInAppBrowserInfo(): InAppBrowserInfo {
+  if (typeof window === 'undefined' || !navigator) {
+    return { isInApp: false, name: '', isIos: false };
+  }
+
+  const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
+  const isIos = /iPhone|iPad|iPod/i.test(ua);
+
+  let name = '';
+  if (/WhatsApp/i.test(ua)) {
+    name = 'WhatsApp';
+  } else if (/Instagram/i.test(ua)) {
+    name = 'Instagram';
+  } else if (/FBAN|FBAV|Facebook/i.test(ua)) {
+    name = 'Facebook';
+  } else if (/Telegram/i.test(ua)) {
+    name = 'Telegram';
+  } else if (/Line\//i.test(ua)) {
+    name = 'LINE';
+  } else if (/MicroMessenger/i.test(ua)) {
+    name = 'WeChat';
+  } else if (/TikTok/i.test(ua)) {
+    name = 'TikTok';
+  } else if (/GSA\//i.test(ua)) {
+    name = 'Google App';
+  } else if (isIos && /AppleWebKit/i.test(ua) && !/Safari/i.test(ua)) {
+    name = 'In-App Webview';
+  }
+
+  return {
+    isInApp: Boolean(name),
+    name: name || 'In-App Browser',
+    isIos,
+  };
+}
+
+/**
+ * Detects if Safari / browser is currently operating in Private Browsing / Incognito mode.
+ */
+export async function detectPrivateBrowsing(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+
+  try {
+    const isSafari = /Safari/i.test(navigator.userAgent) && !/Chrome|CriOS|FxiOS|EdgiOS|Android/i.test(navigator.userAgent);
+
+    // Method 1: Storage estimate quota check (Safari Private Mode in modern iOS severely limits quota, usually < 120MB)
+    if (navigator.storage && navigator.storage.estimate) {
+      const estimate = await navigator.storage.estimate();
+      const quota = estimate.quota || 0;
+      if (isSafari && quota > 0 && quota < 130 * 1024 * 1024) {
+        return true;
+      }
+    }
+
+    // Method 2: Test IndexedDB transaction in private browsing
+    return new Promise((resolve) => {
+      try {
+        if (!('indexedDB' in window)) {
+          resolve(false);
+          return;
+        }
+        const testReq = indexedDB.open('__pvt_test_db');
+        testReq.onsuccess = () => {
+          try {
+            testReq.result.close();
+            indexedDB.deleteDatabase('__pvt_test_db');
+          } catch {}
+          resolve(false);
+        };
+        testReq.onerror = () => {
+          resolve(true);
+        };
+      } catch {
+        resolve(true);
+      }
+    });
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -146,10 +387,12 @@ export async function validateDeviceAccessAndBind(
     };
   }
 
-  // 3. Check Device ID binding when accessing from a mobile device for Mobile-only user
-  let currentDeviceId = getOrCreateDeviceId();
+  // 3. Check Device ID binding using async multi-layer IndexedDB recovery
+  let currentDeviceId = await getOrCreateDeviceIdAsync(user.email);
   const emailKey = `op_app_user_bound_device_${user.email.toLowerCase().trim()}`;
   const localSavedBoundDevId = typeof localStorage !== 'undefined' ? localStorage.getItem(emailKey) : null;
+  const idbSavedBoundDevId = await getUserBoundDeviceIdFromIndexedDB(user.email);
+  const idbGeneralDeviceId = await getDeviceIdFromIndexedDB();
 
   // Check if DB already has a deviceId for this user
   if (!user.deviceId || !user.deviceId.trim()) {
@@ -186,11 +429,7 @@ export async function validateDeviceAccessAndBind(
       deviceId: currentDeviceId
     };
 
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(emailKey, currentDeviceId);
-      } catch (e) {}
-    }
+    syncDeviceIdToAllStores(currentDeviceId, user.email);
 
     if (saveProfileFn) {
       try {
@@ -211,21 +450,24 @@ export async function validateDeviceAccessAndBind(
 
     if (dbDeviceId.toLowerCase() === currentDevId.toLowerCase()) {
       // Direct match!
-      if (typeof localStorage !== 'undefined') {
-        try {
-          localStorage.setItem(emailKey, dbDeviceId);
-        } catch (e) {}
-      }
+      syncDeviceIdToAllStores(dbDeviceId, user.email);
       return {
         success: true,
         updatedUser: user
       };
     }
 
-    // Check Auto-Recovery:
-    // If localSavedBoundDevId matches dbDeviceId, restore dbDeviceId to current device stores
-    if (localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase()) {
-      syncDeviceIdToAllStores(dbDeviceId);
+    // Check Multi-Layer Auto-Recovery for Safari/iOS:
+    // 1. From localStorage email key
+    // 2. From IndexedDB user-bound key
+    // 3. From IndexedDB general device_id
+    const matchLocal = localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase();
+    const matchIdbUser = idbSavedBoundDevId && idbSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase();
+    const matchIdbGeneral = idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === dbDeviceId.toLowerCase();
+
+    if (matchLocal || matchIdbUser || matchIdbGeneral) {
+      console.log(`[DeviceUtils] Auto-Recovery berhasil me-restore Device ID (${dbDeviceId}) untuk ${user.email}`);
+      syncDeviceIdToAllStores(dbDeviceId, user.email);
       return {
         success: true,
         updatedUser: user
@@ -233,8 +475,7 @@ export async function validateDeviceAccessAndBind(
     }
 
     // If local device ID differs because storage was cleared or browser updated:
-    // Since user successfully passed password authentication on a mobile device,
-    // check if dbDeviceId is NOT bound to any OTHER active user in allProfiles
+    // Check if currentDevId is already bound to another user
     const conflictUser = allProfiles?.find(p =>
       p.email.toLowerCase() !== user.email.toLowerCase() &&
       p.deviceId?.trim().toLowerCase() === currentDevId.toLowerCase()

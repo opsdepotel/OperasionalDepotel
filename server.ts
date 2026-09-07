@@ -212,14 +212,15 @@ ${activityInfo ? `Informasi Kegiatan yang Dilaporkan: ${JSON.stringify(activityI
 Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
 
       // Candidate models for multimodal vision analysis in order of priority & validity
+      // gemini-3.1-flash-lite has higher separate rate limits and faster response
       const candidateModels = [
-        'gemini-flash-latest',
         'gemini-3.1-flash-lite',
+        'gemini-flash-latest',
       ];
       let response: any = null;
       let lastModelError: any = null;
 
-      // Try candidate models with fast retry & fallback
+      // Try candidate models with backoff retry & fallback
       for (const modelName of candidateModels) {
         let attempts = 0;
         const maxAttempts = 2;
@@ -475,9 +476,11 @@ Instruksi Ekstraksi & Verifikasi:
 6. Berikan ringkasan singkat dalam Bahasa Indonesia yang menjelaskan apakah nominal sesuai atau tidak, serta sebutkan angka perbandingannya.
 7. Berikan catatanAnalisis yang terperinci.`;
 
+      // Candidate models for multimodal vision analysis in order of priority & separate quotas
+      // gemini-3.1-flash-lite has separate, generous rate limit bucket compared to gemini-flash-latest / 3.8
       const candidateModels = [
-        'gemini-flash-latest',
         'gemini-3.1-flash-lite',
+        'gemini-flash-latest',
       ];
 
       let response: any = null;

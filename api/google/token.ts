@@ -15,6 +15,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const status = getGoogleAuthStatus();
     return res.status(200).json({
       success: true,
+      token: tokenResult.token,
       accessToken: tokenResult.token,
       authMode: tokenResult.type,
       serviceAccountEmail: status.serviceAccountEmail

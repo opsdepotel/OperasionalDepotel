@@ -640,14 +640,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
     const userEmailToMatch = (userProfile?.email || email || '').toLowerCase();
 
-    const hasRefilledToday = requests.some(r => {
+    const todayRefillCount = requests.filter(r => {
       const isBbmReq = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
       if (!isBbmReq) return false;
       if (r.status === RequestStatus.CANCELLED) return false;
       const isSameUser = r.userEmail.toLowerCase() === userEmailToMatch;
       const isSameDate = r.tanggalPemakaian === todayStr || (r.createdAt && r.createdAt.substring(0, 10) === todayStr);
       return isSameUser && isSameDate;
-    });
+    }).length;
 
     return (
       <button
@@ -665,16 +665,16 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               Pengisian BBM Duren Sawit
             </h3>
             <p className="text-[10px] text-slate-500 font-medium mt-0.5">
-              {hasRefilledToday
-                ? `Telah melakukan pengisian BBM di POM Duren Sawit hari ini (${todayStr}). Klik untuk melihat daftar.`
+              {todayRefillCount > 0
+                ? `Tercatat ${todayRefillCount}x pengisian hari ini (${todayStr}). Klik untuk lihat / tambah pengisian.`
                 : 'Klik untuk melihat daftar & catat pengisian BBM Duren Sawit.'}
             </p>
           </div>
         </div>
-        {hasRefilledToday ? (
+        {todayRefillCount > 0 ? (
           <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2.5 py-1 rounded-lg shrink-0 border border-emerald-200 flex items-center gap-1">
             <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-            Terisi
+            {todayRefillCount}x Terisi
           </span>
         ) : (
           <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2.5 py-1 rounded-lg shrink-0 border border-amber-200">
@@ -2299,11 +2299,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <RotateCcw className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-amber-600 transition-colors flex items-center gap-2">
+              <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-amber-600 transition-colors">
                 Reopen UID
-                <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full uppercase">
-                  {requests.filter(r => r.status === RequestStatus.CLOSED && r.id.startsWith('OP-')).length} Closed (OP-)
-                </span>
               </h3>
               <p className="text-[11px] text-slate-500 font-medium mt-0.5">
                 Buka kembali status UID CLOSED menjadi REPORTING khusus UID Pengajuan (prefix OP-).

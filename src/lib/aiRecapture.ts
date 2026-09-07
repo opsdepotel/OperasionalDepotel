@@ -134,8 +134,8 @@ ${payload.activityInfo ? `Informasi Kegiatan yang Dilaporkan: ${JSON.stringify(p
 Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
 
   const candidateModels = [
-    'gemini-flash-latest',
     'gemini-3.1-flash-lite',
+    'gemini-flash-latest',
   ];
 
   let response: any = null;

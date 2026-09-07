@@ -4,7 +4,7 @@
  */
 
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from '../types';
-import { uploadReceiptViaServiceAccount } from './serviceAccountClient';
+import { uploadReceiptViaServiceAccount, fetchServiceAccountToken, invalidateServiceAccountToken } from './serviceAccountClient';
 
 const originalFetch = window.fetch;
 async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
@@ -12,10 +12,32 @@ async function fetchWithTimeout(resource: string | Request, options: RequestInit
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
   try {
-    const response = await originalFetch(resource, {
+    let response = await originalFetch(resource, {
       ...restOptions,
       signal: controller.signal
     });
+
+    // Auto-recovery for Google API 401 Unauthorized (Expired / stale access token)
+    const resourceUrl = typeof resource === 'string' ? resource : (resource as any)?.url || '';
+    if (response.status === 401 && resourceUrl.includes('googleapis.com')) {
+      console.warn('[GoogleAPI] Request returned 401 Unauthorized. Auto-refreshing token from server...');
+      invalidateServiceAccountToken();
+      try {
+        const fresh = await fetchServiceAccountToken(true);
+        if (fresh && fresh.token) {
+          const newHeaders = new Headers(restOptions.headers || {});
+          newHeaders.set('Authorization', `Bearer ${fresh.token}`);
+          response = await originalFetch(resource, {
+            ...restOptions,
+            headers: newHeaders,
+            signal: controller.signal
+          });
+        }
+      } catch (tokenRefreshErr) {
+        console.warn('[GoogleAPI] Auto-refresh retry failed:', tokenRefreshErr);
+      }
+    }
+
     return response;
   } catch (err: any) {
     if (err.name === 'AbortError') {
@@ -1182,7 +1204,12 @@ async function releaseLock(token: string, spreadsheetId: string): Promise<void> 
 }
 
 // Create Budget Request
-export async function createBudgetRequest(token: string, spreadsheetId: string, req: BudgetRequest): Promise<void> {
+export async function createBudgetRequest(
+  token: string,
+  spreadsheetId: string,
+  req: BudgetRequest,
+  options?: { skipLock?: boolean }
+): Promise<void> {
   if (token === 'mock_demo_token') {
     const list = getMockData<BudgetRequest[]>('mock_db_pengajuan', []);
     const todayStr = req.tanggalPemakaian.replace(/-/g, '');
@@ -1200,14 +1227,17 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
     return;
   }
 
+  const shouldLock = !options?.skipLock;
   const tempLockId = Math.random().toString(36).substring(2, 9);
   
-  // Acquire transactional lock
-  await acquireLock(token, spreadsheetId, tempLockId);
+  if (shouldLock) {
+    // Acquire transactional lock
+    await acquireLock(token, spreadsheetId, tempLockId);
+  }
   
   try {
-    // 1. Fetch all existing UIDs to ensure absolute uniqueness under lock
-    const checkRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:A1000`, {
+    // 1. Fetch all existing UIDs to ensure absolute uniqueness under lock (unbounded column A)
+    const checkRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A:A`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     
@@ -1265,7 +1295,7 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
       Timestamp: nowTimestamp
     });
 
-    const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:append?valueInputOption=USER_ENTERED`, {
+    let appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:append?valueInputOption=USER_ENTERED`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -1276,13 +1306,30 @@ export async function createBudgetRequest(token: string, spreadsheetId: string, 
       })
     });
 
+    // Auto-retry once on transient network/sheet error
+    if (!appendRes.ok) {
+      await new Promise(resolve => setTimeout(resolve, 600));
+      appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:append?valueInputOption=USER_ENTERED`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          values: [rowData]
+        })
+      });
+    }
+
     if (!appendRes.ok) {
       const txt = await appendRes.text();
       throw new Error(`Gagal menyimpan pengajuan: ${txt}`);
     }
   } finally {
-    // Always release lock
-    await releaseLock(token, spreadsheetId);
+    if (shouldLock) {
+      // Always release lock if locked
+      await releaseLock(token, spreadsheetId);
+    }
   }
 }
 
@@ -1440,7 +1487,7 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
     Timestamp: nowTimestamp
   });
 
-  const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:append?valueInputOption=USER_ENTERED`, {
+  let appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:append?valueInputOption=USER_ENTERED`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1450,6 +1497,21 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
       values: [rowData]
     })
   });
+
+  // Auto-retry once on transient network error
+  if (!appendRes.ok) {
+    await new Promise(resolve => setTimeout(resolve, 600));
+    appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:append?valueInputOption=USER_ENTERED`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        values: [rowData]
+      })
+    });
+  }
 
   if (!appendRes.ok) {
     throw new Error('Gagal menyimpan item laporan.');
@@ -1572,8 +1634,8 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
     return;
   }
 
-  // Real sync
-  const checkRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:A1000`, {
+  // Real sync - check all existing activity IDs (unbounded column A)
+  const checkRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A:A`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   

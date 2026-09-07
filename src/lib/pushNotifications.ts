@@ -238,6 +238,24 @@ export async function sendTestPushNotification(
 }
 
 /**
+ * Helper to check if a request or notification is for BBM Duren Sawit.
+ * In accordance with business rules, BBM Duren Sawit transactions are excluded from push notifications.
+ */
+export function isBbmDurenSawitNotification(params: {
+  requestId?: string;
+  title?: string;
+  body?: string;
+  extra?: Record<string, any>;
+}): boolean {
+  if (params.extra?.isBbmDurenSawit || params.extra?.type === 'BBM_DUREN_SAWIT') return true;
+  const reqId = (params.requestId || '').toUpperCase();
+  if (reqId.startsWith('BBMDS') || reqId.includes('DUREN') || reqId.includes('BBM-DS')) return true;
+  const text = `${params.title || ''} ${params.body || ''}`.toUpperCase();
+  if (text.includes('DUREN SAWIT') || text.includes('BBMDS')) return true;
+  return false;
+}
+
+/**
  * Triggers a push notification to a recipient user, role, or broadcast.
  */
 export async function triggerPushNotification(params: {
@@ -250,6 +268,12 @@ export async function triggerPushNotification(params: {
   url?: string;
   extra?: Record<string, any>;
 }): Promise<{ success: boolean; sent?: number; failed?: number; error?: string }> {
+  // Exclude BBM Duren Sawit from sending push notifications
+  if (isBbmDurenSawitNotification(params)) {
+    console.log('[WebPush Client] Push notifikasi dikecualikan untuk BBM Duren Sawit.');
+    return { success: true, sent: 0, failed: 0 };
+  }
+
   try {
     const res = await fetch('/api/push/send', {
       method: 'POST',

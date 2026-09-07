@@ -202,7 +202,7 @@ Instruksi Ekstraksi & Verifikasi:
 6. Berikan ringkasan singkat dalam Bahasa Indonesia yang menjelaskan apakah nominal sesuai atau tidak, serta sebutkan angka perbandingannya.
 7. Berikan catatanAnalisis yang terperinci.`;
 
-  const candidateModels = ['gemini-flash-latest', 'gemini-3.1-flash-lite'];
+  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest'];
   let responseText = '';
   let lastErr: any = null;
 

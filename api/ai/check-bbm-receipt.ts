@@ -204,8 +204,8 @@ Instruksi Ekstraksi & Verifikasi:
 7. Berikan catatanAnalisis yang terperinci.`;
 
     const candidateModels = [
-      'gemini-flash-latest',
       'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
     ];
 
     let response: any = null;

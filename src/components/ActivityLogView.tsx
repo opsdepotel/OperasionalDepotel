@@ -1040,7 +1040,12 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           errStr.includes('offline') || 
           errStr.includes('koneksi') ||
           errStr.includes('failed') ||
-          errStr.includes('timeout');
+          errStr.includes('timeout') ||
+          errStr.includes('401') ||
+          errStr.includes('unauthenticated') ||
+          errStr.includes('unauthorized') ||
+          errStr.includes('authentication credentials') ||
+          errStr.includes('invalid_grant');
 
         if (isNetworkErr) {
           await saveOfflineActivity(actPayload, photoPreview || photoFile);

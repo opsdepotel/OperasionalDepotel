@@ -24,7 +24,8 @@ import {
   DollarSign,
   ShieldCheck,
   ExternalLink,
-  Info
+  Info,
+  Camera
 } from 'lucide-react';
 import { ZoomableImage } from './ZoomableImage';
 
@@ -55,6 +56,26 @@ export const AiBbmReceiptModal: React.FC<AiBbmReceiptModalProps> = ({
 }) => {
   useBackHandler(isOpen, onClose, 'aiBbmReceiptModal');
 
+  // Resolve best usable image URL for Google Drive preview
+  let effectiveFileId = (fileId || '').trim();
+  if (!effectiveFileId && photoUrl) {
+    const m = photoUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+              photoUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/) ||
+              photoUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+    if (m && m[1]) effectiveFileId = m[1];
+  }
+
+  const resolvedDisplayPhoto = photoUrl?.startsWith('data:')
+    ? photoUrl
+    : effectiveFileId && !effectiveFileId.startsWith('BBM_NOTA_')
+      ? `https://drive.google.com/thumbnail?sz=w1200&id=${effectiveFileId}`
+      : photoUrl;
+
+  const [currentImgSrc, setCurrentImgSrc] = React.useState<string>(resolvedDisplayPhoto || '');
+  React.useEffect(() => {
+    setCurrentImgSrc(resolvedDisplayPhoto || '');
+  }, [resolvedDisplayPhoto]);
+
   if (!isOpen || !request) return null;
 
   const formatIDR = (num?: number | null) => {
@@ -67,6 +88,12 @@ export const AiBbmReceiptModal: React.FC<AiBbmReceiptModalProps> = ({
   };
 
   const nominalInputVal = usageItem?.nominal || request.jumlahPengajuan || 0;
+
+  const directDriveUrl = effectiveFileId && !effectiveFileId.startsWith('BBM_NOTA_')
+    ? `https://drive.google.com/file/d/${effectiveFileId}/view`
+    : photoUrl?.startsWith('http')
+      ? photoUrl
+      : undefined;
 
   return createPortal(
     <div className="fixed inset-0 z-[1000000] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
@@ -314,24 +341,71 @@ export const AiBbmReceiptModal: React.FC<AiBbmReceiptModalProps> = ({
               </div>
 
               {/* Photo Preview Card */}
-              {photoUrl && (
+              {resolvedDisplayPhoto && (
                 <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-2xs space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                       <Fuel className="w-3.5 h-3.5 text-amber-600" />
                       <span>Foto Nota yang Diperiksa</span>
                     </span>
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      {result.checkedAt ? new Date(result.checkedAt).toLocaleTimeString('id-ID') : ''}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {directDriveUrl && (
+                        <a
+                          href={directDriveUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 px-2 py-0.5 bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-bold rounded-md border border-amber-200/80 transition-colors"
+                          title="Buka foto nota ukuran penuh di Google Drive"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Buka Foto Asli</span>
+                        </a>
+                      )}
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {result.checkedAt ? new Date(result.checkedAt).toLocaleTimeString('id-ID') : ''}
+                      </span>
+                    </div>
                   </div>
-                  <div className="bg-slate-900 rounded-xl overflow-hidden p-2 flex justify-center">
+                  <div className="bg-slate-900 rounded-xl overflow-hidden p-2 flex flex-col items-center justify-center min-h-[160px]">
                     <ZoomableImage
-                      src={photoUrl}
+                      src={currentImgSrc}
                       alt="Foto Nota BBM Duren Sawit"
                       darkTheme={true}
-                      maxHeightClass="max-h-[35vh]"
+                      maxHeightClass="max-h-[40vh]"
+                      referrerPolicy="no-referrer"
+                      onError={() => {
+                        // If current was thumbnail, try direct lh3 googleusercontent or uc?export=view
+                        if (effectiveFileId && currentImgSrc.includes('thumbnail?sz=')) {
+                          setCurrentImgSrc(`https://lh3.googleusercontent.com/d/${effectiveFileId}`);
+                        } else if (effectiveFileId && currentImgSrc.includes('googleusercontent.com')) {
+                          setCurrentImgSrc(`https://drive.google.com/uc?export=view&id=${effectiveFileId}`);
+                        } else {
+                          const fallback = document.getElementById('bbm-nota-photo-fallback');
+                          if (fallback) fallback.classList.remove('hidden');
+                        }
+                      }}
                     />
+                    <div 
+                      id="bbm-nota-photo-fallback" 
+                      className="hidden flex flex-col items-center justify-center text-center p-6 text-slate-300 space-y-2"
+                    >
+                      <Camera className="w-10 h-10 text-slate-500" />
+                      <p className="text-xs font-bold text-white">Pratinjau Foto Tidak Dapat Dimuat Langsung</p>
+                      <p className="text-[10px] text-slate-400 max-w-[260px]">
+                        Google Drive membatasi thumbnail langsung. Klik tombol di bawah untuk melihat foto nota asli.
+                      </p>
+                      {directDriveUrl && (
+                        <a
+                          href={directDriveUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                          <span>Buka Foto di Tab Baru</span>
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

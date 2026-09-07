@@ -15,9 +15,59 @@ interface BbmRefillModalProps {
   defaultSiteId?: string;
   sites?: SiteInfo[];
   userProfile?: UserProfile;
-  onSubmit: (req: BudgetRequest, reportItem: UsageReportItem) => Promise<void>;
+  onSubmit: (req: BudgetRequest, reportItem: UsageReportItem, onProgress?: (msg: string) => void) => Promise<void>;
   onClose: () => void;
 }
+
+// Utility to compress image to max 1024px with 0.72 quality (~100-180KB, perfect for mobile & Vercel)
+const compressImageDataUrl = (
+  source: string | HTMLVideoElement,
+  quality = 0.72,
+  maxDim = 1024
+): Promise<string> => {
+  return new Promise((resolve) => {
+    const processCanvas = (
+      imgWidth: number,
+      imgHeight: number,
+      draw: (ctx: CanvasRenderingContext2D, width: number, height: number) => void
+    ) => {
+      let width = imgWidth;
+      let height = imgHeight;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) {
+          height = Math.round((height * maxDim) / width);
+          width = maxDim;
+        } else {
+          width = Math.round((width * maxDim) / height);
+          height = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(width, 1);
+      canvas.height = Math.max(height, 1);
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        draw(ctx, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } else {
+        resolve(typeof source === 'string' ? source : '');
+      }
+    };
+
+    if (typeof source === 'string') {
+      const img = new Image();
+      img.onload = () => {
+        processCanvas(img.width, img.height, (ctx, w, h) => ctx.drawImage(img, 0, 0, w, h));
+      };
+      img.onerror = () => resolve(source);
+      img.src = source;
+    } else if (source instanceof HTMLVideoElement) {
+      processCanvas(source.videoWidth || 640, source.videoHeight || 480, (ctx, w, h) => ctx.drawImage(source, 0, 0, w, h));
+    }
+  });
+};
 
 export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
   userEmail,
@@ -53,6 +103,78 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
   const [nominal, setNominal] = useState<string>('');
   const [keterangan, setKeterangan] = useState('');
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+
+  // Compression & step status
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [submitStep, setSubmitStep] = useState<string>('');
+
+  // Draft persistence in local device storage
+  const draftStorageKey = `bbm_refill_draft_${userEmail || 'user'}`;
+  const [hasDraftRestored, setHasDraftRestored] = useState(false);
+
+  // Restore draft on mount if available
+  useEffect(() => {
+    try {
+      const rawDraft = localStorage.getItem(draftStorageKey);
+      if (rawDraft) {
+        const draft = JSON.parse(rawDraft);
+        let restored = false;
+        if (draft.siteId && !siteId) {
+          setSiteId(draft.siteId);
+          restored = true;
+        }
+        if (draft.nominal && !nominal) {
+          setNominal(draft.nominal);
+          restored = true;
+        }
+        if (draft.keterangan && !keterangan) {
+          setKeterangan(draft.keterangan);
+          restored = true;
+        }
+        if (draft.photoDataUrl && !photoDataUrl) {
+          setPhotoDataUrl(draft.photoDataUrl);
+          restored = true;
+        }
+        if (restored) {
+          setHasDraftRestored(true);
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal membaca draf BBM:', e);
+    }
+  }, []);
+
+  // Auto-save draft on user input changes
+  useEffect(() => {
+    if (siteId || nominal || keterangan || photoDataUrl) {
+      try {
+        localStorage.setItem(
+          draftStorageKey,
+          JSON.stringify({
+            siteId,
+            nominal,
+            keterangan,
+            photoDataUrl,
+            updatedAt: Date.now()
+          })
+        );
+      } catch (e) {
+        // Ignore quota/private mode restrictions
+      }
+    }
+  }, [siteId, nominal, keterangan, photoDataUrl, draftStorageKey]);
+
+  // Clear draft helper
+  const handleClearDraft = () => {
+    try {
+      localStorage.removeItem(draftStorageKey);
+    } catch {}
+    setSiteId('');
+    setNominal('');
+    setKeterangan('');
+    setPhotoDataUrl(null);
+    setHasDraftRestored(false);
+  };
 
   // Camera state
   const [isCameraActive, setIsCameraActive] = useState(false);
@@ -132,61 +254,42 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     };
   }, []);
 
-  // Capture Photo from Video Stream
-  const capturePhoto = () => {
+  // Capture Photo from Video Stream with compression
+  const capturePhoto = async () => {
     if (!videoRef.current) return;
-    const video = videoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    setIsCompressing(true);
+    try {
+      const dataUrl = await compressImageDataUrl(videoRef.current, 0.72, 1024);
       setPhotoDataUrl(dataUrl);
+    } catch (e) {
+      console.warn('Gagal kompresi foto:', e);
+    } finally {
+      setIsCompressing(false);
       stopCamera();
     }
   };
 
-  // Handle camera/file input fallback with auto-compression
+  // Handle camera/file input fallback with optimized auto-compression (~100-180KB)
   const handleFileCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setIsCompressing(true);
       const reader = new FileReader();
-      reader.onloadend = () => {
+      reader.onloadend = async () => {
         if (typeof reader.result === 'string') {
-          const img = new Image();
-          img.onload = () => {
-            const canvas = document.createElement('canvas');
-            let width = img.width;
-            let height = img.height;
-            const maxDim = 1600;
-            if (width > maxDim || height > maxDim) {
-              if (width > height) {
-                height = Math.round((height * maxDim) / width);
-                width = maxDim;
-              } else {
-                width = Math.round((width * maxDim) / height);
-                height = maxDim;
-              }
-            }
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-              ctx.drawImage(img, 0, 0, width, height);
-              const compressedUrl = canvas.toDataURL('image/jpeg', 0.82);
-              setPhotoDataUrl(compressedUrl);
-            } else {
-              setPhotoDataUrl(reader.result as string);
-            }
-          };
-          img.onerror = () => {
-            setPhotoDataUrl(reader.result as string);
-          };
-          img.src = reader.result;
+          try {
+            const compressedUrl = await compressImageDataUrl(reader.result, 0.72, 1024);
+            setPhotoDataUrl(compressedUrl);
+          } catch {
+            setPhotoDataUrl(reader.result);
+          } finally {
+            setIsCompressing(false);
+          }
+        } else {
+          setIsCompressing(false);
         }
       };
+      reader.onerror = () => setIsCompressing(false);
       reader.readAsDataURL(file);
     }
   };
@@ -233,6 +336,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     }
 
     setIsSubmitting(true);
+    setSubmitStep('Menyiapkan transaksi BBM...');
     try {
       const uid = generateBbmUid();
       const nowIso = new Date().toISOString();
@@ -269,7 +373,14 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
         updatedAt: nowIso
       };
 
-      await onSubmit(req, reportItem);
+      await onSubmit(req, reportItem, (step) => setSubmitStep(step));
+      setSubmitStep('Transaksi berhasil!');
+
+      // Clear draft on successful submission
+      try {
+        localStorage.removeItem(draftStorageKey);
+      } catch {}
+
       alert('Penyimpanan transaksi BBM Duren Sawit berhasil!');
       onClose();
     } catch (err: any) {
@@ -278,6 +389,7 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
       alert(`Penyimpanan transaksi BBM Duren Sawit gagal: ${errorMsg}`);
     } finally {
       setIsSubmitting(false);
+      setSubmitStep('');
     }
   };
 
@@ -309,10 +421,41 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
           </button>
         </div>
 
+        {/* Draft Restored Info Banner */}
+        {hasDraftRestored && (
+          <div className="mt-3 p-2.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between text-xs text-amber-900">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>Draf pengisian sebelumnya dipulihkan otomatis.</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleClearDraft}
+              className="text-[10px] font-bold text-amber-700 hover:text-amber-900 underline ml-2 cursor-pointer"
+            >
+              Reset Form
+            </button>
+          </div>
+        )}
+
+        {/* Error Notification with Retry Action */}
         {error && (
-          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-2xl flex items-center gap-2.5 text-xs text-red-700 font-medium">
-            <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
-            <span>{error}</span>
+          <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 font-medium">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-bold text-red-800">Gagal Mengirim</p>
+                <p className="text-[11px] text-red-600 mt-0.5">{error}</p>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="mt-2 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isSubmitting ? 'animate-spin' : ''}`} />
+                  <span>Coba Kirim Ulang Transaksi</span>
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -439,6 +582,14 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
               ) : null}
             </label>
 
+            {/* Compressing indicator */}
+            {isCompressing && (
+              <div className="mb-2 p-3 bg-amber-50 border border-amber-200 rounded-2xl flex items-center gap-2.5 text-xs text-amber-900 animate-pulse">
+                <RefreshCw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+                <span>Mengompresi dan mengoptimalkan ukuran foto nota (~120KB)...</span>
+              </div>
+            )}
+
             {/* Photo Captured Preview */}
             {photoDataUrl ? (
               <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-900 group">
@@ -530,13 +681,13 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !photoDataUrl}
-              className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs rounded-xl shadow-md shadow-amber-200/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1.5"
+              disabled={isSubmitting || isCompressing || !photoDataUrl}
+              className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-xs rounded-xl shadow-md shadow-amber-200/50 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-1.5 cursor-pointer"
             >
               {isSubmitting ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Memproses Transaksi...</span>
+                  <span>{submitStep || 'Memproses Transaksi...'}</span>
                 </>
               ) : (
                 <>

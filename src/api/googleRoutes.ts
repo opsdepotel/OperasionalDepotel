@@ -46,6 +46,7 @@ googleAuthRouter.get('/token', async (req, res) => {
     const status = getGoogleAuthStatus();
     res.json({
       success: true,
+      token: tokenResult.token,
       accessToken: tokenResult.token,
       authMode: tokenResult.type,
       serviceAccountEmail: status.serviceAccountEmail

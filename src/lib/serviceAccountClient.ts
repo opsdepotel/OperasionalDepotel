@@ -32,13 +32,23 @@ export async function checkServiceAccountStatus(): Promise<ServiceAccountStatus>
 }
 
 /**
+ * Invalidates the cached token, forcing the next call to fetch a fresh token.
+ */
+export function invalidateServiceAccountToken(): void {
+  cachedServiceToken = null;
+  cachedTokenExpiry = 0;
+}
+
+/**
  * Retrieves a valid OAuth token from the Service Account backend.
  * Automatically caches for up to 50 minutes before requesting a fresh one.
  * Deduplicates simultaneous calls to prevent duplicate token requests.
  */
-export async function fetchServiceAccountToken(): Promise<{ token: string; email: string } | null> {
+export async function fetchServiceAccountToken(forceRefresh = false): Promise<{ token: string; email: string } | null> {
   const now = Date.now();
-  if (cachedServiceToken && cachedTokenExpiry > now + 120000) {
+  if (forceRefresh) {
+    invalidateServiceAccountToken();
+  } else if (cachedServiceToken && cachedTokenExpiry > now + 120000) {
     const email = localStorage.getItem('op_service_account_email') || 'service-account@google.iam.gserviceaccount.com';
     return { token: cachedServiceToken, email };
   }
@@ -52,14 +62,24 @@ export async function fetchServiceAccountToken(): Promise<{ token: string; email
       const res = await fetch('/api/google/token');
       if (!res.ok) return null;
       const data = await res.json();
-      if (data.success && data.accessToken) {
-        cachedServiceToken = data.accessToken;
+      const validToken = data.accessToken || data.token;
+      if (data.success && validToken) {
+        cachedServiceToken = validToken;
         cachedTokenExpiry = Date.now() + 3000 * 1000; // ~50 minutes
-        if (data.serviceAccountEmail) {
-          localStorage.setItem('op_service_account_email', data.serviceAccountEmail);
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('g_access_token', validToken);
+          localStorage.setItem('g_token_timestamp', String(Date.now()));
+          localStorage.setItem('g_is_service_account', 'true');
+          if (data.serviceAccountEmail) {
+            localStorage.setItem('op_service_account_email', data.serviceAccountEmail);
+          }
+          // Dispatch custom event to notify App.tsx to update its active token state
+          try {
+            window.dispatchEvent(new CustomEvent('google_token_refreshed', { detail: { token: validToken } }));
+          } catch {}
         }
         return {
-          token: data.accessToken,
+          token: validToken,
           email: data.serviceAccountEmail || 'service-account@google.iam.gserviceaccount.com'
         };
       }

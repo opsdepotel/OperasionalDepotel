@@ -90,6 +90,17 @@ export const isOpBiasaRequest = (req: BudgetRequest) => {
   return req.id.startsWith('OP') && !req.id.startsWith('OPT-') && !req.id.startsWith('BBM') && !req.id.startsWith('ADJ-');
 };
 
+export const isBbmDurenSawitRequest = (req?: BudgetRequest | null) => {
+  if (!req) return false;
+  return Boolean(
+    req.id?.startsWith('BBMDS') ||
+    req.siteId === 'OPT-DUREN SAWIT' ||
+    req.siteId === 'BBM DUREN SAWIT' ||
+    (req as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
+    req.keterangan?.toUpperCase().includes('DUREN SAWIT')
+  );
+};
+
 export const isFinanceApprovedOpRequest = (req: BudgetRequest, histories: ItemReviewHistory[]) => {
   if (!isOpBiasaRequest(req)) return true;
   if ([RequestStatus.PENDING_PENGAJUAN_TRANSFER, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.CLOSED].includes(req.status)) return true;
@@ -542,6 +553,14 @@ export default function App() {
 
   // Periodically ensure Google Service Account token remains valid
   useEffect(() => {
+    const handleTokenRefreshed = (e: any) => {
+      const newToken = e.detail?.token;
+      if (newToken && newToken !== token) {
+        setToken(newToken);
+      }
+    };
+    window.addEventListener('google_token_refreshed', handleTokenRefreshed);
+
     const checkTokenStatus = async () => {
       if (token) {
         const expired = isGoogleTokenExpired();
@@ -559,7 +578,10 @@ export default function App() {
 
     checkTokenStatus();
     const interval = setInterval(checkTokenStatus, 60000);
-    return () => clearInterval(interval);
+    return () => {
+      window.removeEventListener('google_token_refreshed', handleTokenRefreshed);
+      clearInterval(interval);
+    };
   }, [token]);
 
   // When auth completes, load spreadsheet & data
@@ -1414,7 +1436,11 @@ export default function App() {
   };
 
   // Workflow Action 1.5: Submit BBM Refill (BBM Duren Sawit)
-  const handleBbmRefillSubmit = async (req: BudgetRequest, reportItem: UsageReportItem) => {
+  const handleBbmRefillSubmit = async (
+    req: BudgetRequest,
+    reportItem: UsageReportItem,
+    onProgress?: (msg: string) => void
+  ) => {
     const currentToken = token || 'mock_demo_token';
     const currentSheetId = spreadsheetId || 'mock_sheet_id';
 
@@ -1424,6 +1450,7 @@ export default function App() {
 
         // Process uploading base64 photo to Google Drive if connected to Google Drive
         if (reportItem.buktiUrl && reportItem.buktiUrl.startsWith('data:')) {
+          onProgress?.('Mengunggah foto nota ke Google Drive...');
           if (currentToken !== 'mock_demo_token' && driveFolderId) {
             try {
               const uploadRes = await uploadBase64Image(
@@ -1440,8 +1467,11 @@ export default function App() {
           }
         }
 
-        await createBudgetRequest(currentToken, currentSheetId, req);
+        onProgress?.('Menyimpan data pengajuan BBM...');
+        await createBudgetRequest(currentToken, currentSheetId, req, { skipLock: true });
+        onProgress?.('Menyimpan data laporan pemakaian...');
         await createUsageItem(currentToken, currentSheetId, finalReportItem);
+        onProgress?.('Menyelesaikan transaksi...');
         return finalReportItem;
       },
       'Gagal menyimpan transaksi BBM Duren Sawit.'
@@ -1502,8 +1532,8 @@ export default function App() {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
 
-      // Trigger Web Push Notification to Applicant
-      if (reviewBudgetReq.userEmail) {
+      // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
+      if (reviewBudgetReq.userEmail && !isBbmDurenSawitRequest(reviewBudgetReq)) {
         const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
         triggerPushNotification({
           email: reviewBudgetReq.userEmail,
@@ -1561,8 +1591,8 @@ export default function App() {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
 
-      // Trigger Web Push Notification to Applicant
-      if (reviewBudgetReq.userEmail) {
+      // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
+      if (reviewBudgetReq.userEmail && !isBbmDurenSawitRequest(reviewBudgetReq)) {
         const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
         triggerPushNotification({
           email: reviewBudgetReq.userEmail,
@@ -1681,8 +1711,8 @@ export default function App() {
       setSharedFilePrefill(null);
       setItemReviewHistories(prev => [historyLog, ...prev]);
 
-      // Trigger Web Push Notification to Applicant
-      if (transferReq.userEmail) {
+      // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
+      if (transferReq.userEmail && !isBbmDurenSawitRequest(transferReq)) {
         const transferNominalFormatted = new Intl.NumberFormat('id-ID').format(transferredAmount);
         triggerPushNotification({
           email: transferReq.userEmail,
@@ -1739,8 +1769,8 @@ export default function App() {
       setSharedFilePrefill(null);
       setItemReviewHistories(prev => [historyLog, ...prev]);
 
-      // Trigger Web Push Notification to Applicant
-      if (transferReq.userEmail) {
+      // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
+      if (transferReq.userEmail && !isBbmDurenSawitRequest(transferReq)) {
         triggerPushNotification({
           email: transferReq.userEmail,
           title: `Pengajuan UID ${transferReq.id} Memerlukan Revisi Transfer`,
@@ -1981,7 +2011,19 @@ export default function App() {
     },
     photoFile?: File
   ) => {
-    if (!token || !spreadsheetId) {
+    // Ensure active token is valid before starting
+    let activeToken = token;
+    if (!activeToken || activeToken === 'mock_demo_token' || isGoogleTokenExpired()) {
+      try {
+        const saData = await fetchServiceAccountToken();
+        if (saData && saData.token) {
+          activeToken = saData.token;
+          setToken(saData.token);
+        }
+      } catch (e) {}
+    }
+
+    if (!activeToken || !spreadsheetId) {
       throw new Error('Koneksi database tidak aktif. Silakan segarkan aplikasi.');
     }
 
@@ -1995,14 +2037,28 @@ export default function App() {
     let finalBuktiFileId = '';
 
     if (photoFile) {
-      if (token === 'mock_demo_token') {
+      if (activeToken === 'mock_demo_token') {
         const mockId = `mock_act_file_${Date.now()}`;
         finalBuktiUrl = `https://drive.google.com/file/d/${mockId}/view`;
         finalBuktiFileId = mockId;
       } else {
-        const uploadResult = await uploadReceiptFile(token, driveFolderId || DRIVE_FOLDER_ID, photoFile);
-        finalBuktiUrl = uploadResult.viewUrl;
-        finalBuktiFileId = uploadResult.fileId;
+        try {
+          const uploadResult = await uploadReceiptFile(activeToken, driveFolderId || DRIVE_FOLDER_ID, photoFile);
+          finalBuktiUrl = uploadResult.viewUrl;
+          finalBuktiFileId = uploadResult.fileId;
+        } catch (upErr: any) {
+          console.warn('Photo upload returned error, attempting retry with fresh server token:', upErr);
+          const freshSa = await fetchServiceAccountToken(true);
+          if (freshSa && freshSa.token) {
+            activeToken = freshSa.token;
+            setToken(freshSa.token);
+            const uploadResult = await uploadReceiptFile(freshSa.token, driveFolderId || DRIVE_FOLDER_ID, photoFile);
+            finalBuktiUrl = uploadResult.viewUrl;
+            finalBuktiFileId = uploadResult.fileId;
+          } else {
+            throw upErr;
+          }
+        }
       }
     }
 
@@ -2026,12 +2082,39 @@ export default function App() {
       fakeReason: activityData.fakeReason || ''
     };
 
-    await createUserActivity(token, spreadsheetId, newActivity);
+    try {
+      await createUserActivity(activeToken, spreadsheetId, newActivity);
+    } catch (err: any) {
+      const errStr = (err.message || String(err)).toLowerCase();
+      const isAuthError = errStr.includes('401') ||
+        errStr.includes('authentication credentials') ||
+        errStr.includes('unauthenticated') ||
+        errStr.includes('unauthorized') ||
+        errStr.includes('invalid_grant');
+
+      if (isAuthError) {
+        console.warn('createUserActivity encountered 401 error, fetching fresh token and retrying...');
+        const freshSa = await fetchServiceAccountToken(true);
+        if (freshSa && freshSa.token) {
+          activeToken = freshSa.token;
+          setToken(freshSa.token);
+          await createUserActivity(freshSa.token, spreadsheetId, newActivity);
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
 
     // Refresh activities state
-    const allActs = await fetchUserActivities(token, spreadsheetId);
-    setActivities(allActs);
-    safeSetJson('op_app_cached_activities', allActs, 30);
+    try {
+      const allActs = await fetchUserActivities(activeToken, spreadsheetId);
+      setActivities(allActs);
+      safeSetJson('op_app_cached_activities', allActs, 30);
+    } catch (fetchErr) {
+      setActivities(prev => [newActivity, ...prev]);
+    }
   };
 
   const handleUpdateActivity = async (updatedActivity: UserActivity) => {

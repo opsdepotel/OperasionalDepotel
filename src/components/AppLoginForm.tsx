@@ -5,8 +5,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { UserProfile, Role } from '../types';
-import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw, Smartphone, CheckCircle2 } from 'lucide-react';
-import { validateDeviceAccessAndBind, getOrCreateDeviceId } from '../lib/deviceUtils';
+import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw, Smartphone, CheckCircle2, Globe, AlertTriangle } from 'lucide-react';
+import { validateDeviceAccessAndBind, getOrCreateDeviceId, getOrCreateDeviceIdAsync, getInAppBrowserInfo, detectPrivateBrowsing, InAppBrowserInfo } from '../lib/deviceUtils';
 import { mergeUserProfiles, findMatchingUser, defaultUsers } from '../lib/googleApi';
 import { DevicePermissionsStatus } from '../lib/devicePermissions';
 
@@ -47,9 +47,28 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [deviceId, setDeviceId] = useState('');
+  const [inAppInfo, setInAppInfo] = useState<InAppBrowserInfo | null>(null);
+  const [isPrivateMode, setIsPrivateMode] = useState<boolean>(false);
 
   useEffect(() => {
-    setDeviceId(getOrCreateDeviceId());
+    // 1. Initial async fetch with IndexedDB fallback recovery
+    getOrCreateDeviceIdAsync().then((devId) => {
+      if (devId) setDeviceId(devId);
+    }).catch(() => {
+      setDeviceId(getOrCreateDeviceId());
+    });
+
+    // 2. Detect In-App browser (WhatsApp, IG, etc.)
+    const info = getInAppBrowserInfo();
+    if (info.isInApp) {
+      setInAppInfo(info);
+    }
+
+    // 3. Detect Safari Private Browsing mode
+    detectPrivateBrowsing().then((isPvt) => {
+      if (isPvt) setIsPrivateMode(true);
+    }).catch(() => {});
+
     // Security audit: Clean up any legacy plaintext password stored in localStorage
     try {
       localStorage.removeItem('op_app_saved_password');
@@ -166,6 +185,37 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           >
             Aktifkan
           </button>
+        </div>
+      )}
+
+      {/* In-App Browser Warning (WhatsApp / IG / etc.) */}
+      {inAppInfo?.isInApp && (
+        <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded-2xl p-3.5 text-xs space-y-1.5 shadow-xs animate-fade-in" id="in-app-browser-banner">
+          <div className="font-bold flex items-center gap-1.5 text-amber-900">
+            <Globe className="w-4 h-4 text-amber-700 shrink-0" />
+            <span>Terdeteksi Membuka Lewat {inAppInfo.name}</span>
+          </div>
+          <p className="text-[11px] text-amber-800 leading-relaxed">
+            In-App browser memiliki penyimpanan sementara yang dapat mereset Device ID saat aplikasi ditutup.
+            {inAppInfo.isIos ? (
+              <span> Disarankan ketuk ikon bagikan (Share) di pojok bawah lalu pilih <strong>Buka di Safari (Open in Safari)</strong> atau <strong>Tambahkan ke Layar Utama</strong>.</span>
+            ) : (
+              <span> Disarankan ketuk menu titik tiga lalu pilih <strong>Buka di Browser (Chrome)</strong>.</span>
+            )}
+          </p>
+        </div>
+      )}
+
+      {/* Safari Private Browsing Warning */}
+      {isPrivateMode && (
+        <div className="bg-rose-50 border border-rose-300 text-rose-900 rounded-2xl p-3.5 text-xs space-y-1.5 shadow-xs animate-fade-in" id="private-browsing-banner">
+          <div className="font-bold flex items-center gap-1.5 text-rose-900">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>Peringatan: Tab Pribadi (Private Browsing)</span>
+          </div>
+          <p className="text-[11px] text-rose-800 leading-relaxed">
+            Browser Anda sedang dalam mode Tab Pribadi. Penyimpanan lokal akan dihapus saat tab ditutup sehingga Device ID akan berubah dan akun Anda dapat terkunci. Silakan buka aplikasi pada <strong>Tab Biasa</strong>.
+          </p>
         </div>
       )}
 

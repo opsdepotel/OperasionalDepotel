@@ -126,14 +126,15 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   const todayStr = getTodayDateStr();
 
   const userEmailToMatch = (userEmail || '').toLowerCase();
-  const hasRefilledToday = userEmailToMatch ? requests.some(r => {
+  const todayRefillCount = userEmailToMatch ? requests.filter(r => {
     const isBbmReq = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
     if (!isBbmReq) return false;
     if (r.status === RequestStatus.CANCELLED) return false;
     const isSameUser = r.userEmail.toLowerCase() === userEmailToMatch;
     const isSameDate = r.tanggalPemakaian === todayStr || (r.createdAt && r.createdAt.substring(0, 10) === todayStr);
     return isSameUser && isSameDate;
-  }) : false;
+  }).length : 0;
+  const hasRefilledToday = todayRefillCount > 0;
 
   // Selected date filter (default: today's date)
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -277,13 +278,18 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
     usageItem?: UsageReportItem,
     forceReanalyze = false
   ) => {
+    // Resolve usageItem if not provided
+    const resolvedUsageItem = usageItem || usageItems.find(
+      item => item.requestId === req.id || item.id.startsWith(req.id) || (item.requestId && req.id.includes(item.requestId))
+    );
+
     const firstBuktiUrl = req.buktiTransferUrl ? req.buktiTransferUrl.split('||')[0].trim() : '';
     const firstFileId = req.buktiTransferFileId ? req.buktiTransferFileId.split('||')[0].trim() : '';
-    const rawBuktiPhoto = usageItem?.buktiUrl || firstBuktiUrl;
-    const rawBuktiFileId = usageItem?.buktiFileId || firstFileId;
+    const rawBuktiPhoto = resolvedUsageItem?.buktiUrl || firstBuktiUrl;
+    const rawBuktiFileId = resolvedUsageItem?.buktiFileId || firstFileId;
 
     setSelectedBbmRequest(req);
-    setSelectedBbmUsageItem(usageItem || null);
+    setSelectedBbmUsageItem(resolvedUsageItem || null);
     setSelectedBbmPhotoUrl(rawBuktiPhoto || null);
     setSelectedBbmPhotoFileId(rawBuktiFileId || null);
     setIsAiBbmModalOpen(true);
@@ -295,7 +301,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
 
     setIsAiBbmAnalyzing(true);
     try {
-      const res = await requestAiBbmReceiptCheck(req, usageItem || undefined, rawBuktiPhoto, rawBuktiFileId);
+      const res = await requestAiBbmReceiptCheck(req, resolvedUsageItem || undefined, rawBuktiPhoto, rawBuktiFileId);
       setAiBbmReceiptResults(prev => ({
         ...prev,
         [req.id]: res
@@ -561,28 +567,24 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
 
           {/* Action Bar */}
           {onOpenBbmRefillModal && (
-            <div className="flex justify-end pt-1">
-              {hasRefilledToday ? (
-                <button
-                  disabled
-                  className="px-3.5 py-2 bg-slate-100 text-slate-600 border border-slate-200/90 rounded-xl text-xs font-bold opacity-90 cursor-not-allowed flex items-center gap-1.5 shadow-sm pointer-events-none select-none"
-                  id="bbm-refill-modal-disabled-btn"
-                >
+            <div className="flex items-center justify-between flex-wrap gap-2 pt-1">
+              {todayRefillCount > 0 ? (
+                <div className="flex items-center gap-1.5 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl font-medium shadow-xs">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Telah melakukan pengisian BBM di POM Duren Sawit</span>
-                </button>
-              ) : (
-                <button
-                  onClick={() => {
-                    onOpenBbmRefillModal();
-                  }}
-                  className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white border border-amber-600 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-200 active:scale-[0.98]"
-                  id="bbm-refill-modal-active-btn"
-                >
-                  <Fuel className="w-4 h-4 text-white shrink-0" />
-                  <span>+ Tambahkan Aktifitas Pengisian BBM Duren Sawit</span>
-                </button>
-              )}
+                  <span>Tercatat <strong>{todayRefillCount}x</strong> pengisian BBM hari ini</span>
+                </div>
+              ) : <div />}
+
+              <button
+                onClick={() => {
+                  onOpenBbmRefillModal();
+                }}
+                className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white border border-amber-600 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-200 active:scale-[0.98]"
+                id="bbm-refill-modal-active-btn"
+              >
+                <Fuel className="w-4 h-4 text-white shrink-0" />
+                <span>+ Tambahkan Aktifitas Pengisian BBM Duren Sawit</span>
+              </button>
             </div>
           )}
 

@@ -15,6 +15,7 @@
 - **Reporting Flow**:
   - When fuel is filled at Duren Sawit, the report is submitted directly.
   - Status transitions to `REPORTING` once submitted.
+- **Multiple Refills Allowed**: Tidak ada batasan 1 kali pengisian per hari untuk BBM Duren Sawit. Pengguna berwenang dapat mencatat pengisian BBM lebih dari 1 kali dalam sehari.
 - **Role Privileges**:
   - `MANAGER`, `FINANCE`, and `DIREKTUR` have direct access to view, log, and process BBM Duren Sawit entries.
 
@@ -46,3 +47,7 @@
 ## Dashboard & UI Card Rules
 - **Transfer Status Label**: Use strictly **"SUDAH DITRANSFER"** for `TRANSFERRED` status cards.
 - **Self-Approve Restriction**: On `SUBMISSION` tab (Pengajuan Saya), do NOT display review/approve buttons to prevent self-approval. Review actions are strictly located on the `APPROVAL` tab.
+
+## Web Push Notification Feature - [LOCKED]
+- **Status: STRICTLY LOCKED**: Fitur Push Notifikasi (pengaturan token, service worker, alur subscribe/unsubscribe, blast/broadcast, dan endpoint `/api/push/*`) telah dikunci. Tidak boleh ada modifikasi, penambahan UI blast/broadcast, atau perubahan alur tanpa konfirmasi/persetujuan eksplisit dari pengguna.
+- **BBM Duren Sawit Excluded**: Transaksi / pengisian BBM Duren Sawit (prefix `BBMDS`, `OPT-DUREN SAWIT`, atau keterangan `BBM DUREN SAWIT`) dikecualikan dari pengiriman push notifikasi. Sistem tidak akan mengirimkan push notifikasi ke Finance, Manager, Direktur, maupun pemohon untuk aktivitas pengisian BBM Duren Sawit.

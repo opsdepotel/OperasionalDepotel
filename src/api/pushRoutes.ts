@@ -178,6 +178,24 @@ pushRouter.post('/send', async (req, res) => {
       });
     }
 
+    // Exclude BBM Duren Sawit transactions from push notifications per business rules
+    const isBbmDurenSawit =
+      extra?.isBbmDurenSawit === true ||
+      extra?.type === 'BBM_DUREN_SAWIT' ||
+      (requestId && (requestId.toUpperCase().startsWith('BBMDS') || requestId.toUpperCase().includes('DUREN'))) ||
+      (`${title} ${body}`.toUpperCase().includes('DUREN SAWIT') || `${title} ${body}`.toUpperCase().includes('BBMDS'));
+
+    if (isBbmDurenSawit) {
+      console.log('[WebPush Router] Push notification skipped for BBM Duren Sawit:', requestId || title);
+      return res.json({
+        success: true,
+        sent: 0,
+        failed: 0,
+        skipped: true,
+        message: 'Push notifikasi dikecualikan untuk transaksi BBM Duren Sawit.'
+      });
+    }
+
     const payload = {
       title,
       body,
