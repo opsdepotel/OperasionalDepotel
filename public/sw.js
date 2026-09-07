@@ -121,6 +121,9 @@ self.addEventListener('fetch', (event) => {
 // Web Push Notifications Handling
 // ==========================================
 
+let lastPushTimestamp = 0;
+let lastPushFingerprint = '';
+
 self.addEventListener('push', (event) => {
   let data = {};
   if (event.data) {
@@ -135,8 +138,21 @@ self.addEventListener('push', (event) => {
   }
 
   const title = data.title || 'DIOMS Notifikasi Status UID';
+  const body = data.body || 'Ada pembaruan status pengajuan Anda.';
+  const tag = data.tag || (data.requestId ? `uid-${data.requestId}` : 'dioms-push-notification');
+  const now = Date.now();
+
+  // Deduplicate push in service worker if identical push received within 5 seconds
+  const fingerprint = `${tag}:${title}:${body}`;
+  if (lastPushFingerprint === fingerprint && now - lastPushTimestamp < 5000) {
+    console.log('[SW] Duplicate push notification suppressed:', fingerprint);
+    return;
+  }
+  lastPushFingerprint = fingerprint;
+  lastPushTimestamp = now;
+
   const options = {
-    body: data.body || 'Ada pembaruan status pengajuan Anda.',
+    body,
     icon: data.icon || '/DIOMS-icon192.png',
     badge: data.badge || '/DIOMS-icon192.png',
     image: data.image || undefined,
@@ -144,15 +160,15 @@ self.addEventListener('push', (event) => {
     data: {
       url: data.url || '/',
       requestId: data.requestId,
-      timestamp: Date.now(),
+      timestamp: now,
       ...(data.extra || {}),
     },
     actions: [
       { action: 'open', title: 'Buka Aplikasi' },
       { action: 'close', title: 'Tutup' },
     ],
-    tag: data.tag || 'dioms-push-notification',
-    renotify: true,
+    tag,
+    renotify: false,
   };
 
   event.waitUntil(self.registration.showNotification(title, options));

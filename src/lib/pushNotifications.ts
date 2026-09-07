@@ -256,6 +256,21 @@ export function isBbmDurenSawitNotification(params: {
 }
 
 /**
+ * Helper to safely parse subscriptions from user profile string in Column N.
+ */
+export function parsePushSubscriptions(raw?: string): any[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    if (parsed && typeof parsed === 'object') return [parsed];
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Triggers a push notification to a recipient user, role, or broadcast.
  */
 export async function triggerPushNotification(params: {
@@ -267,6 +282,7 @@ export async function triggerPushNotification(params: {
   requestId?: string;
   url?: string;
   extra?: Record<string, any>;
+  subscriptions?: any[];
 }): Promise<{ success: boolean; sent?: number; failed?: number; error?: string }> {
   // Exclude BBM Duren Sawit from sending push notifications
   if (isBbmDurenSawitNotification(params)) {

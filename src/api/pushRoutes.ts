@@ -164,6 +164,25 @@ pushRouter.post('/test', async (req, res) => {
   }
 });
 
+// In-memory sliding window cache for push deduplication (prevents duplicate triggers within 8 seconds)
+const recentPushes = new Map<string, number>();
+
+function isDuplicatePush(key: string, windowMs = 8000): boolean {
+  const now = Date.now();
+  // Cleanup old entries (> 60s)
+  for (const [k, timestamp] of recentPushes.entries()) {
+    if (now - timestamp > 60000) {
+      recentPushes.delete(k);
+    }
+  }
+  const lastSent = recentPushes.get(key);
+  if (lastSent && now - lastSent < windowMs) {
+    return true;
+  }
+  recentPushes.set(key, now);
+  return false;
+}
+
 /**
  * Sends push notification to a specific email, role, or broadcast.
  */
@@ -193,6 +212,20 @@ pushRouter.post('/send', async (req, res) => {
         failed: 0,
         skipped: true,
         message: 'Push notifikasi dikecualikan untuk transaksi BBM Duren Sawit.'
+      });
+    }
+
+    // Deduplication key to prevent duplicate notifications fired within 8s for the same target + request + content
+    const targetKey = email ? `email:${(email || '').toLowerCase().trim()}` : role ? `role:${role}` : 'broadcast';
+    const dedupeKey = `${targetKey}:${requestId || 'noreq'}:${(title || '').trim()}:${(body || '').trim()}`;
+    if (isDuplicatePush(dedupeKey, 8000)) {
+      console.log('[WebPush Router] Duplicate push suppressed (dedupe cache hit):', dedupeKey);
+      return res.json({
+        success: true,
+        sent: 1,
+        failed: 0,
+        duplicateSuppressed: true,
+        message: 'Push notifikasi duplikat diabaikan (sudah dikirim dalam jendela waktu).'
       });
     }
 

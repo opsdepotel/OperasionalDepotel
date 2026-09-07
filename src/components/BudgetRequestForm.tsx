@@ -8,7 +8,8 @@ import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, I
 import { parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles,
-  Camera, UploadCloud, X, Image as ImageIcon, AlertTriangle, ShieldCheck, CheckCircle2
+  Camera, UploadCloud, X, Image as ImageIcon, AlertTriangle, ShieldCheck, CheckCircle2, Lock,
+  ChevronLeft, ArrowRight, Edit3
 } from 'lucide-react';
 
 interface BudgetRequestFormProps {
@@ -23,6 +24,19 @@ interface BudgetRequestFormProps {
   userProfile?: UserProfile;
 }
 
+// Helper to get today's date in local Jakarta timezone
+const getTodayDateStr = () => {
+  try {
+    const jakartaStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(jakartaStr)) return jakartaStr;
+  } catch (e) {}
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   userEmail,
   managerEmail,
@@ -34,6 +48,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   initialRequest,
   userProfile
 }) => {
+  const todayStr = getTodayDateStr();
+
   const [isTalangan, setIsTalangan] = useState(() => {
     if (initialRequest) {
       return initialRequest.id.startsWith('OPT-') || initialRequest.keterangan.startsWith('[DANA TALANGAN]');
@@ -42,9 +58,11 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   });
 
   const [tanggalPemakaian, setTanggalPemakaian] = useState(() => {
+    if (initialIsTalangan || (initialRequest && (initialRequest.id.startsWith('OPT-') || initialRequest.keterangan.startsWith('[DANA TALANGAN]')))) {
+      return todayStr;
+    }
     if (initialRequest?.tanggalPemakaian) return initialRequest.tanggalPemakaian;
-    const d = new Date();
-    return d.toISOString().split('T')[0];
+    return todayStr;
   });
 
   const [siteId, setSiteId] = useState(() => initialRequest?.siteId || defaultSiteId || '');
@@ -69,6 +87,9 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   const [showItemPromptModal, setShowItemPromptModal] = useState<boolean>(false);
   const [missingItemReason, setMissingItemReason] = useState<string>('');
 
+  // Step state for Dana Talangan: 1 = Informasi Kegiatan & Lokasi, 2 = Rincian Item Pertama
+  const [talanganStep, setTalanganStep] = useState<1 | 2>(1);
+
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -80,6 +101,20 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
     String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
     String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
     String(userProfile?.mobile).trim() === '1';
+
+  // Advance from Step 1 to Step 2 in Dana Talangan
+  const handleNextToStep2 = () => {
+    setError(null);
+    if (!siteId.trim()) {
+      setError('Site ID / Lokasi Pemakaian wajib diisi.');
+      return;
+    }
+    if (!keterangan.trim()) {
+      setError('Keterangan Umum Kegiatan / Tujuan Talangan wajib diisi.');
+      return;
+    }
+    setTalanganStep(2);
+  };
 
   // Format IDR Currency
   const formatIDR = (num: any) => {
@@ -143,6 +178,12 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
     e.preventDefault();
     setError(null);
 
+    // If on Step 1 of Dana Talangan, advance to Step 2 instead of submitting
+    if (isTalangan && !initialRequest && talanganStep === 1) {
+      handleNextToStep2();
+      return;
+    }
+
     if (!siteId.trim()) {
       setError('Site ID / Lokasi wajib diisi.');
       return;
@@ -194,7 +235,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         id: uid,
         userEmail: initialRequest ? initialRequest.userEmail : userEmail,
         managerEmail: initialRequest ? initialRequest.managerEmail : managerEmail,
-        tanggalPemakaian,
+        tanggalPemakaian: isTalangan ? todayStr : tanggalPemakaian,
         siteId: siteId.toUpperCase().trim(),
         jumlahPengajuan: finalAmount,
         keterangan: isTalangan 
@@ -280,6 +321,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
             onClick={() => {
               setIsTalangan(true);
               setError(null);
+              setTanggalPemakaian(todayStr);
             }}
             className={`py-1.5 text-[10px] font-bold rounded-lg transition-all cursor-pointer ${
               isTalangan
@@ -308,106 +350,192 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           </p>
         </div>
 
-        {/* 1. INFORMASI UMUM PENGAJUAN */}
-        <div className="space-y-3">
-          <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
-            <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-[10px]">1</span>
-            <span>Informasi Kegiatan & Lokasi</span>
-          </h3>
+        {/* STEP PROGRESS INDICATOR (KHUSUS DANA TALANGAN) */}
+        {isTalangan && !initialRequest && (
+          <div className="flex items-center justify-between bg-slate-50/90 p-2.5 rounded-xl border border-slate-200/80">
+            <button
+              type="button"
+              onClick={() => {
+                if (talanganStep === 2) {
+                  setError(null);
+                  setTalanganStep(1);
+                }
+              }}
+              className={`flex items-center gap-2 text-left transition-all ${
+                talanganStep === 1 ? 'opacity-100' : 'opacity-80 hover:opacity-100 cursor-pointer'
+              }`}
+            >
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                talanganStep === 1 ? 'bg-indigo-600 text-white shadow-xs' : 'bg-emerald-600 text-white'
+              }`}>
+                {talanganStep > 1 ? '✓' : '1'}
+              </div>
+              <div>
+                <p className={`text-[11px] font-bold leading-tight ${talanganStep === 1 ? 'text-indigo-950' : 'text-slate-700'}`}>
+                  1. Informasi Kegiatan
+                </p>
+                <p className="text-[9px] text-slate-400">
+                  {talanganStep === 1 ? 'Sedang Diisi' : 'Selesai (Klik untuk ubah)'}
+                </p>
+              </div>
+            </button>
 
-          {/* Date Field */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">
-              {isTalangan ? 'Tanggal Kegiatan / Talangan' : 'Tanggal Pemakaian'}
-            </label>
-            <div className="relative">
-              <input
-                type="date"
-                value={tanggalPemakaian}
-                onChange={(e) => {
-                  setTanggalPemakaian(e.target.value);
-                  if (isTalangan && !itemTanggal) {
-                    setItemTanggal(e.target.value);
-                  }
-                }}
-                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                required
-              />
-              <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+            <div className="flex-1 mx-3 border-t-2 border-dashed border-slate-200" />
+
+            <div className={`flex items-center gap-2 ${talanganStep === 2 ? 'opacity-100' : 'opacity-50'}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                talanganStep === 2 ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-200 text-slate-600'
+              }`}>
+                2
+              </div>
+              <div>
+                <p className={`text-[11px] font-bold leading-tight ${talanganStep === 2 ? 'text-indigo-950' : 'text-slate-500'}`}>
+                  2. Rincian Item Pertama
+                </p>
+                <p className="text-[9px] text-slate-400">
+                  {talanganStep === 2 ? 'Lengkapi & Simpan' : 'Langkah Selanjutnya'}
+                </p>
+              </div>
             </div>
           </div>
+        )}
 
-          {/* Site ID / Lokasi */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">Site ID / Lokasi Pemakaian</label>
-            <div className="relative">
-              <input
-                type="text"
-                value={siteId}
-                onChange={(e) => setSiteId(e.target.value.toUpperCase())}
-                placeholder="Site ID / lokasi (contoh: JKT123)"
-                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                required
-              />
-              <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+        {/* ------------------------------------------------------------- */}
+        {/* KONDISI 1: FORM PENGISIAN BAGIAN 1 (ATAU FORM STANDAR BUKAN TALANGAN) */}
+        {/* ------------------------------------------------------------- */}
+        {(!isTalangan || initialRequest || talanganStep === 1) && (
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
+              <span className="w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 font-bold flex items-center justify-center text-[10px]">1</span>
+              <span>Informasi Kegiatan & Lokasi</span>
+            </h3>
+
+            {/* Date Field */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-semibold text-slate-500">
+                  {isTalangan ? 'Tanggal Laporan' : 'Tanggal Pemakaian'}
+                </label>
+                {isTalangan && (
+                  <span className="text-[10px] font-medium text-slate-400 flex items-center gap-1">
+                    <Lock className="w-3 h-3 text-slate-400" />
+                    Terkunci: Hari Ini
+                  </span>
+                )}
+              </div>
+              <div className="relative">
+                <input
+                  type="date"
+                  value={isTalangan ? todayStr : tanggalPemakaian}
+                  onChange={(e) => {
+                    if (isTalangan) return; // locked to today for Dana Talangan
+                    setTanggalPemakaian(e.target.value);
+                    if (!itemTanggal) {
+                      setItemTanggal(e.target.value);
+                    }
+                  }}
+                  readOnly={isTalangan}
+                  className={`w-full pl-9 ${
+                    isTalangan
+                      ? 'pr-9 bg-slate-100/80 text-slate-700 border-slate-200 cursor-not-allowed select-none font-medium'
+                      : 'pr-3 bg-white text-slate-800 border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30'
+                  } py-2 text-xs border rounded-xl transition-all outline-none`}
+                  required
+                />
+                <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                {isTalangan && (
+                  <Lock className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5 pointer-events-none" />
+                )}
+              </div>
             </div>
 
-            {/* Site ID Detail Match Info */}
-            {parsedIds.length > 0 && (
-              isMultiple ? (
-                someFound ? (
-                  <div className="mt-1.5 p-2.5 bg-emerald-50 border border-emerald-100 rounded-xl space-y-1.5 animate-slide-up">
-                    <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
-                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
-                      <span>Site Terverifikasi (Multiple)</span>
+            {/* Site ID / Lokasi */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">Site ID / Lokasi Pemakaian</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={siteId}
+                  onChange={(e) => setSiteId(e.target.value.toUpperCase())}
+                  placeholder="Site ID / lokasi (contoh: JKT123)"
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  required
+                />
+                <MapPin className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+
+              {/* Site ID Detail Match Info */}
+              {parsedIds.length > 0 && (
+                isMultiple ? (
+                  someFound ? (
+                    <div className="mt-1.5 p-2.5 bg-emerald-50 border border-emerald-100 rounded-xl space-y-1.5 animate-slide-up">
+                      <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+                        <span>Site Terverifikasi (Multiple)</span>
+                      </div>
+                      <div className="space-y-1 ml-2.5">
+                        {siteResults.filter(r => r.found).map((res, idx) => (
+                          <div key={idx} className="text-[10px] flex flex-wrap gap-x-1 items-baseline">
+                            <span className="font-mono font-bold text-slate-600">{res.id}:</span>
+                            <span className="text-emerald-700 font-medium">{res.siteName}</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="space-y-1 ml-2.5">
-                      {siteResults.filter(r => r.found).map((res, idx) => (
-                        <div key={idx} className="text-[10px] flex flex-wrap gap-x-1 items-baseline">
-                          <span className="font-mono font-bold text-slate-600">{res.id}:</span>
-                          <span className="text-emerald-700 font-medium">{res.siteName}</span>
-                        </div>
-                      ))}
+                  ) : null
+                ) : (
+                  siteResults[0]?.found ? (
+                    <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-100 rounded-xl space-y-0.5 animate-slide-up">
+                      <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
+                        <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
+                        <span>Site Terverifikasi</span>
+                      </div>
+                      <p className="text-[10px] font-semibold text-slate-700 ml-2.5">
+                        Nama: <span className="text-emerald-700">{siteResults[0].siteName}</span>
+                      </p>
                     </div>
-                  </div>
-                ) : null
-              ) : (
-                siteResults[0]?.found ? (
-                  <div className="mt-1.5 p-2 bg-emerald-50 border border-emerald-100 rounded-xl space-y-0.5 animate-slide-up">
-                    <div className="flex items-center gap-1 text-[9px] font-bold text-emerald-800">
-                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shrink-0" />
-                      <span>Site Terverifikasi</span>
-                    </div>
-                    <p className="text-[10px] font-semibold text-slate-700 ml-2.5">
-                      Nama: <span className="text-emerald-700">{siteResults[0].siteName}</span>
-                    </p>
-                  </div>
-                ) : null
-              )
+                  ) : null
+                )
+              )}
+            </div>
+
+            {/* Keterangan Umum */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                {isTalangan ? 'Keterangan Umum Kegiatan / Tujuan Talangan' : 'Keterangan / Tujuan Pemakaian'}
+              </label>
+              <div className="relative">
+                <textarea
+                  value={keterangan}
+                  onChange={(e) => setKeterangan(e.target.value)}
+                  placeholder="Jelaskan kebutuhan kegiatan atau operasional di lapangan"
+                  rows={2}
+                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  required
+                />
+                <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              </div>
+            </div>
+
+            {/* TOMBOL LANJUTKAN KHUSUS DANA TALANGAN STEP 1 */}
+            {isTalangan && !initialRequest && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleNextToStep2}
+                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 transition-all cursor-pointer active:scale-[0.99]"
+                >
+                  <span>Lanjutkan Isi Item Laporan &gt;&gt;</span>
+                </button>
+              </div>
             )}
           </div>
+        )}
 
-          {/* Keterangan Umum */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1">
-              {isTalangan ? 'Keterangan Umum Kegiatan / Tujuan Talangan' : 'Keterangan / Tujuan Pemakaian'}
-            </label>
-            <div className="relative">
-              <textarea
-                value={keterangan}
-                onChange={(e) => setKeterangan(e.target.value)}
-                placeholder="Jelaskan kebutuhan kegiatan atau operasional di lapangan"
-                rows={2}
-                className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                required
-              />
-              <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-            </div>
-          </div>
-        </div>
-
-        {/* 2. JUMLAH PENGAJUAN (STANDAR) ATAU ITEM PERTAMA (DANA TALANGAN) */}
-        {!isTalangan ? (
+        {/* ------------------------------------------------------------- */}
+        {/* KONDISI 2: JUMLAH PENGAJUAN (STANDAR PENGAJUAN ANGGARAN BIASA) */}
+        {/* ------------------------------------------------------------- */}
+        {!isTalangan && (
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">Jumlah Pengajuan (Rupiah)</label>
             <div className="relative">
@@ -429,167 +557,238 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
               </p>
             )}
           </div>
-        ) : !initialRequest && (
-          <div ref={itemSectionRef} className="space-y-3 pt-2 border-t border-slate-100">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* KONDISI 3: FORM PENGISIAN BAGIAN 2: RINCIAN ITEM PERTAMA DANA TALANGAN */}
+        {/* ------------------------------------------------------------- */}
+        {isTalangan && !initialRequest && talanganStep === 2 && (
+          <div ref={itemSectionRef} className="space-y-4">
+            {/* Ringkasan Singkat Bagian 1 */}
+            <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-3 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  Informasi Kegiatan & Lokasi
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setTalanganStep(1);
+                  }}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                  <span>Ubah</span>
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60 text-slate-700 text-[11px]">
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Tanggal Laporan:</span>
+                  <span className="font-semibold">{todayStr}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[10px]">Site ID / Lokasi:</span>
+                  <span className="font-semibold font-mono">{siteId.toUpperCase().trim() || '-'}</span>
+                  {siteResults[0]?.found && (
+                    <span className="text-emerald-700 block text-[10px] truncate">{siteResults[0].siteName}</span>
+                  )}
+                </div>
+              </div>
+              <div className="pt-1 border-t border-slate-200/60 text-[11px]">
+                <span className="text-slate-400 block text-[10px]">Keterangan:</span>
+                <span className="font-medium text-slate-700 line-clamp-2">{keterangan}</span>
+              </div>
+            </div>
+
+            {/* Form Bagian 2 */}
+            <div className="space-y-3 pt-1">
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-100 pb-1.5">
                 <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 font-bold flex items-center justify-center text-[10px]">2</span>
-                <span>Rincian Item Pertama Dana Talangan (Wajib)</span>
+                <span>Rincian Item Pertama Dana Talangan</span>
               </h3>
-            </div>
 
-            <div className="bg-emerald-50/50 border border-emerald-100 text-emerald-800 rounded-xl p-3 text-[10px] leading-relaxed">
-              <p className="font-bold flex items-center gap-1 text-[11px] text-emerald-900 mb-0.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Item Dana Talangan</span>
-              </p>
-              Dana Talangan harus memiliki minimal satu item.  Masukkan item pertama Dana Talangan, untuk item-item selanjutnya dapat ditambahkan melalui Penambahan Item Dana Talangan.
-            </div>
-
-            {/* Tanggal Nota */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Tanggal Nota / Kuitansi</label>
-              <div className="relative">
-                <input
-                  type="date"
-                  value={itemTanggal}
-                  onChange={(e) => setItemTanggal(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
-                  required
-                />
-                <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              </div>
-            </div>
-
-            {/* Nominal Item */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
-                Nominal Item Pengeluaran (Rupiah) <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={itemNominal}
-                  onChange={(e) => setItemNominal(e.target.value.replace(/\D/g, ''))}
-                  placeholder="contoh: 150000"
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-semibold text-slate-800"
-                />
-                <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-              </div>
-              {itemNominal && parseNumericValue(itemNominal) > 0 && (
-                <p className="text-[10px] text-emerald-700 font-bold mt-1">
-                  Nominal Dana Talangan: {formatIDR(itemNominal)}
+              <div className="bg-emerald-50/50 border border-emerald-100 text-emerald-800 rounded-xl p-3 text-[10px] leading-relaxed">
+                <p className="font-bold flex items-center gap-1 text-[11px] text-emerald-900 mb-0.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Item Dana Talangan</span>
                 </p>
-              )}
-            </div>
+                Dana Talangan harus memiliki minimal satu item. Masukkan item pertama Dana Talangan, untuk item-item selanjutnya dapat ditambahkan melalui Penambahan Item Dana Talangan.
+              </div>
 
-            {/* Keterangan Rincian Nota */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
-                Keterangan / Rincian Nota <span className="text-rose-500">*</span>
-              </label>
-              <div className="relative">
+              {/* Tanggal Nota */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Tanggal Nota / Kuitansi</label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={itemTanggal}
+                    onChange={(e) => setItemTanggal(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                    required
+                  />
+                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                </div>
+              </div>
+
+              {/* Nominal Item */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Nominal Pengeluaran (Rupiah) <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={itemNominal}
+                    onChange={(e) => setItemNominal(e.target.value.replace(/\D/g, ''))}
+                    placeholder="contoh: 150000"
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-semibold text-slate-800"
+                  />
+                  <Coins className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                </div>
+                {itemNominal && parseNumericValue(itemNominal) > 0 && (
+                  <p className="text-[10px] text-emerald-700 font-bold mt-1">
+                    Nominal Dana Talangan: {formatIDR(itemNominal)}
+                  </p>
+                )}
+              </div>
+
+              {/* Keterangan Rincian Nota */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Keterangan <span className="text-rose-500">*</span>
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={itemKeterangan}
+                    onChange={(e) => setItemKeterangan(e.target.value)}
+                    placeholder="contoh: Pembelian bensin genset 15 liter di SPBU"
+                    className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  />
+                  <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                </div>
+              </div>
+
+              {/* Upload Foto Nota */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  Foto Nota <span className="text-rose-500">*</span>
+                </label>
+
+                {/* Hidden file inputs */}
                 <input
-                  type="text"
-                  value={itemKeterangan}
-                  onChange={(e) => setItemKeterangan(e.target.value)}
-                  placeholder="contoh: Pembelian bensin genset 15 liter di SPBU"
-                  className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileChange}
+                  accept="image/*"
+                  className="hidden"
                 />
-                <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="file"
+                  ref={cameraInputRef}
+                  onChange={handleFileChange}
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                />
+
+                {previewUrl && selectedFile ? (
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3 animate-fade-in">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-200 border border-slate-300 shrink-0">
+                        <img
+                          src={previewUrl}
+                          alt="Preview Nota"
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-800 truncate">{selectedFile.name}</p>
+                        <p className="text-[10px] text-slate-400">{(selectedFile.size / 1024).toFixed(0)} KB • Siap Diunggah</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRemoveFile}
+                      className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition-colors"
+                      title="Hapus foto"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="py-3 px-3 border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all text-indigo-700 cursor-pointer"
+                    >
+                      <Camera className="w-5 h-5 text-indigo-600" />
+                      <span className="text-[11px] font-bold">Kamera HP (Native)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="py-3 px-3 border-2 border-dashed border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all text-slate-600 cursor-pointer"
+                    >
+                      <UploadCloud className="w-5 h-5 text-slate-500" />
+                      <span className="text-[11px] font-bold">Galeri / File</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Upload Bukti Nota / Foto */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">
-                Foto Bukti Nota / Kuitansi <span className="text-rose-500">*</span>
-              </label>
+            {/* Action Buttons di Bagian 2 */}
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setTalanganStep(1);
+                }}
+                className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-all cursor-pointer shrink-0"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span>&lt;&lt; Kembali</span>
+              </button>
 
-              {/* Hidden file inputs */}
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="image/*"
-                className="hidden"
-              />
-              <input
-                type="file"
-                ref={cameraInputRef}
-                onChange={handleFileChange}
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-              />
-
-              {previewUrl && selectedFile ? (
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-between gap-3 animate-fade-in">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-200 border border-slate-300 shrink-0">
-                      <img
-                        src={previewUrl}
-                        alt="Preview Nota"
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    </div>
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-800 truncate">{selectedFile.name}</p>
-                      <p className="text-[10px] text-slate-400">{(selectedFile.size / 1024).toFixed(0)} KB • Siap Diunggah</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleRemoveFile}
-                    className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition-colors"
-                    title="Hapus foto"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="py-3 px-3 border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 hover:bg-indigo-50 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all text-indigo-700 cursor-pointer"
-                  >
-                    <Camera className="w-5 h-5 text-indigo-600" />
-                    <span className="text-[11px] font-bold">Kamera HP (Native)</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="py-3 px-3 border-2 border-dashed border-slate-200 hover:border-slate-300 bg-slate-50 hover:bg-slate-100 rounded-2xl flex flex-col items-center justify-center gap-1.5 transition-all text-slate-600 cursor-pointer"
-                  >
-                    <UploadCloud className="w-5 h-5 text-slate-500" />
-                    <span className="text-[11px] font-bold">Galeri / File</span>
-                  </button>
-                </div>
-              )}
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-100 disabled:bg-slate-300 transition-all cursor-pointer"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>
+                  {isSubmitting ? 'Menyimpan Laporan Dana Talangan...' : 'Simpan Laporan Dana Talangan'}
+                </span>
+              </button>
             </div>
           </div>
         )}
 
-        {/* Submit Button */}
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
-        >
-          <Sparkles className="w-4 h-4" />
-          <span>
-            {isSubmitting 
-              ? 'Menyimpan Pengajuan Dana Talangan...' 
-              : (initialRequest
-                  ? 'Kirim Revisi Pengajuan'
-                  : (isTalangan ? 'Simpan Pengajuan Dana Talangan' : 'Kirim Pengajuan Anggaran'))}
-          </span>
-        </button>
+        {/* ------------------------------------------------------------- */}
+        {/* TOMBOL SUBMIT UNTUK BUKAN DANA TALANGAN / REVISI PENGAJUAN */}
+        {/* ------------------------------------------------------------- */}
+        {(!isTalangan || initialRequest) && (
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>
+              {isSubmitting 
+                ? 'Menyimpan Pengajuan...' 
+                : (initialRequest ? 'Kirim Revisi Pengajuan' : 'Kirim Pengajuan Anggaran')}
+            </span>
+          </button>
+        )}
       </form>
 
       {/* POPUP MODAL: WARNING JIKA ITEM DANA TALANGAN BELUM DITAMBAHKAN */}

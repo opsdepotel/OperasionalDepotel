@@ -51,3 +51,18 @@
 ## Web Push Notification Feature - [LOCKED]
 - **Status: STRICTLY LOCKED**: Fitur Push Notifikasi (pengaturan token, service worker, alur subscribe/unsubscribe, blast/broadcast, dan endpoint `/api/push/*`) telah dikunci. Tidak boleh ada modifikasi, penambahan UI blast/broadcast, atau perubahan alur tanpa konfirmasi/persetujuan eksplisit dari pengguna.
 - **BBM Duren Sawit Excluded**: Transaksi / pengisian BBM Duren Sawit (prefix `BBMDS`, `OPT-DUREN SAWIT`, atau keterangan `BBM DUREN SAWIT`) dikecualikan dari pengiriman push notifikasi. Sistem tidak akan mengirimkan push notifikasi ke Finance, Manager, Direktur, maupun pemohon untuk aktivitas pengisian BBM Duren Sawit.
+
+## Lapor Dana Talangan Pribadi Flow (2-Step Form) - [LOCKED]
+- **Status: STRICTLY LOCKED**: Alur pengisian dan pemisahan form Lapor Dana Talangan Pribadi menjadi 2 bagian berurutan telah **DIKUNCI**. Tidak boleh ada perubahan pada struktur 2 bagian, tombol navigasi, validasi, maupun alurnya tanpa konfirmasi/persetujuan eksplisit dari pengguna.
+- **Rules & Form Structure**:
+  - **Bagian 1 (Informasi Kegiatan & Lokasi)**:
+    - Berisi: Tanggal Laporan (terkunci otomatis ke hari ini / `readOnly`), Site ID / Lokasi Pemakaian, dan Keterangan Umum Kegiatan / Tujuan Talangan.
+    - Tombol aksi: `Lanjutkan Isi Item Laporan >>`.
+    - Validasi: Memvalidasi kelengkapan Site ID dan Keterangan sebelum beralih ke Bagian 2.
+  - **Bagian 2 (Rincian Item Pertama Dana Talangan)**:
+    - Tampil setelah Bagian 1 divalidasi dan tombol `Lanjutkan Isi Item Laporan >>` diklik.
+    - Menampilkan ringkasan data Bagian 1 dengan tombol `Ubah` jika pemohon ingin kembali mengedit.
+    - Berisi: Tanggal Nota / Kuitansi, Nominal Pengeluaran (Rupiah), Keterangan, dan Foto Bukti Nota / Kuitansi (Kamera HP Native / Galeri).
+    - Tombol aksi: `<< Kembali` untuk kembali ke Bagian 1 dan `Simpan Laporan Dana Talangan` untuk menyimpan pengajuan ke database.
+    - Penyimpanan hanya dapat dilakukan setelah item pertama diisi lengkap (nominal > 0, keterangan, dan foto bukti nota).
+

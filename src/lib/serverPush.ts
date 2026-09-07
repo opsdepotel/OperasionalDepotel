@@ -155,17 +155,62 @@ export function getAllSubscriptions(): StoredSubscription[] {
 export function getSubscriptionsForUser(email: string): StoredSubscription[] {
   loadSubscriptionsFromDisk();
   const normalized = (email || '').toLowerCase().trim();
-  return Array.from(inMemorySubscriptions.values()).filter(
+  const userSubs = Array.from(inMemorySubscriptions.values()).filter(
     (s) => s.email.toLowerCase() === normalized
   );
+
+  // Sort descending by updatedAt / createdAt (most recent first)
+  userSubs.sort((a, b) => {
+    const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+    const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+    return timeB - timeA;
+  });
+
+  const seenEndpoints = new Set<string>();
+  const seenUserAgents = new Set<string>();
+  const deduplicated: StoredSubscription[] = [];
+
+  for (const sub of userSubs) {
+    const endpoint = sub.subscription?.endpoint;
+    if (!endpoint || seenEndpoints.has(endpoint)) continue;
+    seenEndpoints.add(endpoint);
+
+    const ua = (sub.userAgent || '').trim().toLowerCase();
+    // If we've already included a newer active subscription for the same browser/userAgent, prune the older stale token
+    if (ua && seenUserAgents.has(ua)) {
+      inMemorySubscriptions.delete(endpoint);
+      continue;
+    }
+    if (ua) {
+      seenUserAgents.add(ua);
+    }
+    deduplicated.push(sub);
+  }
+
+  if (deduplicated.length < userSubs.length) {
+    persistSubscriptionsToDisk();
+  }
+
+  return deduplicated;
 }
 
 export function getSubscriptionsForRole(role: string): StoredSubscription[] {
   loadSubscriptionsFromDisk();
   const normalized = (role || '').toUpperCase().trim();
-  return Array.from(inMemorySubscriptions.values()).filter(
+  const roleSubs = Array.from(inMemorySubscriptions.values()).filter(
     (s) => (s.role || '').toUpperCase() === normalized
   );
+
+  // Deduplicate by user email to ensure each distinct user with this role is only targeted once
+  const distinctEmails = Array.from(new Set(roleSubs.map((s) => s.email.toLowerCase().trim())));
+  const deduplicated: StoredSubscription[] = [];
+
+  for (const userEmail of distinctEmails) {
+    const userSubs = getSubscriptionsForUser(userEmail);
+    deduplicated.push(...userSubs);
+  }
+
+  return deduplicated;
 }
 
 /**

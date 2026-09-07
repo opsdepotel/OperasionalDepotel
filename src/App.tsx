@@ -74,7 +74,7 @@ import { OP_TimeLine } from './components/OP_TimeLine';
 import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt, clearAllSharedReceipts } from './lib/sharedReceiptStorage';
 import { DevicePermissionsModal } from './components/DevicePermissionsModal';
 import { checkAllDevicePermissions, DevicePermissionsStatus } from './lib/devicePermissions';
-import { subscribeToPushNotifications, triggerPushNotification } from './lib/pushNotifications';
+import { subscribeToPushNotifications, triggerPushNotification, parsePushSubscriptions } from './lib/pushNotifications';
 
 // Icons
 import {
@@ -597,6 +597,96 @@ export default function App() {
       setActiveRole(userProfile.role);
     }
   }, [userProfile]);
+
+  // Helper to safely format IDR currency for notifications and workflows
+  const formatIDRValue = (num: any) => {
+    const val = parseNumericValue(num);
+    return new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      minimumFractionDigits: 0
+    }).format(val);
+  };
+
+  const getSiteLabel = (siteId: string) => {
+    if (!siteId) return '';
+    const found = sites.find(s => s.id === siteId);
+    return found ? `${siteId} - ${found.name}` : siteId;
+  };
+
+  // Cache to prevent duplicate client-side push dispatches within 6s
+  const recentPushDispatchesRef = useRef<Map<string, number>>(new Map());
+
+  // Central Push Notification dispatcher with automatic fallback subscriptions from profiles (Google Sheets Column N)
+  const sendPushToEmail = async (
+    targetEmail: string,
+    title: string,
+    body: string,
+    req?: BudgetRequest | null,
+    extra?: Record<string, any>
+  ) => {
+    if (!targetEmail) return;
+    if (req && isBbmDurenSawitRequest(req)) {
+      console.log('[WebPush App] Notifikasi dikecualikan untuk BBM Duren Sawit:', req.id);
+      return;
+    }
+    const cleanEmail = targetEmail.toLowerCase().trim();
+    const reqId = req?.id;
+
+    // Client-side debounce (drops duplicate dispatch to the same email within 6s)
+    const dispatchKey = `${cleanEmail}:${reqId || 'noreq'}:${(title || '').trim()}`;
+    const now = Date.now();
+    const lastDispatch = recentPushDispatchesRef.current.get(dispatchKey);
+    if (lastDispatch && now - lastDispatch < 6000) {
+      console.log('[WebPush App] Duplicate push suppressed (client debounce):', dispatchKey);
+      return;
+    }
+    recentPushDispatchesRef.current.set(dispatchKey, now);
+
+    const targetProfile = profiles.find(p => p.email.toLowerCase().trim() === cleanEmail);
+    const subs = parsePushSubscriptions(targetProfile?.pushSubscriptions);
+    try {
+      await triggerPushNotification({
+        email: cleanEmail,
+        title,
+        body,
+        requestId: reqId,
+        url: reqId ? `/?search=${reqId}` : '/?tab=dashboard',
+        subscriptions: subs.length > 0 ? subs : undefined,
+        extra
+      });
+    } catch (e) {
+      console.warn('[WebPush App] Gagal mengirim push notifikasi ke', targetEmail, e);
+    }
+  };
+
+  const sendPushToRole = async (
+    targetRole: Role,
+    title: string,
+    body: string,
+    req?: BudgetRequest | null,
+    extra?: Record<string, any>,
+    excludeEmails: (string | undefined | null)[] = []
+  ) => {
+    if (req && isBbmDurenSawitRequest(req)) return;
+    const normalizedExcludes = new Set(
+      excludeEmails
+        .filter((e): e is string => Boolean(e && e.trim()))
+        .map(e => e.toLowerCase().trim())
+    );
+
+    const targetEmails: string[] = Array.from(
+      new Set<string>(
+        profiles
+          .filter(p => p.role === targetRole && p.email)
+          .map(p => p.email.toLowerCase().trim())
+      )
+    ).filter((email: string) => !normalizedExcludes.has(email));
+
+    for (const email of targetEmails) {
+      await sendPushToEmail(email, title, body, req, extra);
+    }
+  };
 
   const initializeDatabaseAndLoad = async () => {
     if (!token || !user) return;
@@ -1329,6 +1419,36 @@ export default function App() {
       } else {
         setActiveView('dashboard');
       }
+
+      // Trigger Web Push Notification for submission or revision (BBM Duren Sawit excluded)
+      if (!isBbmDurenSawitRequest(newRequest)) {
+        const requesterName = userProfile?.nama || userProfile?.email || newRequest.userEmail;
+        const siteLabel = getSiteLabel(newRequest.siteId);
+        const nominalStr = formatIDRValue(newRequest.jumlahPengajuan);
+        
+        // Determine supervisor/approver (Direktur if created by Manager/Finance, otherwise managerEmail)
+        const isManagerOrFinanceRequester = activeRole === Role.MANAGER || activeRole === Role.FINANCE || userProfile?.role === Role.MANAGER || userProfile?.role === Role.FINANCE;
+        const targetApproverEmail = newRequest.managerEmail || (isManagerOrFinanceRequester ? profiles.find(p => p.role === Role.DIREKTUR)?.email : profiles.find(p => p.role === Role.MANAGER)?.email);
+
+        if (targetApproverEmail) {
+          if (isExisting) {
+            sendPushToEmail(
+              targetApproverEmail,
+              `Revisi Pengajuan: UID ${newRequest.id}`,
+              `Pemohon ${requesterName} telah mengirim perbaikan pengajuan anggaran (${siteLabel}) sebesar ${nominalStr}.`,
+              newRequest
+            ).catch(console.warn);
+          } else {
+            sendPushToEmail(
+              targetApproverEmail,
+              `Pengajuan Baru: UID ${newRequest.id}`,
+              `Pengajuan anggaran baru dari ${requesterName} (${siteLabel}) sebesar ${nominalStr} menunggu persetujuan Anda.`,
+              newRequest
+            ).catch(console.warn);
+          }
+        }
+      }
+
       await handleManualRefresh();
     }
   };
@@ -1430,6 +1550,15 @@ export default function App() {
     );
 
     if (success !== null) {
+      const nominalStr = formatIDRValue(amount);
+      sendPushToEmail(
+        targetUserEmail,
+        `Penyesuaian Saldo (${type})`,
+        `Finance telah mencatat transaksi penyesuaian saldo sebesar ${nominalStr}. Catatan: ${notes}`,
+        null,
+        { type: 'ADJUSTMENT', amount }
+      ).catch(console.warn);
+
       setActiveView('dashboard');
       await handleManualRefresh();
     }
@@ -1532,16 +1661,37 @@ export default function App() {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
 
-      // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
-      if (reviewBudgetReq.userEmail && !isBbmDurenSawitRequest(reviewBudgetReq)) {
+      // Trigger Web Push Notification to Applicant & Finance (BBM Duren Sawit is excluded)
+      if (!isBbmDurenSawitRequest(reviewBudgetReq)) {
         const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
-        triggerPushNotification({
-          email: reviewBudgetReq.userEmail,
-          title: `Pengajuan UID ${reviewBudgetReq.id} Disetujui`,
-          body: `Pengajuan Anda telah disetujui oleh ${actorLabel}. Status: ${updated.status}.`,
-          requestId: reviewBudgetReq.id,
-          url: `/?search=${reviewBudgetReq.id}`,
-        }).catch(console.warn);
+        const approvedNominalFormatted = formatIDRValue(approvedAmount);
+        const pemohonName = reviewBudgetReq.userEmail;
+        const siteLabel = getSiteLabel(reviewBudgetReq.siteId);
+        const applicantEmail = reviewBudgetReq.userEmail?.toLowerCase().trim();
+        const currentActorEmail = userProfile?.email?.toLowerCase().trim();
+
+        // 1. Notify Applicant (USER) - do not notify self if the actor is also the applicant
+        if (applicantEmail && applicantEmail !== currentActorEmail) {
+          sendPushToEmail(
+            reviewBudgetReq.userEmail,
+            `Pengajuan UID ${reviewBudgetReq.id} Disetujui`,
+            `Pengajuan Anda (${siteLabel}) telah disetujui oleh ${actorLabel} sebesar ${approvedNominalFormatted}. Status: ${updated.status}.`,
+            reviewBudgetReq
+          ).catch(console.warn);
+        }
+
+        // 2. If approved by Manager/Direktur for operational request, notify FINANCE
+        // Exclude current actor (manager) and applicant (so they do not receive a duplicate push intended for Finance)
+        if (!isFinance && (activeRole === Role.MANAGER || activeRole === Role.DIREKTUR)) {
+          sendPushToRole(
+            Role.FINANCE,
+            `Anggaran Siap Diproses: UID ${reviewBudgetReq.id}`,
+            `Pengajuan ${siteLabel} (${pemohonName}) telah disetujui ${actorLabel} sebesar ${approvedNominalFormatted} dan siap diproses/ditransfer Finance.`,
+            reviewBudgetReq,
+            undefined,
+            [currentActorEmail, applicantEmail]
+          ).catch(console.warn);
+        }
       }
 
       setReviewBudgetReq(null);
@@ -1593,14 +1743,18 @@ export default function App() {
 
       // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
       if (reviewBudgetReq.userEmail && !isBbmDurenSawitRequest(reviewBudgetReq)) {
-        const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
-        triggerPushNotification({
-          email: reviewBudgetReq.userEmail,
-          title: `Pengajuan UID ${reviewBudgetReq.id} Memerlukan Revisi`,
-          body: `Pengajuan Anda ditinjau oleh ${actorLabel}. Catatan: ${reason || '-'}`,
-          requestId: reviewBudgetReq.id,
-          url: `/?search=${reviewBudgetReq.id}`,
-        }).catch(console.warn);
+        const applicantEmail = reviewBudgetReq.userEmail.toLowerCase().trim();
+        const currentActorEmail = userProfile?.email?.toLowerCase().trim();
+        if (applicantEmail !== currentActorEmail) {
+          const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
+          const siteLabel = getSiteLabel(reviewBudgetReq.siteId);
+          sendPushToEmail(
+            reviewBudgetReq.userEmail,
+            `Pengajuan UID ${reviewBudgetReq.id} Memerlukan Revisi`,
+            `Pengajuan Anda (${siteLabel}) ditinjau oleh ${actorLabel}. Catatan: ${reason || '-'}`,
+            reviewBudgetReq
+          ).catch(console.warn);
+        }
       }
 
       setReviewBudgetReq(null);
@@ -1711,16 +1865,34 @@ export default function App() {
       setSharedFilePrefill(null);
       setItemReviewHistories(prev => [historyLog, ...prev]);
 
-      // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
-      if (transferReq.userEmail && !isBbmDurenSawitRequest(transferReq)) {
-        const transferNominalFormatted = new Intl.NumberFormat('id-ID').format(transferredAmount);
-        triggerPushNotification({
-          email: transferReq.userEmail,
-          title: `Dana UID ${transferReq.id} Telah Ditransfer`,
-          body: `Finance telah mentransfer dana Rp ${transferNominalFormatted} untuk pengajuan ${transferReq.siteName || transferReq.siteId}.`,
-          requestId: transferReq.id,
-          url: `/?search=${transferReq.id}`,
-        }).catch(console.warn);
+      // Trigger Web Push Notification to Applicant and Manager (BBM Duren Sawit is excluded)
+      if (!isBbmDurenSawitRequest(transferReq)) {
+        const transferNominalFormatted = formatIDRValue(transferredAmount);
+        const siteLabel = getSiteLabel(transferReq.siteId);
+        const pemohonName = transferReq.userEmail;
+        const applicantEmail = transferReq.userEmail?.toLowerCase().trim();
+        const managerEmail = transferReq.managerEmail?.toLowerCase().trim();
+        const currentActorEmail = userProfile?.email?.toLowerCase().trim();
+
+        // 1. Notify Applicant (if not the actor)
+        if (applicantEmail && applicantEmail !== currentActorEmail) {
+          sendPushToEmail(
+            transferReq.userEmail,
+            `Dana UID ${transferReq.id} Telah Ditransfer`,
+            `Finance telah mentransfer dana sebesar ${transferNominalFormatted} untuk pengajuan ${siteLabel}.`,
+            transferReq
+          ).catch(console.warn);
+        }
+
+        // 2. Notify Manager (if not the actor and not identical to applicant)
+        if (managerEmail && managerEmail !== currentActorEmail && managerEmail !== applicantEmail) {
+          sendPushToEmail(
+            transferReq.managerEmail,
+            `Dana Ditransfer: UID ${transferReq.id}`,
+            `Dana pengajuan ${pemohonName} (${siteLabel}) sebesar ${transferNominalFormatted} telah ditransfer oleh Finance.`,
+            transferReq
+          ).catch(console.warn);
+        }
       }
 
       setTransferReq(null);
@@ -1769,15 +1941,33 @@ export default function App() {
       setSharedFilePrefill(null);
       setItemReviewHistories(prev => [historyLog, ...prev]);
 
-      // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
-      if (transferReq.userEmail && !isBbmDurenSawitRequest(transferReq)) {
-        triggerPushNotification({
-          email: transferReq.userEmail,
-          title: `Pengajuan UID ${transferReq.id} Memerlukan Revisi Transfer`,
-          body: `Catatan Finance: ${reason || '-'}`,
-          requestId: transferReq.id,
-          url: `/?search=${transferReq.id}`,
-        }).catch(console.warn);
+      // Trigger Web Push Notification to Applicant and Manager (BBM Duren Sawit is excluded)
+      if (!isBbmDurenSawitRequest(transferReq)) {
+        const siteLabel = getSiteLabel(transferReq.siteId);
+        const pemohonName = transferReq.userEmail;
+        const applicantEmail = transferReq.userEmail?.toLowerCase().trim();
+        const managerEmail = transferReq.managerEmail?.toLowerCase().trim();
+        const currentActorEmail = userProfile?.email?.toLowerCase().trim();
+
+        // 1. Notify Applicant (if not the actor)
+        if (applicantEmail && applicantEmail !== currentActorEmail) {
+          sendPushToEmail(
+            transferReq.userEmail,
+            `Pengajuan UID ${transferReq.id} Memerlukan Revisi Transfer`,
+            `Catatan Finance: ${reason || '-'}`,
+            transferReq
+          ).catch(console.warn);
+        }
+
+        // 2. Notify Manager (if not the actor and not identical to applicant)
+        if (managerEmail && managerEmail !== currentActorEmail && managerEmail !== applicantEmail) {
+          sendPushToEmail(
+            transferReq.managerEmail,
+            `Revisi Transfer: UID ${transferReq.id}`,
+            `Finance meminta revisi pengajuan ${pemohonName} (${siteLabel}). Catatan: ${reason || '-'}`,
+            transferReq
+          ).catch(console.warn);
+        }
       }
 
       setTransferReq(null);
@@ -1992,6 +2182,23 @@ export default function App() {
       'Gagal mengirim laporan penggunaan.'
     );
     if (success !== null) {
+      // Trigger Web Push Notification to Manager / Direct Supervisor
+      if (!isBbmDurenSawitRequest(req)) {
+        const isManagerOrFinanceRequester = activeRole === Role.MANAGER || activeRole === Role.FINANCE || userProfile?.role === Role.MANAGER || userProfile?.role === Role.FINANCE;
+        const targetApproverEmail = req.managerEmail || (isManagerOrFinanceRequester ? profiles.find(p => p.role === Role.DIREKTUR)?.email : profiles.find(p => p.role === Role.MANAGER)?.email);
+        
+        if (targetApproverEmail) {
+          const pemohonName = userProfile?.nama || userProfile?.email || req.userEmail;
+          const siteLabel = getSiteLabel(req.siteId);
+          sendPushToEmail(
+            targetApproverEmail,
+            `Laporan Penggunaan: UID ${req.id}`,
+            `Pemohon ${pemohonName} telah menyerahkan laporan pertanggungjawaban anggaran (${siteLabel}) untuk diperiksa.`,
+            req
+          ).catch(console.warn);
+        }
+      }
+
       setSelectedRequest(null);
       setActiveView('dashboard');
       await handleManualRefresh();
@@ -2152,9 +2359,9 @@ export default function App() {
 
     const isManager = activeRole === Role.MANAGER || activeRole === Role.DIREKTUR;
     const historyLogs: ItemReviewHistory[] = [];
+    const targetItems = usageItems.filter(i => i.requestId === reqToUse.id);
 
     const success = await runGoogleAction(async () => {
-      const targetItems = usageItems.filter(i => i.requestId === reqToUse.id);
       for (const dec of itemDecisions) {
         const original = targetItems.find(i => i.id === dec.itemId);
         if (original) {
@@ -2242,6 +2449,43 @@ export default function App() {
       setReviewReportReq(null);
       setSelectedRequest(null);
       setActiveView('dashboard');
+
+      // Trigger Web Push Notifications for Usage Report Review
+      if (!isBbmDurenSawitRequest(reqToUse)) {
+        const reviewerLabel = userProfile?.nama || (isManager ? 'Manager' : 'Finance');
+        const siteLabel = getSiteLabel(reqToUse.siteId);
+        const applicantEmail = reqToUse.userEmail?.toLowerCase().trim();
+        const currentActorEmail = userProfile?.email?.toLowerCase().trim();
+
+        // 1. Notify Applicant (if not the reviewer)
+        if (applicantEmail && applicantEmail !== currentActorEmail) {
+          sendPushToEmail(
+            reqToUse.userEmail,
+            `Laporan UID ${reqToUse.id} Selesai Ditinjau`,
+            `${reviewerLabel} telah meninjau item laporan penggunaan ${siteLabel}. Status: ${nextRequestStatus}.`,
+            reqToUse
+          ).catch(console.warn);
+        }
+
+        // 2. If Dana Talangan approved by Manager and moves to PENDING_TALANGAN_TRANSFER, notify FINANCE
+        if (isManager && nextRequestStatus === RequestStatus.PENDING_TALANGAN_TRANSFER) {
+          const totalApproved = targetItems.reduce((sum, item) => {
+            const dec = itemDecisions.find(d => d.itemId === item.id);
+            const finalStatus = dec ? dec.status : item.statusManager;
+            return finalStatus === ItemStatus.APPROVED ? sum + (Number(item.nominal) || 0) : sum;
+          }, 0);
+          const approvedNominalFormatted = formatIDRValue(totalApproved || reqToUse.managerActionAmount);
+          sendPushToRole(
+            Role.FINANCE,
+            `Dana Talangan Siap Ditransfer: UID ${reqToUse.id}`,
+            `Laporan Dana Talangan (${reqToUse.userEmail} - ${siteLabel}) telah disetujui Manager sebesar ${approvedNominalFormatted} dan siap diproses/ditransfer Finance.`,
+            reqToUse,
+            undefined,
+            [currentActorEmail, applicantEmail]
+          ).catch(console.warn);
+        }
+      }
+
       await handleManualRefresh();
 
       // Check if Finance approved all items for standard request => open dedicated Form Closing modal
@@ -2267,6 +2511,17 @@ export default function App() {
       'Gagal menutup laporan.'
     );
     if (success !== null) {
+      // Trigger Web Push Notification to Applicant
+      if (!isBbmDurenSawitRequest(req) && req.userEmail) {
+        const siteLabel = getSiteLabel(req.siteId);
+        sendPushToEmail(
+          req.userEmail,
+          `Transaksi Selesai: UID ${req.id}`,
+          `Pengajuan dan laporan anggaran ${siteLabel} telah diverifikasi dan resmi ditutup (CLOSED) oleh Finance.`,
+          req
+        ).catch(console.warn);
+      }
+
       await handleManualRefresh();
     }
   };
@@ -2480,6 +2735,21 @@ export default function App() {
       setItemReviewHistories(prev => [historyLog, ...prev]);
       setRequests(prev => prev.map(r => r.id === req.id ? updatedReq : r));
       setCancelConfirmReq(null);
+
+      // Trigger Web Push Notification to Manager
+      if (!isBbmDurenSawitRequest(req)) {
+        const targetApproverEmail = req.managerEmail || profiles.find(p => p.role === Role.MANAGER)?.email;
+        if (targetApproverEmail) {
+          const requesterName = userProfile?.nama || userProfile?.email || req.userEmail;
+          const siteLabel = getSiteLabel(req.siteId);
+          sendPushToEmail(
+            targetApproverEmail,
+            `Pengajuan Dibatalkan: UID ${req.id}`,
+            `Pemohon ${requesterName} telah membatalkan pengajuan anggaran ${siteLabel}.`,
+            req
+          ).catch(console.warn);
+        }
+      }
     } catch (err: any) {
       setError(`Gagal membatalkan pengajuan: ${err.message || err}`);
     } finally {
