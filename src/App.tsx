@@ -593,7 +593,7 @@ export default function App() {
   // When auth completes, load spreadsheet & data
   useEffect(() => {
     if (token && user) {
-      initializeDatabaseAndLoad();
+      initializeDatabaseAndLoad(!!spreadsheetId);
     }
   }, [token, user]);
 
@@ -694,22 +694,32 @@ export default function App() {
     }
   };
 
-  const initializeDatabaseAndLoad = async () => {
+  const initializeDatabaseAndLoad = async (isSilent: boolean = false) => {
     if (!token || !user) return;
 
-    setIsLoading(true);
+    const showModal = !isSilent && !spreadsheetId;
+    if (showModal) {
+      setIsLoading(true);
+      setLoadingStep('Mencari/Membuat Database Google Sheets...');
+    }
     setError(null);
 
     try {
-      setLoadingStep('Mencari/Membuat Database Google Sheets...');
-      const sheetId = await findOrCreateDatabase(token);
-      setSpreadsheetId(sheetId);
+      let sheetId = spreadsheetId;
+      if (!sheetId) {
+        if (showModal) setLoadingStep('Mencari/Membuat Database Google Sheets...');
+        sheetId = await findOrCreateDatabase(token);
+        setSpreadsheetId(sheetId);
+      }
 
-      setLoadingStep('Mencari/Membuat Folder Bukti Google Drive...');
-      const folderId = await findOrCreateFolder(token);
-      setDriveFolderId(folderId);
+      let folderId = driveFolderId;
+      if (!folderId) {
+        if (showModal) setLoadingStep('Mencari/Membuat Folder Bukti Google Drive...');
+        folderId = await findOrCreateFolder(token);
+        setDriveFolderId(folderId);
+      }
 
-      setLoadingStep('Sinkronisasi Data Operasional...');
+      if (showModal) setLoadingStep('Sinkronisasi Data Operasional...');
       await syncAllData(token, sheetId);
     } catch (err: any) {
       console.error(err);
@@ -839,22 +849,30 @@ export default function App() {
         }
       }
 
-      // If the user is already logged in, keep their active session and update with the latest data
+      // If the user is already logged in or has a saved session, keep their active session and update with the latest data
       const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
       const cleanSavedId = (savedUserId || '').trim().toLowerCase();
-      const activeUserProf = userProfile || (cleanSavedId ? mergedProfs.find(p => (p.userId && p.userId.trim().toLowerCase() === cleanSavedId) || (p.email && p.email.trim().toLowerCase() === cleanSavedId)) : null);
-      if (activeUserProf) {
-        const activeEmail = (activeUserProf.email || '').trim().toLowerCase();
-        const activeUid = (activeUserProf.userId || '').trim().toLowerCase();
-        const updatedProfile = mergedProfs.find(p => 
-          (activeEmail && p.email && p.email.trim().toLowerCase() === activeEmail) ||
-          (activeUid && p.userId && p.userId.trim().toLowerCase() === activeUid)
-        );
-        if (updatedProfile) {
-          setUserProfile(updatedProfile);
+
+      setUserProfile(prev => {
+        const target = prev || (cleanSavedId ? mergedProfs.find(p => 
+          (p.userId && p.userId.trim().toLowerCase() === cleanSavedId) || 
+          (p.email && p.email.trim().toLowerCase() === cleanSavedId)
+        ) : null);
+
+        if (target) {
+          const targetEmail = (target.email || '').trim().toLowerCase();
+          const targetUid = (target.userId || '').trim().toLowerCase();
+          const updatedProfile = mergedProfs.find(p => 
+            (targetEmail && p.email && p.email.trim().toLowerCase() === targetEmail) ||
+            (targetUid && p.userId && p.userId.trim().toLowerCase() === targetUid)
+          ) || target;
+
           setActiveRole(updatedProfile.role);
+          return updatedProfile;
         }
-      }
+
+        return null;
+      });
 
       // Ensure the admin profile in Google Sheets has the correct email associated with it in the background
       if (user && user.email) {
@@ -872,9 +890,6 @@ export default function App() {
           }
         }
       }
-
-      // Always show the local application login form (UserID + Password) first
-      setUserProfile(null);
     } catch (err: any) {
       throw new Error(`Gagal memuat tabel database: ${err.message}`);
     }
@@ -1001,12 +1016,17 @@ export default function App() {
 
   const handleAppLoginSuccess = async (profile: UserProfile) => {
     setUserProfile(profile);
-    if (profile.userId) {
-      safeSetItem('op_app_logged_in_user_id', profile.userId);
+    const identifier = (profile.userId && profile.userId.trim()) || (profile.email && profile.email.trim());
+    if (identifier) {
+      safeSetItem('op_app_logged_in_user_id', identifier);
       try {
-        sessionStorage.setItem('op_app_logged_in_user_id', profile.userId);
+        sessionStorage.setItem('op_app_logged_in_user_id', identifier);
       } catch (e) {}
     }
+    safeSetJson('op_app_cached_profiles', profiles.map(p => 
+      (p.email && p.email.toLowerCase() === profile.email.toLowerCase()) ||
+      (p.userId && profile.userId && p.userId.toLowerCase() === profile.userId.toLowerCase()) ? profile : p
+    ));
 
     if (pendingSharedRecord) {
       if (profile.role === Role.FINANCE) {
