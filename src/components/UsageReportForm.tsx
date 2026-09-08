@@ -9,6 +9,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile, ItemReviewHistory, formatTimestamp } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
 import { ZoomableImage } from './ZoomableImage';
+import { FormProgressOverlay } from './FormProgressOverlay';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
@@ -240,10 +241,15 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     }));
 
     setIsSubmittingReview(true);
+    setIsReviewSuccess(false);
+    setReviewStep('Menyimpan keputusan review ke database...');
     try {
       if (onSubmitReview) {
         await onSubmitReview(payload, nextRequestStatus, request);
       }
+      setReviewStep('Keputusan review berhasil disimpan!');
+      setIsReviewSuccess(true);
+      await new Promise(r => setTimeout(r, 600));
     } catch (err: any) {
       const isAuthError = err.message && (
         err.message.includes('401') ||
@@ -259,6 +265,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       }
     } finally {
       setIsSubmittingReview(false);
+      setIsReviewSuccess(false);
     }
   };
 
@@ -295,7 +302,6 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   useBackHandler(!!viewingBbmItem, () => setViewingBbmItem(null), 'report_viewingBbmItem');
   useBackHandler(!!previewActivityPhoto, () => setPreviewActivityPhoto(null), 'report_previewActivityPhoto');
   useBackHandler(!!historyModalItem, () => setHistoryModalItem(null), 'report_historyModalItem');
-
   // Form State for Adding/Editing Item
   const [editingItem, setEditingItem] = useState<UsageReportItem | null>(null);
   const [tanggal, setTanggal] = useState(() => new Date().toISOString().split('T')[0]);
@@ -303,7 +309,18 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [keterangan, setKeterangan] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [savingStep, setSavingStep] = useState<string>('Menyimpan item...');
+  const [isSuccess, setIsSuccess] = useState<boolean>(false);
+  const [reviewStep, setReviewStep] = useState<string>('');
+  const [isReviewSuccess, setIsReviewSuccess] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Deletion Modal State
+  const [itemPendingDelete, setItemPendingDelete] = useState<UsageReportItem | null>(null);
+  const [isDeletingItem, setIsDeletingItem] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  useBackHandler(!!itemPendingDelete, () => { if (!isDeletingItem) setItemPendingDelete(null); }, 'report_itemPendingDelete');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -401,12 +418,15 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     }
 
     setUploading(true);
+    setIsSuccess(false);
+    setSavingStep(selectedFile ? 'Mengunggah nota ke Google Drive...' : 'Menyimpan item ke database...');
     try {
       let finalBuktiUrl = editingItem?.buktiUrl || '';
       let finalBuktiFileId = editingItem?.buktiFileId || '';
 
       // Upload file to Google Drive if a new one is selected
       if (selectedFile) {
+        setSavingStep('Mengunggah nota ke Google Drive...');
         const uploadResult = await uploadReceiptFile(googleToken, driveFolderId, selectedFile);
         finalBuktiUrl = uploadResult.viewUrl;
         finalBuktiFileId = uploadResult.fileId;
@@ -418,6 +438,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       const timestamp = formatTimestamp(new Date());
 
+      setSavingStep('Menyimpan item ke database...');
       if (editingItem) {
         // Update existing item
         const updated: UsageReportItem = {
@@ -455,6 +476,10 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         await onAddItem(newItem);
       }
 
+      setSavingStep('Item berhasil disimpan!');
+      setIsSuccess(true);
+      await new Promise(r => setTimeout(r, 600));
+
       // Reset form
       setNominal('');
       setKeterangan('');
@@ -478,6 +503,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       }
     } finally {
       setUploading(false);
+      setIsSuccess(false);
     }
   };
 
@@ -1006,17 +1032,14 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         )}
                         {!hasRejectedItems && (
                           <button
-                            onClick={async () => {
-                              if (window.confirm('Hapus item penggunaan ini?')) {
-                                try {
-                                  await onDeleteItem(item.id);
-                                } catch (e: any) {
-                                  setActionError(e.message);
-                                }
-                              }
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteError(null);
+                              setItemPendingDelete(item);
                             }}
-                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            title="Hapus"
+                            className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all cursor-pointer"
+                            title="Hapus Item Laporan"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1066,7 +1089,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       {/* Form Closing Card & Submit Review Button for Manager/Finance */}
       {((role === Role.MANAGER && !isRequesterManagerOrFinance) || (role === Role.FINANCE && requesterProfile?.role !== Role.FINANCE)) && request.status !== RequestStatus.PENDING_TALANGAN_TRANSFER && request.status !== RequestStatus.CLOSED && onSubmitReview && currentItems.length > 0 && (
-        <div className="space-y-3 pt-2">
+        <div className="space-y-3 pt-2 relative overflow-hidden rounded-2xl">
+          <FormProgressOverlay
+            isOpen={isSubmittingReview}
+            title="Menyimpan Hasil Review"
+            step={reviewStep}
+            isSuccess={isReviewSuccess}
+          />
           {/* Form Closing Banner for Finance when all items approved */}
           {(() => {
             const allApprovedByFinance = currentItems.length > 0 && currentItems.every(i => {
@@ -1188,7 +1217,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       {/* ----------------- POPUP MODAL FORM INPUT ----------------- */}
       {isFormOpen && role !== Role.DIREKTUR && (
         <div className="fixed inset-0 bg-slate-900/15 backdrop-blur-[2px] z-50 flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-scale-up border border-slate-100 flex flex-col my-8">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden animate-scale-up border border-slate-100 flex flex-col my-8 relative">
+            <FormProgressOverlay
+              isOpen={uploading}
+              title={editingItem ? 'Memperbarui Item Laporan' : (isTalangan ? 'Menyimpan Item Talangan' : 'Menyimpan Item Laporan')}
+              step={savingStep}
+              isSuccess={isSuccess}
+            />
             {/* Header */}
             <div className="flex items-center justify-between p-5 border-b border-slate-100 bg-slate-50/50">
               <div className="flex items-center gap-2">
@@ -1967,6 +2002,117 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             });
           }}
         />
+      )}
+
+      {/* Delete Item Confirmation Modal */}
+      {itemPendingDelete && createPortal(
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 max-w-md w-full animate-in zoom-in-95 duration-150 space-y-4 relative">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm">Hapus Item Laporan</h3>
+                  <p className="text-[11px] text-slate-400">Konfirmasi penghapusan item penggunaan</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={() => {
+                  setItemPendingDelete(null);
+                  setDeleteError(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {deleteError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
+            {/* Item summary card */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 space-y-1.5 text-xs">
+              <div className="flex justify-between items-center text-[10px] text-slate-400 font-mono">
+                <span>{itemPendingDelete.id}</span>
+                <span className="font-sans font-semibold text-slate-600">{itemPendingDelete.tanggalPenggunaan}</span>
+              </div>
+              <p className="font-bold text-slate-800 text-xs">{itemPendingDelete.keterangan}</p>
+              <div className="flex justify-between items-center pt-1.5 border-t border-slate-200/60">
+                <span className="text-[10px] text-slate-500">Nominal:</span>
+                <span className="font-bold text-slate-800 font-mono text-sm">{formatIDR(itemPendingDelete.nominal)}</span>
+              </div>
+            </div>
+
+            {/* Validation for Dana Talangan: Cannot delete if it's the last remaining item */}
+            {isTalangan && currentItems.length <= 1 ? (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                <p className="leading-relaxed text-[11px]">
+                  Pengajuan Dana Talangan wajib memiliki minimal 1 item laporan. Item ini adalah satu-satunya item yang ada. Jika ingin membatalkan seluruh pengajuan, silakan gunakan tombol <strong>Batalkan Pengajuan</strong> pada menu utama.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Apakah Anda yakin ingin menghapus item laporan ini? Tindakan ini akan menghapus rincian pengeluaran dari database dan total pengajuan akan disesuaikan otomatis.
+              </p>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isDeletingItem}
+                onClick={() => {
+                  setItemPendingDelete(null);
+                  setDeleteError(null);
+                }}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isTalangan && currentItems.length <= 1 ? 'Tutup' : 'Batal'}
+              </button>
+
+              {(!isTalangan || currentItems.length > 1) && (
+                <button
+                  type="button"
+                  disabled={isDeletingItem}
+                  onClick={async () => {
+                    setIsDeletingItem(true);
+                    setDeleteError(null);
+                    try {
+                      await onDeleteItem(itemPendingDelete.id);
+                      setItemPendingDelete(null);
+                    } catch (err: any) {
+                      setDeleteError(err.message || 'Gagal menghapus item laporan.');
+                    } finally {
+                      setIsDeletingItem(false);
+                    }
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isDeletingItem ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Menghapus...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Ya, Hapus Item</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -5,10 +5,15 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
-import { ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2, AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar, AlertTriangle, Lock, Eye, X } from 'lucide-react';
+import {
+  ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2,
+  AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar, AlertTriangle,
+  Lock, Eye, X, ChevronRight, Clock, History
+} from 'lucide-react';
 import { uploadReceiptFile, parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 import { FinancialReportsModal } from './FinancialReportsModal';
 import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
+import { useBackHandler } from '../hooks/useBackHandler';
 
 interface AdjustmentPanelProps {
   profiles: UserProfile[];
@@ -40,6 +45,8 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [activeSubView, setActiveSubView] = useState<'main' | 'history'>('main');
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
   const [unclosedTalanganAlertUser, setUnclosedTalanganAlertUser] = useState<UserProfile | null>(null);
   const [financialReportsUserEmail, setFinancialReportsUserEmail] = useState<string | null>(null);
   const [talanganReportUserEmail, setTalanganReportUserEmail] = useState<string | null>(null);
@@ -49,6 +56,16 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [inputAmount, setInputAmount] = useState<string>('');
+
+  // Back handler for history view and selected user
+  useBackHandler(activeSubView === 'history', () => setActiveSubView('main'), 'adjustment_history_subview');
+  useBackHandler(!!selectedUser, () => {
+    setSelectedUser(null);
+    setAdjustmentType('');
+    setNotes('');
+    setSelectedFile(null);
+    setError(null);
+  }, 'adjustment_selected_user');
 
   // File Upload / Camera State
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -234,6 +251,34 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       .filter(r => r.siteId === 'ADJUSTMENT')
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   }, [requests]);
+
+  // Filtered adjustment history by User Name, Email, or Request ID
+  const filteredHistoryRequests = useMemo(() => {
+    const query = historySearchQuery.trim().toLowerCase();
+    if (!query) return adjustmentHistoryRequests;
+
+    return adjustmentHistoryRequests.filter((adj) => {
+      const userProf = profiles.find(
+        (p) => p.email.toLowerCase() === adj.userEmail.toLowerCase()
+      );
+      const userName = (userProf?.nama || '').toLowerCase();
+      const userEmail = adj.userEmail.toLowerCase();
+      const reqId = (adj.id || '').toLowerCase();
+      const ket = (adj.keterangan || '').toLowerCase();
+
+      return (
+        userName.includes(query) ||
+        userEmail.includes(query) ||
+        reqId.includes(query) ||
+        ket.includes(query)
+      );
+    });
+  }, [adjustmentHistoryRequests, historySearchQuery, profiles]);
+
+  // Total filtered history nominal
+  const totalFilteredHistoryAmount = useMemo(() => {
+    return filteredHistoryRequests.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+  }, [filteredHistoryRequests]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
@@ -762,11 +807,205 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     );
   }
 
-  // Otherwise, render list of unbalanced users
+  // If history view is active, render the dedicated non-modal Riwayat Transaksi Adjustment Saldo Form
+  if (activeSubView === 'history') {
+    return (
+      <div className="space-y-4">
+        {/* Navigation & Back Button */}
+        <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-4 shadow-sm gap-3">
+          <button
+            type="button"
+            onClick={() => setActiveSubView('main')}
+            className="flex items-center gap-2 text-xs font-bold text-slate-600 hover:text-indigo-600 bg-white hover:bg-slate-50 border border-slate-200 py-2 px-3.5 rounded-xl transition-all cursor-pointer shadow-2xs active:scale-95 group"
+          >
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+            <span>Kembali ke Adjustment Saldo Operasional</span>
+          </button>
+          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2.5 py-1 rounded-full flex items-center gap-1">
+            <Coins className="w-3.5 h-3.5" />
+            <span>List Adjustment</span>
+          </span>
+        </div>
+
+        {/* Header & Overview Card */}
+        <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3">
+          <div>
+            <h3 className="font-display font-black text-slate-800 text-xs tracking-wide uppercase flex items-center gap-1.5">
+              <Coins className="w-4 h-4 text-indigo-600" />
+              <span>Riwayat Transaksi Adjustment Saldo</span>
+            </h3>
+            <p className="text-[11px] text-slate-500 leading-relaxed font-medium mt-0.5">
+              Daftar seluruh riwayat penyesuaian saldo operasional user oleh Finance beserta rincian bukti potongan atau transfer.
+            </p>
+          </div>
+
+          {/* Stats Summary Bar */}
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-2xs text-left">
+              <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">Total Transaksi</span>
+              <span className="text-sm font-black font-display text-slate-800">
+                {filteredHistoryRequests.length}{' '}
+                <span className="text-xs font-normal text-slate-500">
+                  {historySearchQuery ? `dari ${adjustmentHistoryRequests.length}` : 'Transaksi'}
+                </span>
+              </span>
+            </div>
+            <div className="bg-indigo-50/80 p-3 rounded-xl border border-indigo-100 shadow-2xs text-left">
+              <span className="text-[9px] font-bold text-indigo-500 block uppercase tracking-wider">Net Nominal Adjustment</span>
+              <span className="text-sm font-black font-mono font-display text-indigo-700 block">
+                {formatIDR(totalFilteredHistoryAmount)}
+              </span>
+            </div>
+          </div>
+
+          {/* Search Filter by User Name Input */}
+          <div className="relative pt-1">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              placeholder="Cari berdasarkan Nama User, Email, atau ID Adjustment..."
+              value={historySearchQuery}
+              onChange={(e) => setHistorySearchQuery(e.target.value)}
+              className="w-full pl-10 pr-10 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none placeholder:text-slate-400"
+            />
+            {historySearchQuery && (
+              <button
+                type="button"
+                onClick={() => setHistorySearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 cursor-pointer"
+                title="Hapus filter pencarian"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* History List */}
+        {filteredHistoryRequests.length > 0 ? (
+          <div className="space-y-3">
+            {filteredHistoryRequests.map((adj) => {
+              const userProf = profiles.find(
+                (p) => p.email.toLowerCase() === adj.userEmail.toLowerCase()
+              );
+              const userName = userProf?.nama || adj.userEmail.split('@')[0];
+              const isPositive = (adj.adminActionAmount || 0) > 0;
+
+              return (
+                <div
+                  key={adj.id}
+                  className="bg-white border border-slate-200 rounded-2xl p-4 text-xs shadow-xs hover:border-slate-300 transition-all space-y-2.5"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-700 font-bold flex items-center justify-center shrink-0 border border-slate-200">
+                        {userName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <h4 className="font-bold text-slate-800 text-xs truncate">{userName}</h4>
+                          <span className="font-mono text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded border border-slate-200">
+                            {adj.id}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 font-mono truncate">{adj.userEmail}</p>
+                        {userProf?.divisi && (
+                          <p className="text-[9px] text-slate-500 font-medium">
+                            Divisi: {formatDivisiSubDivisi(userProf.divisi, userProf.subDivisi)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <span className="text-[8px] font-bold text-slate-400 block uppercase tracking-wider">
+                        Nominal Penyesuaian
+                      </span>
+                      <span
+                        className={`font-black font-mono text-sm block mt-0.5 ${
+                          isPositive ? 'text-emerald-600' : 'text-amber-600'
+                        }`}
+                      >
+                        {isPositive
+                          ? `+${formatIDR(adj.adminActionAmount)}`
+                          : formatIDR(adj.adminActionAmount)}
+                      </span>
+                      <span
+                        className={`inline-block text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${
+                          isPositive
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}
+                      >
+                        {isPositive ? 'Penambahan Saldo' : 'Pemotongan Saldo'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-150 space-y-1.5 text-left">
+                    <div className="flex items-start gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-slate-700 font-medium leading-relaxed">
+                        {adj.keterangan || 'Penyesuaian Saldo Operasional'}
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/60 text-[10px] text-slate-500">
+                      <div className="flex items-center gap-1 font-mono text-[9px]">
+                        <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+                        <span>Waktu: </span>
+                        <strong className="text-slate-700 font-semibold">
+                          {adj.adminActionTime || adj.createdAt || adj.tanggalPemakaian || '-'}
+                        </strong>
+                      </div>
+
+                      {adj.proofFileUrl && (
+                        <a
+                          href={adj.proofFileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50/80 hover:bg-indigo-100 px-2 py-0.5 rounded-lg border border-indigo-100 transition-colors"
+                        >
+                          <Paperclip className="w-3 h-3" />
+                          <span>Lihat Bukti</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-8 text-center space-y-2">
+            <Coins className="w-8 h-8 text-slate-400 mx-auto" />
+            <h4 className="text-xs font-bold text-slate-700 uppercase">
+              {historySearchQuery ? 'Tidak Ada Transaksi Sesuai Pencarian' : 'Belum Ada Transaksi Adjustment'}
+            </h4>
+            <p className="text-[10px] text-slate-500 max-w-xs mx-auto">
+              {historySearchQuery
+                ? `Tidak ditemukan riwayat penyesuaian saldo untuk kata kunci "${historySearchQuery}". Coba kata kunci nama user atau email lain.`
+                : 'Belum ada transaksi adjustment saldo yang pernah dicatat oleh Finance.'}
+            </p>
+            {historySearchQuery && (
+              <button
+                type="button"
+                onClick={() => setHistorySearchQuery('')}
+                className="mt-2 text-xs font-bold text-indigo-600 hover:underline cursor-pointer"
+              >
+                Hapus Filter Pencarian
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Otherwise, render list of unbalanced users (Adjustment Saldo Operasional)
   return (
     <div className="space-y-4">
       {/* Back to Dashboard Header */}
-      <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-4 shadow-sm gap-2">
+      <div className="flex items-center justify-between bg-white border border-slate-200 rounded-2xl p-4 shadow-sm gap-2 flex-wrap">
         <button
           onClick={onClose}
           className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-indigo-600 transition-all cursor-pointer shrink-0"
@@ -774,10 +1013,21 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           <ArrowLeft className="w-4 h-4" />
           <span>Kembali ke Dashboard</span>
         </button>
-        <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full flex items-center gap-1">
-          <ShieldCheck className="w-3.5 h-3.5" />
-          <span>Adjustment Mode</span>
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setActiveSubView('history')}
+            className="text-[10px] font-bold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200 px-2.5 py-1 rounded-full flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-95"
+            title="Klik untuk membuka Form List Riwayat Transaksi Adjustment Saldo"
+          >
+            <Coins className="w-3.5 h-3.5 text-indigo-500" />
+            <span>Riwayat Transaksi ({adjustmentHistoryRequests.length})</span>
+          </button>
+          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full flex items-center gap-1">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>Adjustment Mode</span>
+          </span>
+        </div>
       </div>
 
       <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3">
@@ -951,50 +1201,39 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
         </div>
       )}
 
-      {/* Riwayat Transaksi Adjustment Saldo */}
-      {adjustmentHistoryRequests.length > 0 && (
-        <div className="pt-4 border-t border-slate-200 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-              <Coins className="w-4 h-4 text-indigo-600" />
-              <span>Riwayat Transaksi Adjustment Saldo ({adjustmentHistoryRequests.length})</span>
-            </h3>
+      {/* Clickable Label / Card: Riwayat Transaksi Adjustment Saldo */}
+      <div className="pt-4 border-t border-slate-200">
+        <button
+          type="button"
+          onClick={() => setActiveSubView('history')}
+          className="w-full bg-white hover:bg-indigo-50/40 border border-slate-200 hover:border-indigo-300 rounded-2xl p-4 text-left shadow-xs transition-all duration-200 flex items-center justify-between group cursor-pointer active:scale-[0.99]"
+          title="Klik untuk membuka Form List Riwayat Transaksi Adjustment Saldo"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center shrink-0 group-hover:scale-105 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-2xs">
+              <Coins className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-xs font-bold text-slate-800 group-hover:text-indigo-600 transition-colors uppercase tracking-wider">
+                  Riwayat Transaksi Adjustment Saldo
+                </h3>
+                <span className="text-[10px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-mono">
+                  {adjustmentHistoryRequests.length} Transaksi
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5 font-medium">
+                Klik label ini untuk menuju ke form List Adjustment dan melihat rincian bukti transaksi
+              </p>
+            </div>
           </div>
 
-          <div className="space-y-2">
-            {adjustmentHistoryRequests.map((adj) => (
-              <div key={adj.id} className="bg-white border border-slate-200 rounded-xl p-3 text-xs flex items-center justify-between gap-3 shadow-xs">
-                <div className="space-y-0.5 text-left">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-[9px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{adj.id}</span>
-                    <span className="font-bold text-slate-800">{adj.userEmail}</span>
-                  </div>
-                  <p className="text-[10px] text-slate-500">{adj.keterangan}</p>
-                  <div className="flex items-center gap-2 text-[9px] text-slate-400 font-mono mt-0.5">
-                    <span>Waktu Executed (AdminActionTime): <strong className="text-emerald-700 font-semibold">{adj.adminActionTime || adj.createdAt || adj.tanggalPemakaian}</strong></span>
-                  </div>
-                </div>
-                <div className="text-right shrink-0">
-                  <span className={`font-bold font-mono text-xs block ${adj.adminActionAmount > 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                    {adj.adminActionAmount > 0 ? `+${formatIDR(adj.adminActionAmount)}` : formatIDR(adj.adminActionAmount)}
-                  </span>
-                  {adj.proofFileUrl && (
-                    <a
-                      href={adj.proofFileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[9px] font-bold text-indigo-600 hover:underline mt-0.5"
-                    >
-                      <Paperclip className="w-3 h-3" />
-                      <span>Bukti</span>
-                    </a>
-                  )}
-                </div>
-              </div>
-            ))}
+          <div className="flex items-center gap-1.5 text-slate-400 group-hover:text-indigo-600 transition-colors shrink-0">
+            <span className="text-xs font-bold hidden sm:inline">Buka List Adjustment</span>
+            <ChevronRight className="w-5 h-5 group-hover:translate-x-0.5 transition-transform" />
           </div>
-        </div>
-      )}
+        </button>
+      </div>
 
       {/* Popup modal Laporan Transaksi Saldo Operasional User saat Badge JUMLAH NOMINAL ADJUSTMENT di-klik (Kriteria pengecualian UID OPT-) */}
       {financialReportsUserEmail && (

@@ -6,6 +6,7 @@
 import React, { useState, useRef } from 'react';
 import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus, formatTimestamp } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
+import { FormProgressOverlay } from './FormProgressOverlay';
 import {
   Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles,
   Camera, UploadCloud, X, Image as ImageIcon, AlertTriangle, ShieldCheck, CheckCircle2, Lock,
@@ -92,6 +93,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState<string>('');
+  const [isSuccess, setIsSuccess] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -229,6 +232,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
     }
 
     setIsSubmitting(true);
+    setIsSuccess(false);
+    setSubmitStep(selectedFile ? 'Mengunggah nota ke Google Drive...' : 'Menyimpan data ke database...');
     try {
       const uid = initialRequest ? initialRequest.id : generateUID();
       const newRequest: BudgetRequest = {
@@ -267,16 +272,25 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         };
       }
 
+      setSubmitStep(firstItem ? 'Menyimpan pengajuan & nota...' : 'Menyimpan pengajuan ke database...');
       await onSubmit(newRequest, firstItem, selectedFile);
+      setSubmitStep('Data berhasil disimpan!');
+      setIsSuccess(true);
+      await new Promise(r => setTimeout(r, 600));
     } catch (err: any) {
       setError(err.message || 'Gagal mengirimkan pengajuan anggaran.');
-    } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-100 shadow-lg p-5 animate-slide-up relative">
+    <div className="bg-white rounded-2xl border border-slate-100 shadow-lg p-5 animate-slide-up relative overflow-hidden">
+      <FormProgressOverlay
+        isOpen={isSubmitting}
+        title={isTalangan ? 'Menyimpan Laporan Dana Talangan' : (initialRequest ? 'Menyimpan Revisi Pengajuan' : 'Menyimpan Pengajuan Anggaran')}
+        step={submitStep}
+        isSuccess={isSuccess}
+      />
       <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-50">
         <div>
           <h2 className="font-display font-bold text-slate-800 text-sm">

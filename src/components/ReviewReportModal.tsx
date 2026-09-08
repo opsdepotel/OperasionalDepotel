@@ -9,6 +9,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile, ItemReviewHistory } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
 import { ZoomableImage } from './ZoomableImage';
+import { FormProgressOverlay } from './FormProgressOverlay';
 import { parseNumericValue } from '../lib/googleApi';
 import {
   Shield, ShieldCheck, Check, X, AlertCircle, Info, ExternalLink,
@@ -102,6 +103,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   const [decisions, setDecisions] = useState<Record<string, { status: ItemStatus; comment: string }>>({});
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState<string>('');
+  const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [viewingActivityItem, setViewingActivityItem] = useState<{ item: UsageReportItem; date: string } | null>(null);
   const [selectedActivityDate, setSelectedActivityDate] = useState<string>('');
   const [previewActivityPhoto, setPreviewActivityPhoto] = useState<{ url: string; fileId?: string; title: string } | null>(null);
@@ -234,11 +237,15 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
     }));
 
     setIsSubmitting(true);
+    setIsSuccess(false);
+    setSubmitStep('Menyimpan status review ke database...');
     try {
       await onSubmitReview(payload, nextRequestStatus);
+      setSubmitStep('Hasil review berhasil disimpan!');
+      setIsSuccess(true);
+      await new Promise(r => setTimeout(r, 600));
     } catch (err: any) {
       setError(err.message || 'Gagal menyimpan hasil review.');
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -247,7 +254,13 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 max-w-4xl w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 space-y-4 my-auto">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 max-w-4xl w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 space-y-4 my-auto relative overflow-hidden">
+        <FormProgressOverlay
+          isOpen={isSubmitting}
+          title="Menyimpan Hasil Review"
+          step={submitStep}
+          isSuccess={isSuccess}
+        />
       {/* Header */}
       <div className="flex items-center justify-between pb-2 border-b border-slate-100">
         <div>

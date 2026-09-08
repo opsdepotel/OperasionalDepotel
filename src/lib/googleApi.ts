@@ -1053,7 +1053,9 @@ export async function fetchUsageItems(token: string, spreadsheetId: string): Pro
   }
   if (!res.ok) return [];
   const data = await res.json();
-  return parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, data.values, mapToUsageItem);
+  return parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, data.values, mapToUsageItem).filter(
+    item => Boolean(item.id && item.id.trim() !== '' && item.requestId && item.requestId.trim() !== '')
+  );
 }
 
 // Fetch Profiles
@@ -1628,7 +1630,7 @@ export async function deleteUsageItem(token: string, spreadsheetId: string, item
   const sheetRowIdx = rowIdx + 1;
 
   // Since Google Sheets values API doesn't support deleting row cleanly without shifting, we clear the values of this row
-  const clearRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:M${sheetRowIdx}:clear`, {
+  const clearRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:Z${sheetRowIdx}:clear`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`

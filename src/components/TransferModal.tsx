@@ -8,6 +8,7 @@ import { BudgetRequest, RequestStatus, ItemReviewHistory, ItemStatus, UserProfil
 import { parseNumericValue } from '../lib/googleApi';
 import { getFinanceApprovedAmount, getTransferBertahap } from '../App';
 import { ItemHistoryModal } from './ItemHistoryModal';
+import { FormProgressOverlay } from './FormProgressOverlay';
 import { 
   CreditCard, 
   AlertCircle, 
@@ -93,6 +94,8 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   const [revisionReason, setRevisionReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState<string>('');
+  const [isSuccess, setIsSuccess] = useState<boolean>(false);
 
   // File Upload State
   const [selectedFile, setSelectedFile] = useState<File | null>(initialFile || null);
@@ -139,12 +142,18 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   const handleExecuteClosingOnly = async () => {
     setError(null);
     setIsSubmitting(true);
+    setIsSuccess(false);
+    setSubmitStep('Memproses closing UID Talangan...');
     try {
       await onTransfer(0, '', '', adminComment.trim() || 'Closing UID Talangan oleh Finance');
+      setSubmitStep('Closing UID berhasil disimpan!');
+      setIsSuccess(true);
+      await new Promise(r => setTimeout(r, 600));
     } catch (err: any) {
       setError(err.message || 'Gagal melakukan closing UID Talangan.');
     } finally {
       setIsSubmitting(false);
+      setIsSuccess(false);
     }
   };
 
@@ -162,12 +171,18 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         return;
       }
       setIsSubmitting(true);
+      setIsSuccess(false);
+      setSubmitStep('Mengirim catatan revisi pengajuan...');
       try {
         await onReject(revisionReason.trim());
+        setSubmitStep('Permintaan revisi berhasil dikirim!');
+        setIsSuccess(true);
+        await new Promise(r => setTimeout(r, 600));
       } catch (err: any) {
         setError(err.message || 'Gagal mengirimkan revisi pengajuan.');
       } finally {
         setIsSubmitting(false);
+        setIsSuccess(false);
       }
       return;
     }
@@ -194,6 +209,8 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     }
 
     setIsSubmitting(true);
+    setIsSuccess(false);
+    setSubmitStep(selectedFile ? 'Mengunggah bukti transfer ke Google Drive...' : 'Menyimpan transfer dana...');
     let finalBuktiUrl = '';
     let finalBuktiFileId = '';
 
@@ -203,12 +220,17 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         if (!driveFolderId) {
           throw new Error('ID Folder Google Drive belum terinisialisasi.');
         }
+        setSubmitStep('Mengunggah bukti transfer ke Google Drive...');
         const uploadResult = await uploadReceiptFile(googleToken, driveFolderId, selectedFile);
         finalBuktiUrl = uploadResult.viewUrl;
         finalBuktiFileId = uploadResult.fileId;
       }
 
+      setSubmitStep('Menyimpan data transfer ke database...');
       await onTransfer(amt, finalBuktiUrl, finalBuktiFileId, adminComment.trim(), ocrDate || undefined, isCloseTransferChecked);
+      setSubmitStep('Transfer dana berhasil disimpan!');
+      setIsSuccess(true);
+      await new Promise(r => setTimeout(r, 600));
     } catch (err: any) {
       const isAuthError = err.message && (
         err.message.includes('401') ||
@@ -224,12 +246,19 @@ export const TransferModal: React.FC<TransferModalProps> = ({
       }
     } finally {
       setIsSubmitting(false);
+      setIsSuccess(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-[100] bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[92vh] sm:max-h-[88vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-auto">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full max-h-[92vh] sm:max-h-[88vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-auto relative">
+        <FormProgressOverlay
+          isOpen={isSubmitting}
+          title={activeMode === 'REVISE' ? 'Mengirim Catatan Revisi' : (isTalangan ? 'Memproses Transfer Dana Talangan' : 'Memproses Transfer Anggaran')}
+          step={submitStep}
+          isSuccess={isSuccess}
+        />
         {/* Title / Header */}
         <div className="flex items-center justify-between p-4 sm:p-5 pb-3 border-b border-slate-100 shrink-0 bg-white">
           <div>

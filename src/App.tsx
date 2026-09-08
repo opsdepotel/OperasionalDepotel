@@ -56,6 +56,7 @@ import { DashboardStats } from './components/DashboardStats';
 import { ZoomableImage } from './components/ZoomableImage';
 import { BudgetRequestForm } from './components/BudgetRequestForm';
 import { UsageReportForm } from './components/UsageReportForm';
+import { FormProgressOverlay } from './components/FormProgressOverlay';
 import { ReviewBudgetModal } from './components/ReviewBudgetModal';
 import { TransferModal } from './components/TransferModal';
 import { ReviewReportModal } from './components/ReviewReportModal';
@@ -2184,19 +2185,19 @@ export default function App() {
     const currentToken = token || 'mock_demo_token';
     const currentSheetId = spreadsheetId || 'mock_sheet_id';
 
-    if (token && spreadsheetId) {
-      const success = await runGoogleAction(
-        async () => {
-          await deleteUsageItem(currentToken, currentSheetId, itemId);
-          if (updatedReq) {
-            await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
-          }
-        },
-        'Gagal menghapus item penggunaan.'
-      );
-      if (success !== null) {
-        await handleManualRefresh();
-      }
+    const success = await runGoogleAction(
+      async () => {
+        await deleteUsageItem(currentToken, currentSheetId, itemId);
+        if (updatedReq) {
+          await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
+        }
+      },
+      'Gagal menghapus item penggunaan.'
+    );
+    if (success !== null) {
+      await handleManualRefresh();
+    } else {
+      throw new Error('Gagal menghapus item penggunaan dari database.');
     }
   };
 
@@ -3137,26 +3138,6 @@ export default function App() {
     );
   }
 
-  // Render Loader state (Database initialization or global action loaders)
-  if (isLoading && loadingStep && userProfile) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-sm bg-white border border-slate-100 p-6 rounded-3xl shadow-xl text-center space-y-4">
-          <div className="w-12 h-12 bg-indigo-50 text-indigo-600 flex items-center justify-center rounded-2xl mx-auto shadow-sm">
-            <RefreshCw className="w-6 h-6 animate-spin text-indigo-600" />
-          </div>
-          <h2 className="font-display font-bold text-slate-800 text-sm">Menyiapkan Aplikasi</h2>
-          <p className="text-xs text-slate-500 font-medium leading-relaxed">
-            {loadingStep}
-          </p>
-          <div className="h-1 w-24 bg-indigo-100 rounded-full mx-auto overflow-hidden">
-            <div className="h-full bg-indigo-600 rounded-full w-2/3 animate-pulse"></div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans">
       <PwaInstallBanner />
@@ -3254,6 +3235,9 @@ export default function App() {
             onThemeChange={setTheme}
             token={token}
             driveFolderId={driveFolderId}
+            permissionsStatus={permissionsStatus}
+            onPermissionsUpdated={setPermissionsStatus}
+            onOpenPermissionsModal={() => setIsPermissionsModalOpen(true)}
           />
         ) : activeView === 'new-request' && userProfile ? (
           <BudgetRequestForm
@@ -3402,7 +3386,7 @@ export default function App() {
                     {/* Settings / Profile Button */}
                     <button
                       onClick={() => setActiveView('profile-settings')}
-                      className={`p-2 rounded-xl transition-all cursor-pointer ${
+                      className={`relative p-2 rounded-xl transition-all cursor-pointer ${
                         activeView === 'profile-settings'
                           ? 'text-indigo-600 bg-indigo-50 font-bold'
                           : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'
@@ -3410,31 +3394,12 @@ export default function App() {
                       title="Pengaturan Profil & Sandi"
                     >
                       <Settings className="w-4 h-4" />
+                      {permissionsStatus && !permissionsStatus.allGranted && (
+                        <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-amber-500 ring-2 ring-white" />
+                      )}
                     </button>
                   </div>
                 </div>
-
-                {/* Device Permissions Warning Banner if any permission is incomplete */}
-                {permissionsStatus && !permissionsStatus.allGranted && (
-                  <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3 text-xs flex items-center justify-between gap-2.5 shadow-2xs animate-slide-up">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-2xs">
-                        <Smartphone className="w-4 h-4" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-bold text-amber-950 text-xs truncate">Kesiapan Perangkat Belum Lengkap</p>
-                        <p className="text-[11px] text-amber-800 truncate">Izin Notifikasi, Lokasi, atau Kamera belum aktif</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setIsPermissionsModalOpen(true)}
-                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-bold text-xs rounded-xl transition-all shrink-0 cursor-pointer shadow-xs"
-                    >
-                      Aktifkan
-                    </button>
-                  </div>
-                )}
 
                 {/* Core Stats Section */}
                 <DashboardStats
@@ -4968,6 +4933,14 @@ export default function App() {
           }
         }}
         userProfile={userProfile}
+      />
+
+      {/* Global Loading Overlay (Hampir Full Transparan, Spinner + Label Singkat, Non-Destructive) */}
+      <FormProgressOverlay
+        isOpen={Boolean(isLoading && loadingStep)}
+        title="Memproses Data"
+        step={loadingStep}
+        isFixed={true}
       />
     </div>
   );

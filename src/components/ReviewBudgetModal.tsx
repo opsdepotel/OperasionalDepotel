@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { BudgetRequest, RequestStatus, SiteInfo, ItemReviewHistory, ItemStatus, UserProfile, Role } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import { ItemHistoryModal } from './ItemHistoryModal';
+import { FormProgressOverlay } from './FormProgressOverlay';
 import { Shield, Check, X, AlertCircle, Coins, MessageSquare, MapPin, ExternalLink, History } from 'lucide-react';
 
 interface ReviewBudgetModalProps {
@@ -82,6 +83,8 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
   const [action, setAction] = useState<'APPROVE' | 'REJECT' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitStep, setSubmitStep] = useState<string>('');
+  const [isSuccess, setIsSuccess] = useState<boolean>(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   // Parse Site ID and match database for multi-site vertical list
@@ -180,11 +183,15 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
     }
 
     setIsSubmitting(true);
+    setIsSuccess(false);
+    setSubmitStep('Menyimpan persetujuan anggaran ke database...');
     try {
       await onApprove(amt, comment.trim());
+      setSubmitStep('Persetujuan berhasil disimpan!');
+      setIsSuccess(true);
+      await new Promise(r => setTimeout(r, 600));
     } catch (err: any) {
       setError(err.message || 'Gagal menyetujui pengajuan.');
-    } finally {
       setIsSubmitting(false);
     }
   };
@@ -199,18 +206,28 @@ export const ReviewBudgetModal: React.FC<ReviewBudgetModalProps> = ({
     }
 
     setIsSubmitting(true);
+    setIsSuccess(false);
+    setSubmitStep('Menyimpan permintaan revisi ke database...');
     try {
       await onReject(comment.trim());
+      setSubmitStep('Permintaan revisi berhasil dikirim!');
+      setIsSuccess(true);
+      await new Promise(r => setTimeout(r, 600));
     } catch (err: any) {
       setError(err.message || 'Gagal menolak pengajuan.');
-    } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 space-y-4 my-auto">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-5 max-w-2xl w-full max-h-[90vh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150 space-y-4 my-auto relative overflow-hidden">
+        <FormProgressOverlay
+          isOpen={isSubmitting}
+          title={submitStep.includes('revisi') ? 'Mengirim Revisi Pengajuan' : 'Memproses Persetujuan Anggaran'}
+          step={submitStep}
+          isSuccess={isSuccess}
+        />
       {/* Title */}
       <div className="flex items-center justify-between pb-2 border-b border-slate-100">
         <div>
