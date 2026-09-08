@@ -383,7 +383,9 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
               </div>
             </div>
 
-            {userProfile.aksesBBM && (
+            {(userProfile.aksesBBM === true || [
+              'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
+            ].includes(String(userProfile.aksesBBM ?? '').trim().toUpperCase())) && (
               <div className="bg-amber-50/70 p-2.5 rounded-2xl border border-amber-200/60 flex items-center gap-2">
                 <Fuel className="w-4 h-4 text-amber-600 shrink-0" />
                 <div>

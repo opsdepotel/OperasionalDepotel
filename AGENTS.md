@@ -66,3 +66,20 @@
     - Tombol aksi: `<< Kembali` untuk kembali ke Bagian 1 dan `Simpan Laporan Dana Talangan` untuk menyimpan pengajuan ke database.
     - Penyimpanan hanya dapat dilakukan setelah item pertama diisi lengkap (nominal > 0, keterangan, dan foto bukti nota).
 
+## Device ID Logic & Persistence Flow - [LOCKED]
+- **Status: STRICTLY LOCKED**: Alur, logika, dan arsitektur persistensi Device ID telah dikunci secara ketat. Tidak boleh ada perubahan pada fungsi, alur pengikatan (binding), validasi, maupun media penyimpanan tanpa konfirmasi dan persetujuan eksplisit dari pengguna.
+- **Rules & Specifications**:
+  - **Generation**: Format Device ID menggunakan kombinasi hardware fingerprint: `DEV-MOB-${screenWidth}x${screenHeight}-${randomSeed}` (dengan `crypto.randomUUID()` 8 karakter alfanumerik acak).
+  - **Multi-Vault Storage**: Device ID disimpan secara redundan dan sinkron pada:
+    1. `localStorage` (`op_app_device_id` & `op_app_device_id_backup`)
+    2. `sessionStorage` (`op_app_device_id`)
+    3. Document Cookie (`SameSite=Lax`, path `/`, masa berlaku 10 tahun / 3650 hari)
+    4. `IndexedDB` internal (`DIOMS_DEVICE_DB`, store `device_meta` dengan kunci `op_device_id` dan `bound_device_{userEmail}`)
+    5. StorageManager Persistent Storage Lock (`navigator.storage.persist()`) otomatis saat aplikasi dimuat dan saat sinkronisasi Device ID.
+  - **Self-Healing / Auto-Recovery**: Jika Device ID hilang dari salah satu penyimpanan (misal pembersihan cache parsial), sistem otomatis memulihkan nilainya dari lapisan cadangan (IndexedDB/Cookie) dan menyinkronkan kembali ke seluruh lapisan.
+  - **Binding & Access Control (`validateDeviceAccessAndBind`)**:
+    - Pengguna dengan `Mobile = TRUE` wajib login dari perangkat mobile (Android/iOS). Login dari PC ditolak.
+    - Pada login pertama di mobile, Device ID perangkat dikunci ke profil pengguna di database (Google Sheets kolom `DeviceID`).
+    - Login berikutnya mencocokkan Device ID fisik dengan database. Jika berbeda, akses diblokir dan hanya dapat dibuka kembali melalui Reset Device ID oleh Administrator.
+    - Satu perangkat mobile yang telah terikat tidak dapat digunakan oleh akun lain yang juga berstatus `Mobile = TRUE`.
+

@@ -121,7 +121,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   // Check if the user associated with this UID request has BBM Duren Sawit access and Mobile mandatory setting
   const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
   const isRequesterManagerOrFinance = requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE;
-  const hasBbmAccess = !!requesterProfile?.aksesBBM;
+  const hasBbmAccess = requesterProfile?.aksesBBM === true || [
+    'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
+  ].includes(String(requesterProfile?.aksesBBM ?? '').trim().toUpperCase());
   const isMobileUser = requesterProfile?.mobile === true ||
     String(requesterProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
     String(requesterProfile?.mobile).trim().toUpperCase() === 'YA' ||

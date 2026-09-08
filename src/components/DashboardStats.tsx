@@ -12,8 +12,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
 import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
 import { ReopenUidModal } from './ReopenUidModal';
-import { AdminPushTestCard } from './AdminPushTestCard';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -27,6 +26,7 @@ interface DashboardStatsProps {
   onSelectFilter?: (filterKey: string) => void;
   onManageUsers?: () => void;
   onOpenUserDashboardPreview?: () => void;
+  onOpenPushTest?: () => void;
   onOpenAdjustment?: () => void;
   onOpenTransferList?: () => void;
   onOpenReportsModal?: () => void;
@@ -53,6 +53,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onSelectFilter,
   onManageUsers,
   onOpenUserDashboardPreview,
+  onOpenPushTest,
   onOpenAdjustment,
   onOpenTransferList,
   onOpenReportsModal,
@@ -627,7 +628,25 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   };
 
   const renderBbmCard = () => {
-    if (!userProfile?.aksesBBM) return null;
+    const userEmailToMatch = (userProfile?.email || email || '').trim().toLowerCase();
+    const userMatchedProfile = profiles.find(p => 
+      (p.email && userEmailToMatch && p.email.trim().toLowerCase() === userEmailToMatch) ||
+      (p.userId && userProfile?.userId && p.userId.trim().toLowerCase() === userProfile.userId.trim().toLowerCase())
+    ) || userProfile;
+
+    const isPrivileged = [
+      Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR
+    ].includes(role) || [
+      Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR
+    ].includes(userMatchedProfile?.role as Role);
+
+    const rawAksesBbm = userMatchedProfile?.aksesBBM !== undefined ? userMatchedProfile.aksesBBM : userProfile?.aksesBBM;
+    const bbmStr = String(rawAksesBbm ?? '').trim().toUpperCase();
+    const hasBbmAccess = isPrivileged || rawAksesBbm === true || [
+      'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
+    ].includes(bbmStr);
+
+    if (!hasBbmAccess) return null;
 
     const getTodayStr = () => {
       const d = new Date();
@@ -637,8 +656,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       return `${year}-${month}-${day}`;
     };
     const todayStr = getTodayStr();
-
-    const userEmailToMatch = (userProfile?.email || email || '').toLowerCase();
 
     const todayRefillCount = requests.filter(r => {
       const isBbmReq = r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
@@ -2283,10 +2300,46 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         )}
 
         {/* Administrator Push Notification Test Card */}
-        <AdminPushTestCard
-          profiles={profiles}
-          currentAdminEmail={email}
-        />
+        {onOpenPushTest && (
+          <div
+            id="admin-push-test-card"
+            onClick={onOpenPushTest}
+            className="p-5 rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50/90 via-white to-indigo-50/50 shadow-md hover:shadow-lg hover:border-sky-400 transition-all cursor-pointer group flex items-center justify-between gap-4 select-none"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpenPushTest();
+              }
+            }}
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-sky-200 group-hover:scale-105 transition-transform">
+                <BellRing className="w-6 h-6 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-sky-600 transition-colors">
+                    Uji Coba Push Notifikasi Pengguna
+                  </h3>
+                  <span className="text-[9px] font-bold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full border border-sky-300/60 uppercase">
+                    Fitur Administrator
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="hidden sm:inline-block text-xs font-semibold text-sky-700 group-hover:text-sky-900 transition-colors">
+                Buka Formulir
+              </span>
+              <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+                &rarr;
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Card: Reopen UID (Mengubah status CLOSED menjadi REPORTING) */}
         <div

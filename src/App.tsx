@@ -63,6 +63,7 @@ import { AppLoginForm } from './components/AppLoginForm';
 import { AdjustmentPanel } from './components/AdjustmentPanel';
 import { TransferListPanel } from './components/TransferListPanel';
 import { ActivityLogView } from './components/ActivityLogView';
+import { AdminPushTestCard } from './components/AdminPushTestCard';
 import { BbmRefillModal } from './components/BbmRefillModal';
 import { BbmListModal } from './components/BbmListModal';
 import { FinancialReportsModal } from './components/FinancialReportsModal';
@@ -328,7 +329,7 @@ export default function App() {
   const [activeRole, setActiveRole] = useState<Role>(() => userProfile?.role || Role.USER);
 
   // Navigation / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'transfer-list' | 'profile-settings' | 'activities'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'transfer-list' | 'profile-settings' | 'activities' | 'push-test'>('dashboard');
   const [selectedRequest, setSelectedRequest] = useState<BudgetRequest | null>(null);
   const [editingRequest, setEditingRequest] = useState<BudgetRequest | null>(null);
 
@@ -840,16 +841,19 @@ export default function App() {
 
       // If the user is already logged in, keep their active session and update with the latest data
       const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
-      const activeUserProf = userProfile || (savedUserId ? mergedProfs.find(p => p.userId?.toLowerCase() === savedUserId.toLowerCase() || p.email?.toLowerCase() === savedUserId.toLowerCase()) : null);
+      const cleanSavedId = (savedUserId || '').trim().toLowerCase();
+      const activeUserProf = userProfile || (cleanSavedId ? mergedProfs.find(p => (p.userId && p.userId.trim().toLowerCase() === cleanSavedId) || (p.email && p.email.trim().toLowerCase() === cleanSavedId)) : null);
       if (activeUserProf) {
-        const updatedProfile = mergedProfs.find(
-          p => p.userId?.toLowerCase() === activeUserProf.userId?.toLowerCase() || p.email?.toLowerCase() === activeUserProf.email?.toLowerCase()
+        const activeEmail = (activeUserProf.email || '').trim().toLowerCase();
+        const activeUid = (activeUserProf.userId || '').trim().toLowerCase();
+        const updatedProfile = mergedProfs.find(p => 
+          (activeEmail && p.email && p.email.trim().toLowerCase() === activeEmail) ||
+          (activeUid && p.userId && p.userId.trim().toLowerCase() === activeUid)
         );
         if (updatedProfile) {
           setUserProfile(updatedProfile);
           setActiveRole(updatedProfile.role);
         }
-        return;
       }
 
       // Ensure the admin profile in Google Sheets has the correct email associated with it in the background
@@ -3310,6 +3314,12 @@ export default function App() {
             onUpdateActivity={handleUpdateActivity}
             onBack={() => setActiveView('dashboard')}
           />
+        ) : activeView === 'push-test' && userProfile ? (
+          <AdminPushTestCard
+            profiles={profiles}
+            currentAdminEmail={userProfile.email}
+            onBack={() => setActiveView('dashboard')}
+          />
         ) : (
           /* Dashboard Main Section */
           <div className="space-y-4 animate-slide-up">
@@ -3417,6 +3427,7 @@ export default function App() {
                   onSelectFilter={setStatusFilter}
                   onManageUsers={() => setActiveView('setup-profile')}
                   onOpenUserDashboardPreview={() => setIsUserDashboardPreviewModalOpen(true)}
+                  onOpenPushTest={() => setActiveView('push-test')}
                   onOpenAdjustment={() => setActiveView('adjustment')}
                   onOpenTransferList={() => setActiveView('transfer-list')}
                   onOpenReportsModal={() => setIsFinancialReportsModalOpen(true)}
@@ -4579,7 +4590,28 @@ export default function App() {
         role={activeRole}
         userEmail={userProfile?.email}
         onUpdateActivity={handleUpdateActivity}
-        onOpenBbmRefillModal={userProfile?.aksesBBM ? () => setIsBbmModalOpen(true) : undefined}
+        onOpenBbmRefillModal={(() => {
+          const activeEmail = (userProfile?.email || '').trim().toLowerCase();
+          const activeUid = (userProfile?.userId || '').trim().toLowerCase();
+          const matchedProfile = profiles.find(p => 
+            (activeEmail && p.email && p.email.trim().toLowerCase() === activeEmail) ||
+            (activeUid && p.userId && p.userId.trim().toLowerCase() === activeUid)
+          ) || userProfile;
+
+          const isPrivileged = [
+            Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR
+          ].includes(activeRole) || [
+            Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR
+          ].includes(matchedProfile?.role as Role);
+
+          const rawAkses = matchedProfile?.aksesBBM !== undefined ? matchedProfile.aksesBBM : userProfile?.aksesBBM;
+          const bbmStr = String(rawAkses ?? '').trim().toUpperCase();
+          const hasAccess = isPrivileged || rawAkses === true || [
+            'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
+          ].includes(bbmStr);
+
+          return hasAccess ? () => setIsBbmModalOpen(true) : undefined;
+        })()}
         onPreviewDocument={(rawUrl) => {
           const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
           if (match && match[1]) {

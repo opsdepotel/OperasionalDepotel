@@ -105,7 +105,20 @@ function parseSheetRows<T>(headers: string[], rows: any[][], mapper: (rowMap: Re
       let idx = sheetHeaders.indexOf(h);
       if (idx === -1) {
         const hNorm = h.toLowerCase().replace(/[^a-z0-9]/g, '');
-        idx = sheetHeaders.findIndex(sh => sh.toLowerCase().replace(/[^a-z0-9]/g, '') === hNorm);
+        idx = sheetHeaders.findIndex(sh => {
+          const shNorm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (shNorm === hNorm) return true;
+          if (hNorm === 'aksesbbm') {
+            return shNorm.startsWith('aksesbbm') || shNorm.includes('bbmdurensawit') || shNorm === 'bbm' || shNorm.includes('aksespengisianbbm');
+          }
+          if (hNorm === 'mobile') {
+            return shNorm.startsWith('mobile') || shNorm.includes('mobiledevice');
+          }
+          if (hNorm === 'deviceid') {
+            return shNorm.startsWith('deviceid');
+          }
+          return false;
+        });
       }
       if (idx === -1 && colIndex < row.length) {
         const existingColHeader = sheetHeaders[colIndex] ? sheetHeaders[colIndex].toLowerCase().replace(/[^a-z0-9]/g, '') : '';
@@ -224,9 +237,20 @@ export function formatDivisiSubDivisi(divisi?: string, subDivisi?: string): stri
 
 // Map row map to UserProfile
 function mapToUserProfile(row: Record<string, any>): UserProfile {
-  const rawBbm = row.AksesBBM ?? row['Akses BBM'] ?? row.aksesBBM ?? '';
+  let rawBbm = row.AksesBBM ?? row['Akses BBM'] ?? row.aksesBBM ?? row['Akses BBM (Boolean)'] ?? row['AksesBBM(Boolean)'] ?? row['Akses BBM (TRUE/FALSE)'] ?? row['Akses Pengisian BBM'] ?? row['Akses BBM Duren Sawit'] ?? row['BBM Duren Sawit'] ?? row['BBM'] ?? '';
+  if (!rawBbm && row._sheetHeaders && row._rawRow) {
+    const bbmColIdx = (row._sheetHeaders as string[]).findIndex(sh => {
+      const norm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return norm === 'aksesbbm' || norm.startsWith('aksesbbm') || norm === 'bbm' || norm.includes('bbmdurensawit') || norm.includes('aksespengisianbbm');
+    });
+    if (bbmColIdx !== -1 && bbmColIdx < row._rawRow.length) {
+      rawBbm = row._rawRow[bbmColIdx];
+    }
+  }
   const bbmStr = String(rawBbm).trim().toUpperCase();
-  const isAksesBBM = bbmStr === 'TRUE' || bbmStr === 'YA' || bbmStr === '1' || rawBbm === true;
+  const isAksesBBM = rawBbm === true || [
+    'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
+  ].includes(bbmStr);
 
   const rawMobile = row.Mobile ?? row['Mobile(Boolean)'] ?? row['Mobile'] ?? row['Mobile Device'] ?? row.mobile ?? '';
   const mobileStr = String(rawMobile).trim().toUpperCase();

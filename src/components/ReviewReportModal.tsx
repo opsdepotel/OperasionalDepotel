@@ -90,7 +90,9 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
 
   const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
   const userForRequest = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
-  const hasBbmAccess = !!userForRequest?.aksesBBM;
+  const hasBbmAccess = userForRequest?.aksesBBM === true || [
+    'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
+  ].includes(String(userForRequest?.aksesBBM ?? '').trim().toUpperCase());
 
   // Track BBM popup item view state
   const [viewingBbmItem, setViewingBbmItem] = useState<{ item: UsageReportItem; date: string; userEmail: string; userName: string } | null>(null);

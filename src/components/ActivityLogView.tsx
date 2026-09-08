@@ -1098,91 +1098,123 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       return nameA.localeCompare(nameB);
     });
 
+  const normalizeToYmd = (dateStr?: string | null): string => {
+    if (!dateStr || typeof dateStr !== 'string') return '';
+    const s = dateStr.trim();
+    // YYYY-MM-DD or YYYY/MM/DD
+    const iso = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if (iso) {
+      return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+    }
+    // DD/MM/YYYY or DD-MM-YYYY
+    const dmy = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+    if (dmy) {
+      return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+    }
+    // ACT-YYYYMMDD
+    const act = s.match(/ACT-(\d{4})(\d{2})(\d{2})/i);
+    if (act) {
+      return `${act[1]}-${act[2]}-${act[3]}`;
+    }
+    return s;
+  };
+
   const parseActivityTime = (act: UserActivity): number => {
-    const candidates = [act.timestamp, act.createdAt].filter(
+    // 1. Extract Year, Month, Day (Priority: act.tanggal -> act.createdAt -> act.timestamp -> act.id)
+    let year = 0;
+    let month = 0;
+    let day = 0;
+
+    const extractDate = (raw?: string | null): { y: number; m: number; d: number } | null => {
+      if (!raw || typeof raw !== 'string') return null;
+      const s = raw.trim();
+
+      // Check ISO format YYYY-MM-DD or YYYY/MM/DD
+      const isoMatch = s.match(/(?:^|[^\d])(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+      if (isoMatch) {
+        const y = parseInt(isoMatch[1], 10);
+        const m = parseInt(isoMatch[2], 10) - 1;
+        const d = parseInt(isoMatch[3], 10);
+        if (y >= 2000 && y <= 2040 && m >= 0 && m <= 11 && d >= 1 && d <= 31) {
+          return { y, m, d };
+        }
+      }
+
+      // Check Indonesian / European format DD/MM/YYYY or DD-MM-YYYY
+      const dmyMatch = s.match(/(?:^|[^\d])(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+      if (dmyMatch) {
+        const d = parseInt(dmyMatch[1], 10);
+        const m = parseInt(dmyMatch[2], 10) - 1;
+        const y = parseInt(dmyMatch[3], 10);
+        if (y >= 2000 && y <= 2040 && m >= 0 && m <= 11 && d >= 1 && d <= 31) {
+          return { y, m, d };
+        }
+      }
+
+      // Check ID format ACT-YYYYMMDD-
+      const idMatch = s.match(/ACT-(\d{4})(\d{2})(\d{2})/i);
+      if (idMatch) {
+        const y = parseInt(idMatch[1], 10);
+        const m = parseInt(idMatch[2], 10) - 1;
+        const d = parseInt(idMatch[3], 10);
+        if (y >= 2000 && y <= 2040 && m >= 0 && m <= 11 && d >= 1 && d <= 31) {
+          return { y, m, d };
+        }
+      }
+
+      return null;
+    };
+
+    const parsedDate =
+      extractDate(act.tanggal) ||
+      extractDate(act.createdAt) ||
+      extractDate(act.timestamp) ||
+      extractDate(act.id);
+
+    if (parsedDate) {
+      year = parsedDate.y;
+      month = parsedDate.m;
+      day = parsedDate.d;
+    }
+
+    // 2. Extract Hours, Minutes, Seconds from createdAt or timestamp
+    let hh = 0;
+    let mm = 0;
+    let ss = 0;
+
+    const timeCandidates = [act.createdAt, act.timestamp].filter(
       (s): s is string => !!s && typeof s === 'string' && s.trim().length > 0
     );
 
-    for (const rawStr of candidates) {
-      const s = rawStr.trim();
-
-      // 1. If raw Unix timestamp number/string
-      if (/^\d{10,13}$/.test(s)) {
-        const num = Number(s);
-        if (!isNaN(num)) return num > 1e11 ? num : num * 1000;
-      }
-
-      // 2. Standardize time delimiters from dot to colon if present (e.g. 07.31.33 or 07.31)
-      const normalized = s.replace(/([T, ]\d{1,2})\.(\d{2})(?:\.(\d{2}))?/, (_, p1, p2, p3) => {
-        return p3 ? `${p1}:${p2}:${p3}` : `${p1}:${p2}`;
-      });
-
-      // Try native Date.parse on normalized string
-      const parsedIso = Date.parse(normalized);
-      if (!isNaN(parsedIso)) return parsedIso;
-
-      // 3. Fallback manual parsing for various formats
-      const parts = normalized.split(/[, ]+/);
-      if (parts.length >= 1) {
-        const datePart = parts[0];
-        const timePart = parts[1] || '00:00:00';
-
-        let day = 0, month = 0, year = 0;
-
-        if (datePart.includes('/')) {
-          const dParts = datePart.split('/');
-          if (dParts.length === 3) {
-            day = parseInt(dParts[0], 10);
-            month = parseInt(dParts[1], 10) - 1;
-            year = parseInt(dParts[2], 10);
-          }
-        } else if (datePart.includes('-')) {
-          const dParts = datePart.split('-');
-          if (dParts.length === 3) {
-            if (dParts[0].length === 4) {
-              year = parseInt(dParts[0], 10);
-              month = parseInt(dParts[1], 10) - 1;
-              day = parseInt(dParts[2], 10);
-            } else {
-              day = parseInt(dParts[0], 10);
-              month = parseInt(dParts[1], 10) - 1;
-              year = parseInt(dParts[2], 10);
-            }
-          }
-        }
-
-        const tParts = timePart.replace(/\./g, ':').split(':');
-        const hh = parseInt(tParts[0] || '0', 10);
-        const mm = parseInt(tParts[1] || '0', 10);
-        const ss = parseInt(tParts[2] || '0', 10);
-
-        if (year > 0 && day > 0 && !isNaN(month)) {
-          const t = new Date(year, month, day, hh, mm, ss).getTime();
-          if (!isNaN(t)) return t;
+    for (const cand of timeCandidates) {
+      const s = cand.trim();
+      // Look for HH:MM:SS or HH.MM.SS (e.g. 17.36.36, 17:36:36, 17.36, T17:36:36)
+      const timeMatch = s.match(/(?:^|[T, ]|\s)(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?/);
+      if (timeMatch) {
+        const h = parseInt(timeMatch[1], 10);
+        const m = parseInt(timeMatch[2], 10);
+        const sec = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+        if (h >= 0 && h <= 23 && m >= 0 && m <= 59 && sec >= 0 && sec <= 59) {
+          hh = h;
+          mm = m;
+          ss = sec;
+          break;
         }
       }
     }
 
-    // Fallback using act.tanggal + time from act.createdAt/timestamp if available
-    if (act.tanggal) {
-      const dateStr = act.tanggal.trim();
-      let hh = 0, mm = 0, ss = 0;
+    if (year > 0 && day > 0) {
+      return new Date(year, month, day, hh, mm, ss).getTime();
+    }
 
-      const timeSource = act.createdAt || act.timestamp || '';
-      const timeMatch = timeSource.match(/(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?/);
-      if (timeMatch) {
-        hh = parseInt(timeMatch[1], 10);
-        mm = parseInt(timeMatch[2], 10);
-        ss = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
-      }
-
-      const dParts = dateStr.split('-');
-      if (dParts.length === 3 && dParts[0].length === 4) {
-        const year = parseInt(dParts[0], 10);
-        const month = parseInt(dParts[1], 10) - 1;
-        const day = parseInt(dParts[2], 10);
-        const t = new Date(year, month, day, hh, mm, ss).getTime();
-        if (!isNaN(t)) return t;
+    // 3. Fallback: Raw Unix timestamp if present
+    for (const raw of [act.timestamp, act.createdAt]) {
+      if (raw && typeof raw === 'string') {
+        const trimmed = raw.trim();
+        if (/^\d{10,13}$/.test(trimmed)) {
+          const num = Number(trimmed);
+          if (!isNaN(num)) return num > 1e11 ? num : num * 1000;
+        }
       }
     }
 
@@ -1245,7 +1277,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
       // 4. Filter Tanggal Activity
       if (dateFilter) {
-        if (act.tanggal !== dateFilter) return false;
+        const actYmd = normalizeToYmd(act.tanggal);
+        const filterYmd = normalizeToYmd(dateFilter) || dateFilter;
+        if (actYmd !== filterYmd && act.tanggal !== dateFilter) return false;
       }
 
       return true;
@@ -1256,7 +1290,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       if (timeA !== timeB) {
         return timeB - timeA; // Newest first
       }
-      const dateComp = (b.tanggal || '').localeCompare(a.tanggal || '');
+      const ymdA = normalizeToYmd(a.tanggal) || a.tanggal || '';
+      const ymdB = normalizeToYmd(b.tanggal) || b.tanggal || '';
+      const dateComp = ymdB.localeCompare(ymdA);
       if (dateComp !== 0) return dateComp;
       return (b.id || '').localeCompare(a.id || '');
     });

@@ -381,7 +381,12 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
 
   const isDark = theme === 'dark';
 
-  const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN';
+  const isAdjustment = request.id.startsWith('ADJ-') || request.siteId === 'ADJUSTMENT' || (request as any).isAdjustment;
+  const isTalangan = !isAdjustment && (request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN');
+
+  const adjTransferTime = (request.adminActionTime && request.adminActionTime !== '-') ? request.adminActionTime : (request.createdAt || request.timestamp || null);
+  const hasAdjTransferTime = Boolean(adjTransferTime && adjTransferTime !== '-');
+  const adjTransferAmount = request.adminActionAmount > 0 ? request.adminActionAmount : (request.jumlahPengajuan || request.nominal || 0);
 
   return (
     <div className={`${isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-slate-50/90 border-slate-200/90'} border rounded-xl p-3 my-1 text-left space-y-2.5 transition-all ${className}`}>
@@ -394,7 +399,23 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       )}
 
       <div className={`relative pl-4 space-y-3.5 border-l-2 ml-1.5 my-1 ${isDark ? 'border-indigo-500/40' : 'border-indigo-200/80'}`}>
-        {isTalangan ? (
+        {isAdjustment ? (
+          <>
+            {/* Step: Transferred (Hanya menampilkan proses Transfer untuk Alur Adjustment) */}
+            <div className="relative text-left">
+              <div className={`absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full ${hasAdjTransferTime ? (isDark ? 'bg-emerald-500 ring-4 ring-emerald-950' : 'bg-emerald-600 ring-4 ring-emerald-50') : (isDark ? 'bg-slate-700' : 'bg-slate-300')}`} />
+              <div className={`flex items-center justify-between text-[10px] font-semibold ${isDark ? 'text-slate-200' : 'text-slate-700'}`}>
+                <span>Transferred</span>
+                {adjTransferAmount > 0 && (
+                  <span className={`font-mono font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatIDR(adjTransferAmount)}</span>
+                )}
+              </div>
+              <div className="text-[9px] font-mono text-slate-400">
+                {hasAdjTransferTime ? formatTimestamp(adjTransferTime) : '-'}
+              </div>
+            </div>
+          </>
+        ) : isTalangan ? (
           <>
             {/* Step 1: User SUBMIT */}
             <div className="relative text-left">

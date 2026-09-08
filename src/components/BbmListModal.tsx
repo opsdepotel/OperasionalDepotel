@@ -568,13 +568,6 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
           {/* Action Bar */}
           {onOpenBbmRefillModal && (
             <div className="flex items-center justify-between flex-wrap gap-2 pt-1">
-              {todayRefillCount > 0 ? (
-                <div className="flex items-center gap-1.5 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl font-medium shadow-xs">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Tercatat <strong>{todayRefillCount}x</strong> pengisian BBM hari ini</span>
-                </div>
-              ) : <div />}
-
               <button
                 onClick={() => {
                   onOpenBbmRefillModal();
@@ -585,6 +578,13 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                 <Fuel className="w-4 h-4 text-white shrink-0" />
                 <span>+ Tambahkan Aktifitas Pengisian BBM Duren Sawit</span>
               </button>
+
+              {todayRefillCount > 0 && (
+                <div className="flex items-center gap-1.5 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl font-medium shadow-xs">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Tercatat <strong>{todayRefillCount}x</strong> pengisian BBM hari ini</span>
+                </div>
+              )}
             </div>
           )}
 

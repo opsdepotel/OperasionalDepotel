@@ -91,6 +91,35 @@ input[type="number"] {
   appearance: textfield;
 }
 
+/* Lembutkan dan tipiskan warna contoh isian (placeholder) agar tidak disangka sudah terisi */
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8 !important;
+  opacity: 0.55 !important;
+  font-weight: 400 !important;
+}
+
+input::-webkit-input-placeholder,
+textarea::-webkit-input-placeholder {
+  color: #94a3b8 !important;
+  opacity: 0.55 !important;
+  font-weight: 400 !important;
+}
+
+input::-moz-placeholder,
+textarea::-moz-placeholder {
+  color: #94a3b8 !important;
+  opacity: 0.55 !important;
+  font-weight: 400 !important;
+}
+
+input:-ms-input-placeholder,
+textarea:-ms-input-placeholder {
+  color: #94a3b8 !important;
+  opacity: 0.55 !important;
+  font-weight: 400 !important;
+}
+
 /* Custom modern scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
