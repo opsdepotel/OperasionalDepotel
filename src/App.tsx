@@ -45,7 +45,7 @@ import {
   DRIVE_FOLDER_ID
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
-import { validateDeviceAccessAndBind } from './lib/deviceUtils';
+import { validateDeviceAccessAndBind, requestPersistentStorage } from './lib/deviceUtils';
 import { safeSetItem, safeSetJson } from './lib/storage';
 
 // Components
@@ -233,6 +233,11 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme);
     safeSetItem('op_app_theme', theme);
   }, [theme]);
+
+  // Request StorageManager Persistent Storage on initial application load
+  useEffect(() => {
+    requestPersistentStorage().catch(() => {});
+  }, []);
 
   // App Database Context
   const [spreadsheetId, setSpreadsheetId] = useState<string | null>(() => localStorage.getItem('op_company_sheet_id') || SPREADSHEET_ID);

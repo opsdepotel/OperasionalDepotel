@@ -65,12 +65,39 @@ export function generateHardwareFingerprint(): string {
 }
 
 /**
+ * Automatically requests persistent storage from the browser via StorageManager API.
+ * Ensures the browser marks the origin storage as 'persisted', preventing eviction under low-memory conditions.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined' || !navigator.storage) {
+    return false;
+  }
+  try {
+    if (typeof navigator.storage.persisted === 'function') {
+      const isAlreadyPersisted = await navigator.storage.persisted();
+      if (isAlreadyPersisted) {
+        return true;
+      }
+    }
+    if (typeof navigator.storage.persist === 'function') {
+      const persisted = await navigator.storage.persist();
+      console.log('[StorageManager] Persistent storage status:', persisted ? 'PERSISTED' : 'BEST-EFFORT');
+      return persisted;
+    }
+  } catch (err) {
+    console.warn('[StorageManager] Unable to request persistent storage:', err);
+  }
+  return false;
+}
+
+/**
  * Syncs and locks the Device ID across all available persistence layers:
  * 1. localStorage ('op_app_device_id')
  * 2. localStorage backup ('op_app_device_id_backup')
  * 3. sessionStorage
  * 4. Document Cookie (10-year expiry)
  * 5. IndexedDB ('DIOMS_DEVICE_DB') for extreme durability against Safari/iOS ITP resets
+ * 6. StorageManager Persistent Storage lock via navigator.storage.persist()
  */
 export function syncDeviceIdToAllStores(deviceId: string, userEmail?: string): void {
   if (typeof window === 'undefined' || !deviceId || !deviceId.trim()) return;
@@ -91,6 +118,9 @@ export function syncDeviceIdToAllStores(deviceId: string, userEmail?: string): v
 
   // Non-blocking asynchronous sync to IndexedDB for Safari/iOS persistence
   saveDeviceIdToIndexedDB(deviceId, userEmail).catch(() => {});
+
+  // Lock storage to persistent mode via StorageManager API
+  requestPersistentStorage().catch(() => {});
 }
 
 /**

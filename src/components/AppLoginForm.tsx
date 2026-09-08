@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, Role } from '../types';
 import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw, Smartphone, CheckCircle2, Globe, AlertTriangle } from 'lucide-react';
-import { validateDeviceAccessAndBind, getOrCreateDeviceId, getOrCreateDeviceIdAsync, getInAppBrowserInfo, detectPrivateBrowsing, InAppBrowserInfo } from '../lib/deviceUtils';
+import { validateDeviceAccessAndBind, getOrCreateDeviceId, getOrCreateDeviceIdAsync, getInAppBrowserInfo, detectPrivateBrowsing, InAppBrowserInfo, requestPersistentStorage } from '../lib/deviceUtils';
 import { mergeUserProfiles, findMatchingUser, defaultUsers } from '../lib/googleApi';
 import { DevicePermissionsStatus } from '../lib/devicePermissions';
 
@@ -73,6 +73,9 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
     try {
       localStorage.removeItem('op_app_saved_password');
     } catch {}
+
+    // 4. Request persistent storage from browser via navigator.storage.persist()
+    requestPersistentStorage().catch(() => {});
   }, []);
 
   const saveRememberMeState = (uid: string, shouldRemember: boolean) => {
