@@ -198,7 +198,7 @@ function mapToBudgetRequest(row: Record<string, any>): BudgetRequest {
     adminComment: String(row.AdminComment || row.adminComment || ''),
     createdAt: String(row.CreatedAt || row.createdAt || ''),
     timestamp: ts,
-    buktiTransferUrl: String(row.BuktiTransferUrl || row.buktiTransferUrl || ''),
+    buktiTransferUrl: sanitizeBuktiUrlFromSheets(String(row.BuktiTransferUrl || row.buktiTransferUrl || '')),
     buktiTransferFileId: String(row.BuktiTransferFileId || row.buktiTransferFileId || ''),
     adminActionTime: String(row.AdminActionTime || row.adminActionTime || row['Admin Action Time'] || '')
   };
@@ -214,7 +214,7 @@ function mapToUsageItem(row: Record<string, any>): UsageReportItem {
     tanggalPenggunaan: String(row.TanggalPenggunaan || row.tanggalPenggunaan || row.Tanggal || ''),
     nominal: parseNumericValue(rawNominal),
     keterangan: String(row.Keterangan || row.keterangan || ''),
-    buktiUrl: String(row.BuktiUrl || row.buktiUrl || ''),
+    buktiUrl: sanitizeBuktiUrlFromSheets(String(row.BuktiUrl || row.buktiUrl || '')),
     buktiFileId: String(row.BuktiFileId || row.buktiFileId || ''),
     statusManager: (row.StatusManager as ItemStatus) || (row.statusManager as ItemStatus) || ItemStatus.PENDING,
     managerComment: String(row.ManagerComment || row.managerComment || ''),
@@ -403,7 +403,7 @@ function mapToUserActivity(row: Record<string, any>): UserActivity {
     coordinatesDb: getVal('CoordinatesDb', 'coordinatesDb', 'Coordinates Db'),
     coordinatesActual: getVal('CoordinatesActual', 'coordinatesActual', 'Coordinates Actual'),
     keterangan: getVal('Keterangan', 'keterangan', 'Deskripsi'),
-    buktiUrl: getVal('BuktiUrl', 'buktiUrl', 'Foto Bukti', 'Bukti URL'),
+    buktiUrl: sanitizeBuktiUrlFromSheets(getVal('BuktiUrl', 'buktiUrl', 'Foto Bukti', 'Bukti URL')),
     buktiFileId: getVal('BuktiFileId', 'buktiFileId', 'Bukti File ID'),
     indikasiFake: isFake,
     fakeReason: getVal('FakeReason', 'fakeReason', 'Fake Reason', 'Alasan Fake'),
@@ -448,7 +448,7 @@ function mapToItemReviewHistory(row: Record<string, any>): ItemReviewHistory {
     nominal: parseNumericValue(row.Nominal || row.nominal || 0),
     keterangan: String(row.Keterangan || row.keterangan || ''),
     buktiFileId: String(row.BuktiFileId || row.buktiFileId || ''),
-    buktiUrl: String(row.BuktiUrl || row.buktiUrl || '')
+    buktiUrl: sanitizeBuktiUrlFromSheets(String(row.BuktiUrl || row.buktiUrl || ''))
   };
 }
 
@@ -853,39 +853,77 @@ async function fileToBase64(file: File): Promise<string> {
 }
 
 /**
+ * Ensures that Base64 image strings or corrupted '/jpeg;base64' strings are NEVER written to Google Sheets cells.
+ * Returns a valid URL (e.g. Google Drive link or standard http/https URL) or an empty string.
+ */
+export function sanitizeBuktiUrlForSheets(url?: string): string {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (
+    trimmed.startsWith('data:') ||
+    trimmed.includes(';base64') ||
+    trimmed.startsWith('/jpeg;') ||
+    trimmed.startsWith('/png;') ||
+    trimmed.startsWith('img_b64_')
+  ) {
+    return '';
+  }
+  return trimmed;
+}
+
+/**
+ * Sanitizes buktiUrl read from Google Sheets.
+ * If the cell contains corrupted '/jpeg;base64...' or raw Base64 without 'data:', cleans it to empty string so the UI doesn't treat it as a relative URL (which causes 404).
+ */
+export function sanitizeBuktiUrlFromSheets(url?: string): string {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (
+    trimmed.startsWith('/jpeg;') ||
+    trimmed.startsWith('/png;') ||
+    trimmed.startsWith('img_b64_') ||
+    (trimmed.includes(';base64') && !trimmed.startsWith('http://') && !trimmed.startsWith('https://') && !trimmed.startsWith('data:image/'))
+  ) {
+    return '';
+  }
+  return trimmed;
+}
+
+/**
  * Ensures any photo URL/data is converted to a Google Drive link before saving to Google Sheets.
  * If input is a base64 Data URL ('data:image/...'), uploads it to Google Drive and returns the webViewLink.
  */
-export async function ensureDriveUrl(
+export function ensureDriveUrl(
   token: string,
   inputUrl?: string,
   defaultFileName?: string
 ): Promise<{ url: string; fileId?: string }> {
-  if (!inputUrl) return { url: '' };
+  if (!inputUrl) return Promise.resolve({ url: '' });
 
   // If it's already a Google Drive link or standard URL, return it directly
-  if (!inputUrl.startsWith('data:')) {
-    return { url: inputUrl };
+  if (!inputUrl.startsWith('data:') && !inputUrl.includes(';base64')) {
+    return Promise.resolve({ url: sanitizeBuktiUrlFromSheets(inputUrl) });
   }
 
   // Upload base64 Data URL to Google Drive
-  try {
-    const activeToken = token && token !== 'mock_demo_token' ? token : '';
-    const uploadRes = await uploadBase64Image(
-      activeToken,
-      DRIVE_FOLDER_ID,
-      inputUrl,
-      defaultFileName || `photo_${Date.now()}.jpg`
-    );
-
-    if (uploadRes.viewUrl && !uploadRes.viewUrl.startsWith('data:')) {
-      return { url: uploadRes.viewUrl, fileId: uploadRes.fileId };
-    }
-  } catch (err) {
-    console.warn('Could not convert base64 image to Google Drive link:', err);
-  }
-
-  return { url: inputUrl };
+  const activeToken = token && token !== 'mock_demo_token' ? token : '';
+  return uploadBase64Image(
+    activeToken,
+    DRIVE_FOLDER_ID,
+    inputUrl,
+    defaultFileName || `photo_${Date.now()}.jpg`
+  )
+    .then((uploadRes) => {
+      if (uploadRes.viewUrl && !uploadRes.viewUrl.startsWith('data:') && !uploadRes.viewUrl.includes(';base64')) {
+        return { url: uploadRes.viewUrl, fileId: uploadRes.fileId };
+      }
+      return { url: '', fileId: '' };
+    })
+    .catch((err) => {
+      console.warn('Could not convert base64 image to Google Drive link:', err);
+      // Return empty URL rather than writing raw Base64 data to Google Sheets cell
+      return { url: '', fileId: '' };
+    });
 }
 
 // Upload file & set view permission to "anyone"
@@ -978,12 +1016,8 @@ export async function uploadReceiptFile(
     const saResult = await uploadReceiptViaServiceAccount(targetFolderId, base64Data, file.name);
     return saResult;
   } catch (saErr: any) {
-    console.warn('Service Account upload also failed, using compressed Data URL fallback:', saErr);
-    const base64Data = await fileToBase64(file);
-    return {
-      fileId: `img_b64_${Date.now()}`,
-      viewUrl: base64Data
-    };
+    console.warn('Service Account upload also failed:', saErr);
+    throw new Error(`Gagal mengunggah foto ke Google Drive (${saErr?.message || 'Koneksi terganggu'}). Silakan periksa koneksi/sinyal HP Anda.`);
   }
 }
 
@@ -1315,7 +1349,7 @@ export async function createBudgetRequest(
       AdminActionAmount: req.adminActionAmount,
       AdminComment: req.adminComment || '',
       CreatedAt: req.createdAt || nowTimestamp,
-      BuktiTransferUrl: req.buktiTransferUrl || '',
+      BuktiTransferUrl: sanitizeBuktiUrlForSheets(req.buktiTransferUrl),
       BuktiTransferFileId: req.buktiTransferFileId || '',
       AdminActionTime: req.adminActionTime || '',
       Timestamp: nowTimestamp
@@ -1454,7 +1488,7 @@ export async function updateBudgetRequest(token: string, spreadsheetId: string, 
     AdminActionAmount: req.adminActionAmount,
     AdminComment: req.adminComment || '',
     CreatedAt: req.createdAt,
-    BuktiTransferUrl: req.buktiTransferUrl || '',
+    BuktiTransferUrl: sanitizeBuktiUrlForSheets(req.buktiTransferUrl),
     BuktiTransferFileId: req.buktiTransferFileId || '',
     AdminActionTime: req.adminActionTime || '',
     Timestamp: nowTimestamp
@@ -1486,11 +1520,13 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
   }
 
   // Convert base64 data URL to Google Drive link if needed
-  if (item.buktiUrl && item.buktiUrl.startsWith('data:')) {
+  if (item.buktiUrl && (item.buktiUrl.startsWith('data:') || item.buktiUrl.includes(';base64'))) {
     const driveRes = await ensureDriveUrl(token, item.buktiUrl, `NOTA_${item.id}.jpg`);
-    if (driveRes.url && !driveRes.url.startsWith('data:')) {
+    if (driveRes.url && !driveRes.url.startsWith('data:') && !driveRes.url.includes(';base64')) {
       item.buktiUrl = driveRes.url;
       if (driveRes.fileId) item.buktiFileId = driveRes.fileId;
+    } else {
+      item.buktiUrl = '';
     }
   }
 
@@ -1503,7 +1539,7 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
     TanggalPenggunaan: item.tanggalPenggunaan,
     Nominal: item.nominal,
     Keterangan: item.keterangan,
-    BuktiUrl: item.buktiUrl,
+    BuktiUrl: sanitizeBuktiUrlForSheets(item.buktiUrl),
     BuktiFileId: item.buktiFileId,
     StatusManager: item.statusManager,
     ManagerComment: item.managerComment,
@@ -1579,7 +1615,7 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
     TanggalPenggunaan: item.tanggalPenggunaan,
     Nominal: item.nominal,
     Keterangan: item.keterangan,
-    BuktiUrl: item.buktiUrl,
+    BuktiUrl: sanitizeBuktiUrlForSheets(item.buktiUrl),
     BuktiFileId: item.buktiFileId,
     StatusManager: item.statusManager,
     ManagerComment: item.managerComment,
@@ -1684,11 +1720,13 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
   activity.id = finalId;
 
   // Convert base64 data URL to Google Drive link if needed
-  if (activity.buktiUrl && activity.buktiUrl.startsWith('data:')) {
+  if (activity.buktiUrl && (activity.buktiUrl.startsWith('data:') || activity.buktiUrl.includes(';base64'))) {
     const driveRes = await ensureDriveUrl(token, activity.buktiUrl, `KEGIATAN_${activity.id}.jpg`);
-    if (driveRes.url && !driveRes.url.startsWith('data:')) {
+    if (driveRes.url && !driveRes.url.startsWith('data:') && !driveRes.url.includes(';base64')) {
       activity.buktiUrl = driveRes.url;
       if (driveRes.fileId) activity.buktiFileId = driveRes.fileId;
+    } else {
+      activity.buktiUrl = '';
     }
   }
 
@@ -1705,7 +1743,7 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
     CoordinatesDb: activity.coordinatesDb,
     CoordinatesActual: activity.coordinatesActual,
     Keterangan: activity.keterangan,
-    BuktiUrl: activity.buktiUrl,
+    BuktiUrl: sanitizeBuktiUrlForSheets(activity.buktiUrl),
     BuktiFileId: activity.buktiFileId || '',
     IndikasiFake: activity.indikasiFake ? 'TRUE' : 'FALSE',
     FakeReason: activity.fakeReason || '',
@@ -1880,11 +1918,13 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
   }
 
   for (const log of logs) {
-    if (log.buktiUrl && log.buktiUrl.startsWith('data:')) {
+    if (log.buktiUrl && (log.buktiUrl.startsWith('data:') || log.buktiUrl.includes(';base64'))) {
       const driveRes = await ensureDriveUrl(token, log.buktiUrl, `SNAPSHOT_${log.id}.jpg`);
-      if (driveRes.url && !driveRes.url.startsWith('data:')) {
+      if (driveRes.url && !driveRes.url.startsWith('data:') && !driveRes.url.includes(';base64')) {
         log.buktiUrl = driveRes.url;
         if (driveRes.fileId) log.buktiFileId = driveRes.fileId;
+      } else {
+        log.buktiUrl = '';
       }
     }
   }
@@ -1904,7 +1944,7 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
     Nominal: log.nominal,
     Keterangan: log.keterangan,
     BuktiFileId: log.buktiFileId || '',
-    BuktiUrl: log.buktiUrl || ''
+    BuktiUrl: sanitizeBuktiUrlForSheets(log.buktiUrl)
   }));
 
   let appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/ItemReviewHistory!A1:append?valueInputOption=USER_ENTERED`, {

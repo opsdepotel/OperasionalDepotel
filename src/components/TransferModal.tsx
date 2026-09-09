@@ -492,8 +492,10 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                                       fileId: item.fileId || undefined,
                                       title: `Bukti Transfer #${idx + 1} (UID: ${request.id})`
                                     });
-                                  } else {
+                                  } else if (item.url && (item.url.startsWith('http://') || item.url.startsWith('https://') || item.url.startsWith('data:image/'))) {
                                     window.open(item.url, '_blank');
+                                  } else {
+                                    alert('Bukti transfer tidak tersedia atau URL tidak valid.');
                                   }
                                 }}
                                 className="px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-lg text-[10px] flex items-center justify-center gap-1 cursor-pointer transition-colors border border-indigo-100 shadow-2xs whitespace-nowrap"

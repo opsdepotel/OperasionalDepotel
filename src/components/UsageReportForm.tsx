@@ -11,6 +11,7 @@ import { ItemHistoryModal } from './ItemHistoryModal';
 import { ZoomableImage } from './ZoomableImage';
 import { FormProgressOverlay } from './FormProgressOverlay';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
+import { saveOfflineUsageItem, OfflineUsageItem } from '../lib/offlineReportStorage';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
@@ -75,6 +76,8 @@ interface UsageReportFormProps {
   histories?: ItemReviewHistory[];
   onPreviewDocument?: (doc: { url: string; fileId?: string; title?: string }) => void;
   userProfile?: UserProfile;
+  offlineUsageItems?: OfflineUsageItem[];
+  onRefreshOfflineQueues?: () => void;
 }
 
 export const UsageReportForm: React.FC<UsageReportFormProps> = ({
@@ -96,7 +99,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   requests = [],
   histories = [],
   onPreviewDocument,
-  userProfile
+  userProfile,
+  offlineUsageItems = [],
+  onRefreshOfflineQueues
 }) => {
   // Extract and match site IDs from request.siteId. Format is "XXXNNN" (3 letters, 3 digits)
   const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
@@ -116,8 +121,26 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   });
   const someFound = siteResults.some(r => r.found);
 
-  // Filter items for this request UID
-  const currentItems = items.filter(item => item.requestId === request.id);
+  // Filter items for this request UID, including offline draft items
+  const offlineMapped: UsageReportItem[] = (offlineUsageItems || [])
+    .filter(o => o.requestId === request.id)
+    .map(o => ({
+      id: o.id,
+      requestId: o.requestId,
+      tanggalPenggunaan: o.tanggalPenggunaan,
+      nominal: o.nominal,
+      keterangan: o.keterangan,
+      buktiUrl: o.photoDataUrl,
+      statusManager: ItemStatus.PENDING,
+      managerComment: 'Tersimpan di HP (Belum Disinkronkan)',
+      statusAdmin: ItemStatus.PENDING,
+      adminComment: 'Tersimpan di HP (Belum Disinkronkan)',
+      updatedAt: o.timestamp,
+      timestamp: o.timestamp,
+      isOfflineDraft: true
+    } as any));
+
+  const currentItems = [...items.filter(item => item.requestId === request.id), ...offlineMapped];
 
   // Check if the user associated with this UID request has BBM Duren Sawit access and Mobile mandatory setting
   const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
@@ -421,6 +444,32 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     setIsSuccess(false);
     setSavingStep(selectedFile ? 'Mengunggah nota ke Google Drive...' : 'Menyimpan item ke database...');
     try {
+      // Direct offline check if user has selected a file and is currently offline
+      if (selectedFile && !navigator.onLine) {
+        await saveOfflineUsageItem(
+          {
+            requestId: request.id,
+            tanggalPenggunaan: tanggal,
+            nominal: amount,
+            keterangan: keterangan.trim(),
+            userEmail: userProfile?.email || request.userEmail || ''
+          },
+          selectedFile
+        );
+        setSavingStep('Disimpan di HP (BELUM DISINKRONKAN)');
+        setIsSuccess(true);
+        await new Promise(r => setTimeout(r, 800));
+        setNominal('');
+        setKeterangan('');
+        setSelectedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        if (cameraInputRef.current) cameraInputRef.current.value = '';
+        setIsFormOpen(false);
+        stopCameraStream();
+        if (onRefreshOfflineQueues) onRefreshOfflineQueues();
+        return;
+      }
+
       let finalBuktiUrl = editingItem?.buktiUrl || '';
       let finalBuktiFileId = editingItem?.buktiFileId || '';
 
@@ -489,6 +538,35 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       setIsFormOpen(false);
       stopCameraStream();
     } catch (err: any) {
+      if (selectedFile && !editingItem) {
+        try {
+          await saveOfflineUsageItem(
+            {
+              requestId: request.id,
+              tanggalPenggunaan: tanggal,
+              nominal: amount,
+              keterangan: keterangan.trim(),
+              userEmail: userProfile?.email || request.userEmail || ''
+            },
+            selectedFile
+          );
+          setSavingStep('Disimpan di HP (BELUM DISINKRONKAN)');
+          setIsSuccess(true);
+          await new Promise(r => setTimeout(r, 800));
+          setNominal('');
+          setKeterangan('');
+          setSelectedFile(null);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+          if (cameraInputRef.current) cameraInputRef.current.value = '';
+          setIsFormOpen(false);
+          stopCameraStream();
+          if (onRefreshOfflineQueues) onRefreshOfflineQueues();
+          return;
+        } catch (offErr) {
+          console.error('Gagal menyimpan item offline pemakaian:', offErr);
+        }
+      }
+
       const isAuthError = err.message && (
         err.message.includes('401') ||
         err.message.toLowerCase().includes('authentication credentials') ||
@@ -781,7 +859,12 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       <span className="text-xs font-bold text-slate-700 block">{formatIDR(item.nominal)}</span>
                       {/* Status indicator badge */}
                       <div className="flex flex-col items-end gap-1 mt-1">
-                        {isRejected ? (
+                        {(item as any).isOfflineDraft ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                            <Clock className="w-3 h-3 text-amber-600 animate-pulse" />
+                            BELUM DISINKRONKAN
+                          </span>
+                        ) : isRejected ? (
                           <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200">
                             <AlertCircle className="w-3 h-3 text-rose-600" />
                             Revisi

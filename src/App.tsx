@@ -11,6 +11,15 @@ import { initAuth, logout, isGoogleTokenExpired } from './lib/firebase';
 import { fetchServiceAccountToken } from './lib/serviceAccountClient';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
+  getOfflineTalanganRequests,
+  removeOfflineTalanganRequest,
+  getOfflineUsageItems,
+  removeOfflineUsageItem,
+  dataURLtoFile,
+  OfflineTalanganRequest,
+  OfflineUsageItem
+} from './lib/offlineReportStorage';
+import {
   findOrCreateDatabase,
   findOrCreateFolder,
   fetchBudgetRequests,
@@ -248,6 +257,27 @@ export default function App() {
   const [loadingStep, setLoadingStep] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loginRejectError, setLoginRejectError] = useState<string | null>(null);
+
+  // Offline Report Queue States
+  const [offlineTalanganList, setOfflineTalanganList] = useState<OfflineTalanganRequest[]>([]);
+  const [offlineUsageList, setOfflineUsageList] = useState<OfflineUsageItem[]>([]);
+  const [isSyncingOfflineReports, setIsSyncingOfflineReports] = useState(false);
+  const [offlineReportNotice, setOfflineReportNotice] = useState<string | null>(null);
+
+  const refreshOfflineQueues = async () => {
+    try {
+      const talangan = await getOfflineTalanganRequests();
+      const usage = await getOfflineUsageItems();
+      setOfflineTalanganList(talangan);
+      setOfflineUsageList(usage);
+    } catch (err) {
+      console.warn('Gagal memuat antrean offline:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshOfflineQueues();
+  }, []);
 
   // Data arrays
   const [requests, setRequests] = useState<BudgetRequest[]>(() => {
@@ -962,6 +992,181 @@ export default function App() {
       setIsLoading(false);
     }
   };
+
+  const syncOfflineReports = async () => {
+    if (isSyncingOfflineReports) return;
+    const currentToken = token || '';
+    const currentSheetId = spreadsheetId || SPREADSHEET_ID;
+    if (!currentToken || !currentSheetId) return;
+
+    const pendingTalangan = await getOfflineTalanganRequests();
+    const pendingUsage = await getOfflineUsageItems();
+
+    if (pendingTalangan.length === 0 && pendingUsage.length === 0) {
+      setOfflineTalanganList([]);
+      setOfflineUsageList([]);
+      return;
+    }
+
+    setIsSyncingOfflineReports(true);
+    setOfflineReportNotice('Menyinkronkan Laporan Offline...');
+    let syncedCount = 0;
+
+    // 1. Sync Offline Talangan Requests
+    for (const tReq of pendingTalangan) {
+      try {
+        const photoFile = dataURLtoFile(tReq.photoDataUrl, tReq.photoFileName);
+        const folderId = driveFolderId || DRIVE_FOLDER_ID;
+        let uploadResult = { viewUrl: '', fileId: '' };
+        if (photoFile && folderId) {
+          uploadResult = await uploadReceiptFile(currentToken, folderId, photoFile);
+        }
+
+        const todayStr = tReq.tanggalPemakaian.replace(/-/g, '');
+        const randomDigits = Math.floor(1000 + Math.random() * 9000);
+        const uid = `OPT-${todayStr}-${randomDigits}`;
+        const nowTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
+        const newRequest: BudgetRequest = {
+          id: uid,
+          userEmail: tReq.userEmail,
+          managerEmail: tReq.managerEmail,
+          tanggalPemakaian: tReq.tanggalPemakaian,
+          siteId: tReq.siteId,
+          jumlahPengajuan: tReq.jumlahPengajuan,
+          keterangan: `[DANA TALANGAN] ${tReq.keterangan}`,
+          status: RequestStatus.REPORTING,
+          managerActionAmount: 0,
+          managerComment: '',
+          adminActionAmount: 0,
+          adminComment: '',
+          createdAt: nowTime,
+          timestamp: nowTime
+        };
+
+        const finalReportItem: UsageReportItem = {
+          id: `ITEM-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+          requestId: uid,
+          tanggalPenggunaan: tReq.itemTanggal,
+          nominal: tReq.itemNominal,
+          keterangan: tReq.itemKeterangan,
+          buktiUrl: uploadResult.viewUrl,
+          buktiFileId: uploadResult.fileId,
+          statusManager: ItemStatus.PENDING,
+          managerComment: '',
+          statusAdmin: ItemStatus.PENDING,
+          adminComment: '',
+          updatedAt: nowTime,
+          timestamp: nowTime
+        };
+
+        const historyLog: ItemReviewHistory = {
+          id: `HIST-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+          itemUid: finalReportItem.id,
+          requestUid: uid,
+          timestamp: nowTime,
+          actorRole: Role.USER,
+          actorEmail: tReq.userEmail,
+          actorNama: tReq.userEmail,
+          actionType: 'PENGAJUAN_CREATED',
+          status: 'PENDING',
+          catatan: 'Pengajuan Dana Talangan Offline disinkronkan otomatis',
+          tanggalPenggunaan: tReq.itemTanggal,
+          nominal: tReq.itemNominal,
+          keterangan: tReq.itemKeterangan,
+          buktiFileId: uploadResult.fileId,
+          buktiUrl: uploadResult.viewUrl
+        };
+
+        await createBudgetRequest(currentToken, currentSheetId, newRequest);
+        await createUsageItem(currentToken, currentSheetId, finalReportItem);
+        await createItemReviewHistory(currentToken, currentSheetId, historyLog);
+
+        await removeOfflineTalanganRequest(tReq.id);
+        syncedCount++;
+      } catch (err) {
+        console.error('Failed to sync offline talangan request:', tReq.id, err);
+        break;
+      }
+    }
+
+    // 2. Sync Offline Usage Items
+    for (const uItem of pendingUsage) {
+      try {
+        const photoFile = dataURLtoFile(uItem.photoDataUrl, uItem.photoFileName);
+        const folderId = driveFolderId || DRIVE_FOLDER_ID;
+        let uploadResult = { viewUrl: '', fileId: '' };
+        if (photoFile && folderId) {
+          uploadResult = await uploadReceiptFile(currentToken, folderId, photoFile);
+        }
+
+        const nowTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+        const finalReportItem: UsageReportItem = {
+          id: `ITEM-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+          requestId: uItem.requestId,
+          tanggalPenggunaan: uItem.tanggalPenggunaan,
+          nominal: uItem.nominal,
+          keterangan: uItem.keterangan,
+          buktiUrl: uploadResult.viewUrl,
+          buktiFileId: uploadResult.fileId,
+          statusManager: ItemStatus.PENDING,
+          managerComment: '',
+          statusAdmin: ItemStatus.PENDING,
+          adminComment: '',
+          updatedAt: nowTime,
+          timestamp: nowTime
+        };
+
+        const historyLog: ItemReviewHistory = {
+          id: `HIST-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+          itemUid: finalReportItem.id,
+          requestUid: uItem.requestId,
+          timestamp: nowTime,
+          actorRole: Role.USER,
+          actorEmail: uItem.userEmail,
+          actorNama: uItem.userEmail,
+          actionType: 'ITEM_CREATED',
+          status: 'PENDING',
+          catatan: 'Item Laporan Pemakaian Offline disinkronkan otomatis',
+          tanggalPenggunaan: uItem.tanggalPenggunaan,
+          nominal: uItem.nominal,
+          keterangan: uItem.keterangan,
+          buktiFileId: uploadResult.fileId,
+          buktiUrl: uploadResult.viewUrl
+        };
+
+        await createUsageItem(currentToken, currentSheetId, finalReportItem);
+        await createItemReviewHistory(currentToken, currentSheetId, historyLog);
+
+        await removeOfflineUsageItem(uItem.id);
+        syncedCount++;
+      } catch (err) {
+        console.error('Failed to sync offline usage item:', uItem.id, err);
+        break;
+      }
+    }
+
+    await refreshOfflineQueues();
+    setIsSyncingOfflineReports(false);
+
+    if (syncedCount > 0) {
+      setOfflineReportNotice(`${syncedCount} Laporan disinkronkan.`);
+      await handleManualRefresh();
+      setTimeout(() => setOfflineReportNotice(null), 4000);
+    } else {
+      setOfflineReportNotice(null);
+    }
+  };
+
+  useEffect(() => {
+    const handleOnline = () => {
+      syncOfflineReports();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [token, spreadsheetId, driveFolderId]);
 
   const runGoogleAction = async <T,>(
     action: () => Promise<T>,
@@ -3201,6 +3406,27 @@ export default function App() {
           </div>
         )}
 
+        {/* Offline Reports Sync Banner */}
+        {(offlineTalanganList.length > 0 || offlineUsageList.length > 0) && userProfile && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-3 shadow-xs flex items-center justify-between text-xs animate-slide-up">
+            <div className="flex items-center gap-2 text-amber-900">
+              <RefreshCw className={`w-4 h-4 text-amber-600 shrink-0 ${isSyncingOfflineReports ? 'animate-spin' : ''}`} />
+              <div>
+                <p className="font-bold">Laporan Belum Disinkronkan ({offlineTalanganList.length + offlineUsageList.length})</p>
+                <p className="text-[10px] text-amber-700">Tersimpan di memori HP. Akan dikirim otomatis saat internet tersedia.</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={syncOfflineReports}
+              disabled={isSyncingOfflineReports}
+              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all shadow-xs disabled:opacity-50 cursor-pointer shrink-0"
+            >
+              {isSyncingOfflineReports ? 'Menyinkronkan...' : 'Sinkronkan Sekarang'}
+            </button>
+          </div>
+        )}
+
         {/* View Routing */}
         {!userProfile ? (
           <AppLoginForm
@@ -3253,6 +3479,7 @@ export default function App() {
             sites={sites}
             initialRequest={editingRequest || undefined}
             userProfile={userProfile}
+            onRefreshOfflineQueues={refreshOfflineQueues}
           />
         ) : activeView === 'report-usage' && selectedRequest ? (
           <UsageReportForm
@@ -3278,6 +3505,8 @@ export default function App() {
             histories={itemReviewHistories}
             onPreviewDocument={setPreviewDocument}
             userProfile={userProfile}
+            offlineUsageItems={offlineUsageList}
+            onRefreshOfflineQueues={refreshOfflineQueues}
           />
         ) : activeView === 'adjustment' && userProfile ? (
           <AdjustmentPanel

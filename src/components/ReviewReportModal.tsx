@@ -333,14 +333,21 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                 <button
                   type="button"
                   onClick={() => {
+                    const validUrl = (item.buktiUrl || '').trim();
+                    if (!validUrl) {
+                      alert('Foto bukti nota tidak tersedia atau tidak tersimpan di Google Drive.');
+                      return;
+                    }
                     if (onPreviewDocument) {
                       onPreviewDocument({
-                        url: item.buktiUrl,
+                        url: validUrl,
                         fileId: item.buktiFileId,
                         title: `Bukti Nota: ${item.keterangan}`
                       });
+                    } else if (validUrl.startsWith('http://') || validUrl.startsWith('https://') || validUrl.startsWith('data:image/')) {
+                      window.open(validUrl, '_blank');
                     } else {
-                      window.open(item.buktiUrl, '_blank');
+                      alert('Format URL foto nota tidak valid.');
                     }
                   }}
                   className="flex-1 py-1.5 bg-indigo-55/10 hover:bg-indigo-55/20 text-indigo-700 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-indigo-150"
@@ -1012,8 +1019,10 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                                         fileId: fileId || undefined,
                                         title: `Foto Nota / Bukti Transfer (UID: ${req.id})`
                                       });
-                                    } else if (photoUrl) {
+                                    } else if (photoUrl && (photoUrl.startsWith('http://') || photoUrl.startsWith('https://') || photoUrl.startsWith('data:image/'))) {
                                       window.open(photoUrl, '_blank');
+                                    } else {
+                                      alert('Foto nota tidak tersedia atau format URL tidak valid.');
                                     }
                                   }}
                                 />
