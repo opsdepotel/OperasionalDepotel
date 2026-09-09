@@ -12,7 +12,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
 import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
 import { ReopenUidModal } from './ReopenUidModal';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing, Smartphone } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -2204,6 +2204,15 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const direkturCount = profiles.filter(p => p.role === Role.DIREKTUR).length;
     const adminCount = profiles.filter(p => p.role === Role.ADMINISTRATOR).length;
     const mobileBindingCount = profiles.filter(p => p.mobile || p.deviceId).length;
+    const activeSubsUsersCount = profiles.filter(p => {
+      if (!p.pushSubscriptions) return false;
+      try {
+        const parsed = JSON.parse(p.pushSubscriptions);
+        return Array.isArray(parsed) ? parsed.length > 0 : !!parsed;
+      } catch {
+        return false;
+      }
+    }).length;
 
     const getTodayStr = () => {
       const d = new Date();
@@ -2299,10 +2308,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
-        {/* Administrator Push Notification Test Card */}
+        {/* Administrator Kartu Blast Notifikasi */}
         {onOpenPushTest && (
           <div
-            id="admin-push-test-card"
+            id="admin-blast-notification-card"
             onClick={onOpenPushTest}
             className="p-5 rounded-2xl border border-sky-200 bg-gradient-to-br from-sky-50/90 via-white to-indigo-50/50 shadow-md hover:shadow-lg hover:border-sky-400 transition-all cursor-pointer group flex items-center justify-between gap-4 select-none"
             role="button"
@@ -2313,6 +2322,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 onOpenPushTest();
               }
             }}
+            title="Klik untuk membuka Form Blast Notifikasi Pengguna"
           >
             <div className="flex items-center gap-3.5">
               <div className="w-12 h-12 rounded-2xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-sky-200 group-hover:scale-105 transition-transform">
@@ -2321,18 +2331,25 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-sky-600 transition-colors">
-                    Uji Coba Push Notifikasi Pengguna
+                    Kartu Blast Notifikasi
                   </h3>
                   <span className="text-[9px] font-bold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full border border-sky-300/60 uppercase">
                     Fitur Administrator
                   </span>
+                  <span className="text-[9px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
+                    <Smartphone className="w-3 h-3 text-emerald-600" />
+                    {activeSubsUsersCount} Akun Terhubung
+                  </span>
                 </div>
+                <p className="text-[11px] text-slate-500 font-medium mt-1">
+                  Kirimkan pesan blast push notifikasi ke satu, beberapa, atau seluruh user pilihan dalam sistem.
+                </p>
               </div>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
               <span className="hidden sm:inline-block text-xs font-semibold text-sky-700 group-hover:text-sky-900 transition-colors">
-                Buka Formulir
+                Buka Form Blast
               </span>
               <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
                 &rarr;

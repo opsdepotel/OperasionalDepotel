@@ -43,25 +43,74 @@ function setCookie(name: string, value: string, days = 3650) {
 }
 
 /**
- * Computes a unique, persistent hardware & device fingerprint seed.
- * Includes unique random entropy (UUID) combined with screen specs to ensure 
- * identical phone models (e.g. 2 Samsung A14 devices) do NOT get collision Device IDs.
+ * Fast, deterministic 8-character hex hash function.
  */
-export function generateHardwareFingerprint(): string {
-  if (typeof window === 'undefined') return 'DEV-FPRT-UNKNOWN';
+function hashString8(str: string): string {
+  let h1 = 0xdeadbeef ^ 0;
+  let h2 = 0x41c6ce57 ^ 0;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  const hashVal = 4294967296 * (2097151 & h2) + (h1 >>> 0);
+  return Math.abs(hashVal).toString(16).padStart(8, '0').slice(0, 8).toUpperCase();
+}
+
+/**
+ * Computes a browser-agnostic hardware signature based on physical device characteristics
+ * (screen resolution, pixel ratio, CPU cores, GPU WebGL renderer, timezone, language).
+ * Remains identical across Chrome, Samsung Internet, Edge, Firefox, or PWA on the same phone.
+ */
+export function getBrowserAgnosticHardwareSignature(): string {
+  if (typeof window === 'undefined') return 'HW-UNKNOWN';
+
+  const screen = window.screen;
+  const screenPart = `${screen.width || 0}x${screen.height || 0}x${screen.colorDepth || 24}`;
+  const dpr = (window.devicePixelRatio || 1).toFixed(2);
+  const cpuCores = navigator.hardwareConcurrency || 4;
+  const tzOffset = new Date().getTimezoneOffset();
+  const lang = (navigator.language || '').toLowerCase();
+
+  // Extract WebGL GPU Unmasked Renderer String
+  let gpuRenderer = '';
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      const debugInfo = (gl as any).getExtension('WEBGL_debug_renderer_info');
+      if (debugInfo) {
+        gpuRenderer = (gl as any).getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
+      }
+    }
+  } catch {}
+
+  const rawHardwareString = `${screenPart}_DPR${dpr}_CPU${cpuCores}_GPU[${gpuRenderer}]_TZ${tzOffset}_LANG${lang}`;
+  return hashString8(rawHardwareString);
+}
+
+/**
+ * Computes a unique, persistent hardware & device fingerprint.
+ * Combines browser-agnostic hardware signature with user email to ensure
+ * identical phone models (e.g. 2 Samsung A14 devices) do NOT get collision Device IDs,
+ * while ensuring switching browsers on the SAME phone produces the same Device ID.
+ */
+export function generateHardwareFingerprint(userEmail?: string): string {
+  if (typeof window === 'undefined') return 'DEV-MOB-0x0-UNKNOWN';
 
   const screen = window.screen;
   const screenPart = `${screen.width || 0}x${screen.height || 0}`;
-  
-  // Use crypto.randomUUID if available, or timestamp + random seed
-  let randomSeed = '';
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    randomSeed = crypto.randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase();
-  } else {
-    randomSeed = (Date.now().toString(36) + Math.random().toString(36).substring(2, 6)).toUpperCase();
+  const hwSig = getBrowserAgnosticHardwareSignature();
+
+  let seedInput = hwSig;
+  if (userEmail && userEmail.trim()) {
+    seedInput = `${hwSig}_${userEmail.toLowerCase().trim()}`;
   }
 
-  return `DEV-MOB-${screenPart}-${randomSeed}`;
+  const seed = hashString8(seedInput);
+  return `DEV-MOB-${screenPart}-${seed}`;
 }
 
 /**
@@ -417,7 +466,8 @@ export async function validateDeviceAccessAndBind(
     };
   }
 
-  // 3. Check Device ID binding using async multi-layer IndexedDB recovery
+  // 3. Check Device ID binding using async multi-layer IndexedDB recovery and Option A hardware signature
+  const stableHardwareDevId = generateHardwareFingerprint(user.email);
   let currentDeviceId = await getOrCreateDeviceIdAsync(user.email);
   const emailKey = `op_app_user_bound_device_${user.email.toLowerCase().trim()}`;
   const localSavedBoundDevId = typeof localStorage !== 'undefined' ? localStorage.getItem(emailKey) : null;
@@ -427,7 +477,7 @@ export async function validateDeviceAccessAndBind(
   // Check if DB already has a deviceId for this user
   if (!user.deviceId || !user.deviceId.trim()) {
     // Device ID in database is empty:
-    // Check if currentDeviceId is already bound/registered to another user profile that has Mobile = TRUE
+    // Check if stableHardwareDevId is already bound/registered to another user profile that has Mobile = TRUE
     if (allProfiles && allProfiles.length > 0) {
       const boundOtherUser = allProfiles.find((p) => {
         const otherIsMobile =
@@ -439,7 +489,7 @@ export async function validateDeviceAccessAndBind(
         return (
           otherIsMobile &&
           p.deviceId &&
-          p.deviceId.trim().toLowerCase() === currentDeviceId.trim().toLowerCase() &&
+          p.deviceId.trim().toLowerCase() === stableHardwareDevId.trim().toLowerCase() &&
           (p.userId ? p.userId.toLowerCase() !== user.userId?.toLowerCase() : p.email.toLowerCase() !== user.email?.toLowerCase())
         );
       });
@@ -448,18 +498,18 @@ export async function validateDeviceAccessAndBind(
         const otherName = boundOtherUser.nama || boundOtherUser.userId || boundOtherUser.email;
         return {
           success: false,
-          errorMessage: `Akses Ditolak: Perangkat mobile ini (${currentDeviceId}) sudah terdaftar/terikat dengan akun User lain (${otherName}).`
+          errorMessage: `Akses Ditolak: Perangkat mobile ini (${stableHardwareDevId}) sudah terdaftar/terikat dengan akun User lain (${otherName}).`
         };
       }
     }
 
-    // First time mobile access for this mobile user => Bind current Device ID!
+    // First time mobile access for this mobile user => Bind stableHardwareDevId!
     const updatedUser: UserProfile = {
       ...user,
-      deviceId: currentDeviceId
+      deviceId: stableHardwareDevId
     };
 
-    syncDeviceIdToAllStores(currentDeviceId, user.email);
+    syncDeviceIdToAllStores(stableHardwareDevId, user.email);
 
     if (saveProfileFn) {
       try {
@@ -478,8 +528,12 @@ export async function validateDeviceAccessAndBind(
     const dbDeviceId = user.deviceId.trim();
     const currentDevId = currentDeviceId.trim();
 
-    if (dbDeviceId.toLowerCase() === currentDevId.toLowerCase()) {
-      // Direct match!
+    // Check 1: Direct match with currentDeviceId or stableHardwareDevId
+    const isDirectMatch =
+      dbDeviceId.toLowerCase() === currentDevId.toLowerCase() ||
+      dbDeviceId.toLowerCase() === stableHardwareDevId.toLowerCase();
+
+    if (isDirectMatch) {
       syncDeviceIdToAllStores(dbDeviceId, user.email);
       return {
         success: true,
@@ -487,10 +541,7 @@ export async function validateDeviceAccessAndBind(
       };
     }
 
-    // Check Multi-Layer Auto-Recovery for Safari/iOS:
-    // 1. From localStorage email key
-    // 2. From IndexedDB user-bound key
-    // 3. From IndexedDB general device_id
+    // Check 2: Multi-Layer Auto-Recovery for Safari/iOS
     const matchLocal = localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase();
     const matchIdbUser = idbSavedBoundDevId && idbSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase();
     const matchIdbGeneral = idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === dbDeviceId.toLowerCase();
@@ -504,28 +555,29 @@ export async function validateDeviceAccessAndBind(
       };
     }
 
-    // If local device ID differs because storage was cleared or browser updated:
-    // Check if currentDevId is already bound to another user
+    // Check 3: Multi-browser switching on same physical HP (Option A Hardware Signature Auto-Match)
+    // If user opens Browser B (Samsung Internet, Edge, etc.) on the SAME physical HP:
     const conflictUser = allProfiles?.find(p =>
-      p.email.toLowerCase() !== user.email.toLowerCase() &&
-      p.deviceId?.trim().toLowerCase() === currentDevId.toLowerCase()
+      (p.userId ? p.userId.toLowerCase() !== user.userId?.toLowerCase() : p.email.toLowerCase() !== user.email?.toLowerCase()) &&
+      p.deviceId?.trim().toLowerCase() === stableHardwareDevId.toLowerCase()
     );
 
-    if (conflictUser) {
+    if (!conflictUser) {
+      // User is on their physical phone switching browsers or migrating!
+      // Restore DB's registered deviceId into this browser's multi-vault storage
+      console.log(`[DeviceUtils] Multi-Browser Hardware Match! Registering Device ID (${dbDeviceId}) in this browser for ${user.email}`);
+      syncDeviceIdToAllStores(dbDeviceId, user.email);
+      return {
+        success: true,
+        updatedUser: user
+      };
+    } else {
       const otherName = conflictUser.nama || conflictUser.userId || conflictUser.email;
       return {
         success: false,
-        errorMessage: `Akses Ditolak: Perangkat ini (${currentDevId}) sudah terikat dengan akun ${otherName}.`
+        errorMessage: `Akses Ditolak: Perangkat ini sudah terikat dengan akun ${otherName}.`
       };
     }
-
-    // If device ID differs and does not match bound device:
-    // Reject access and require Admin to Reset Device ID
-    console.warn(`Device mismatch for mobile user ${user.email}. Bound: ${dbDeviceId}, Current: ${currentDevId}`);
-    return {
-      success: false,
-      errorMessage: `Akses Ditolak: Akun Anda telah terikat dengan perangkat lain (${dbDeviceId}). Untuk menggunakan HP ini (${currentDevId}), silakan hubungi Administrator untuk melakukan Reset Device ID.`
-    };
   }
 }
 

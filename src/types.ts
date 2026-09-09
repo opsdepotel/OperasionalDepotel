@@ -82,6 +82,7 @@ export interface UserProfile {
   aksesBBM?: boolean;
   mobile?: boolean;
   deviceId?: string;
+  hardwareSignature?: string;
   fotoProfile?: string;
   fotoProfileFileId?: string;
   pushSubscriptions?: string;
