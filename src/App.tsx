@@ -47,7 +47,6 @@ import {
   purgeOrphanItemReviewHistories,
   parseNumericValue,
   formatDivisiSubDivisi,
-  defaultUsers,
   mergeUserProfiles,
   findMatchingUser,
   SPREADSHEET_ID,
@@ -300,9 +299,9 @@ export default function App() {
     try {
       const cached = localStorage.getItem('op_app_cached_profiles');
       const cachedProfs = cached ? JSON.parse(cached) : [];
-      return mergeUserProfiles(cachedProfs, defaultUsers);
+      return mergeUserProfiles(cachedProfs);
     } catch {
-      return mergeUserProfiles([], defaultUsers);
+      return [];
     }
   });
   const [sites, setSites] = useState<SiteInfo[]>(() => {
@@ -343,7 +342,7 @@ export default function App() {
       if (savedUserId) {
         const cachedProfsStr = localStorage.getItem('op_app_cached_profiles');
         const cachedList = cachedProfsStr ? JSON.parse(cachedProfsStr) : [];
-        const candidateProfiles = mergeUserProfiles(cachedList, defaultUsers);
+        const candidateProfiles = mergeUserProfiles(cachedList);
         const cleanSavedId = savedUserId.trim().toLowerCase();
         const matched = candidateProfiles.find(
           p => (p.userId || '').trim().toLowerCase() === cleanSavedId || (p.email || '').trim().toLowerCase() === cleanSavedId
@@ -436,6 +435,7 @@ export default function App() {
   // PWA Share Target states for received receipts
   const [pendingSharedRecord, setPendingSharedRecord] = useState<SharedReceiptRecord | null>(null);
   const [sharedFilePrefill, setSharedFilePrefill] = useState<{ file: File; recordId?: string } | null>(null);
+  const [adjustmentInitialUser, setAdjustmentInitialUser] = useState<UserProfile | null>(null);
   const [shareAccessDeniedModal, setShareAccessDeniedModal] = useState<{
     open: boolean;
     userName: string;
@@ -651,6 +651,13 @@ export default function App() {
     return found ? `${siteId} - ${found.name}` : siteId;
   };
 
+  const getUserDisplayName = (email?: string): string => {
+    if (!email) return '-';
+    const clean = email.toLowerCase().trim();
+    const matched = profiles.find(p => p.email.toLowerCase().trim() === clean);
+    return matched?.nama?.trim() || matched?.email?.trim() || email.trim();
+  };
+
   // Cache to prevent duplicate client-side push dispatches within 6s
   const recentPushDispatchesRef = useRef<Map<string, number>>(new Map());
 
@@ -792,7 +799,7 @@ export default function App() {
           const cachedLogs = JSON.parse(localStorage.getItem('op_app_cached_reset_device_logs') || '[]');
           const cachedHist = JSON.parse(localStorage.getItem('op_app_cached_item_review_histories') || '[]');
 
-          const activeProfs = cachedProfs.length > 0 ? cachedProfs : defaultUsers;
+          const activeProfs = cachedProfs;
           setRequests(cachedReqs.length > 0 ? cachedReqs : defaultRequests);
           setUsageItems(cachedItems.length > 0 ? cachedItems : defaultUsageItems);
           setProfiles(activeProfs);
@@ -855,7 +862,7 @@ export default function App() {
         return req;
       });
 
-      const mergedProfs = allProfs && allProfs.length > 0 ? allProfs : mergeUserProfiles(profiles, defaultUsers);
+      const mergedProfs = allProfs && allProfs.length > 0 ? allProfs : mergeUserProfiles(profiles);
 
       const sortedReqs = synchronizedReqs.sort((a, b) => b.id.localeCompare(a.id));
       setRequests(sortedReqs); // Newest first
@@ -1215,7 +1222,7 @@ export default function App() {
     setDriveFolderId(null);
     setRequests([]);
     setUsageItems([]);
-    setProfiles(mergeUserProfiles([], defaultUsers));
+    setProfiles([]);
     setUserProfile(null);
     setActiveView('dashboard');
   };
@@ -1321,7 +1328,7 @@ export default function App() {
       candidateProfiles = fetchedProfs;
     } else {
       // Offline / fallback cache
-      candidateProfiles = mergeUserProfiles(profiles, cachedProfsList, defaultUsers);
+      candidateProfiles = mergeUserProfiles(profiles, cachedProfsList);
     }
 
     setProfiles(candidateProfiles);
@@ -1724,10 +1731,11 @@ export default function App() {
         let finalBuktiFileId = '';
 
         if (file) {
-          if (!driveFolderId) {
+          const targetFolderId = driveFolderId || DRIVE_FOLDER_ID;
+          if (!targetFolderId) {
             throw new Error('ID Folder Google Drive belum terinisialisasi.');
           }
-          const uploadResult = await uploadReceiptFile(token, driveFolderId, file);
+          const uploadResult = await uploadReceiptFile(token, targetFolderId, file);
           finalBuktiUrl = uploadResult.viewUrl;
           finalBuktiFileId = uploadResult.fileId;
         }
@@ -1785,6 +1793,13 @@ export default function App() {
     );
 
     if (success !== null) {
+      if (sharedFilePrefill?.recordId) {
+        await deleteSharedReceipt(sharedFilePrefill.recordId);
+      }
+      await clearAllSharedReceipts();
+      setSharedFilePrefill(null);
+      setAdjustmentInitialUser(null);
+
       const nominalStr = formatIDRValue(amount);
       sendPushToEmail(
         targetUserEmail,
@@ -1900,7 +1915,7 @@ export default function App() {
       if (!isBbmDurenSawitRequest(reviewBudgetReq)) {
         const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
         const approvedNominalFormatted = formatIDRValue(approvedAmount);
-        const pemohonName = reviewBudgetReq.userEmail;
+        const pemohonName = getUserDisplayName(reviewBudgetReq.userEmail);
         const siteLabel = getSiteLabel(reviewBudgetReq.siteId);
         const applicantEmail = reviewBudgetReq.userEmail?.toLowerCase().trim();
         const currentActorEmail = userProfile?.email?.toLowerCase().trim();
@@ -2104,7 +2119,7 @@ export default function App() {
       if (!isBbmDurenSawitRequest(transferReq)) {
         const transferNominalFormatted = formatIDRValue(transferredAmount);
         const siteLabel = getSiteLabel(transferReq.siteId);
-        const pemohonName = transferReq.userEmail;
+        const pemohonName = getUserDisplayName(transferReq.userEmail);
         const applicantEmail = transferReq.userEmail?.toLowerCase().trim();
         const managerEmail = transferReq.managerEmail?.toLowerCase().trim();
         const currentActorEmail = userProfile?.email?.toLowerCase().trim();
@@ -2179,7 +2194,7 @@ export default function App() {
       // Trigger Web Push Notification to Applicant and Manager (BBM Duren Sawit is excluded)
       if (!isBbmDurenSawitRequest(transferReq)) {
         const siteLabel = getSiteLabel(transferReq.siteId);
-        const pemohonName = transferReq.userEmail;
+        const pemohonName = getUserDisplayName(transferReq.userEmail);
         const applicantEmail = transferReq.userEmail?.toLowerCase().trim();
         const managerEmail = transferReq.managerEmail?.toLowerCase().trim();
         const currentActorEmail = userProfile?.email?.toLowerCase().trim();
@@ -2423,7 +2438,7 @@ export default function App() {
         const targetApproverEmail = req.managerEmail || (isManagerOrFinanceRequester ? profiles.find(p => p.role === Role.DIREKTUR)?.email : profiles.find(p => p.role === Role.MANAGER)?.email);
         
         if (targetApproverEmail) {
-          const pemohonName = userProfile?.nama || userProfile?.email || req.userEmail;
+          const pemohonName = userProfile?.nama || getUserDisplayName(req.userEmail);
           const siteLabel = getSiteLabel(req.siteId);
           sendPushToEmail(
             targetApproverEmail,
@@ -2710,10 +2725,11 @@ export default function App() {
             return finalStatus === ItemStatus.APPROVED ? sum + (Number(item.nominal) || 0) : sum;
           }, 0);
           const approvedNominalFormatted = formatIDRValue(totalApproved || reqToUse.managerActionAmount);
+          const applicantName = getUserDisplayName(reqToUse.userEmail);
           sendPushToRole(
             Role.FINANCE,
             `Dana Talangan Siap Ditransfer: UID ${reqToUse.id}`,
-            `Laporan Dana Talangan (${reqToUse.userEmail} - ${siteLabel}) telah disetujui Manager sebesar ${approvedNominalFormatted} dan siap diproses/ditransfer Finance.`,
+            `Laporan Dana Talangan (${applicantName} - ${siteLabel}) telah disetujui Manager sebesar ${approvedNominalFormatted} dan siap diproses/ditransfer Finance.`,
             reqToUse,
             undefined,
             [currentActorEmail, applicantEmail]
@@ -2975,7 +2991,7 @@ export default function App() {
       if (!isBbmDurenSawitRequest(req)) {
         const targetApproverEmail = req.managerEmail || profiles.find(p => p.role === Role.MANAGER)?.email;
         if (targetApproverEmail) {
-          const requesterName = userProfile?.nama || userProfile?.email || req.userEmail;
+          const requesterName = userProfile?.nama || getUserDisplayName(req.userEmail);
           const siteLabel = getSiteLabel(req.siteId);
           sendPushToEmail(
             targetApproverEmail,
@@ -3516,8 +3532,20 @@ export default function App() {
             googleToken={token!}
             driveFolderId={driveFolderId || ''}
             onCreateAdjustment={handleCreateAdjustment}
-            onClose={() => setActiveView('dashboard')}
+            onClose={async () => {
+              setActiveView('dashboard');
+              setAdjustmentInitialUser(null);
+              if (sharedFilePrefill?.recordId) {
+                const rec = await getLatestSharedReceipt();
+                if (rec) {
+                  setPendingSharedRecord(rec);
+                }
+                setSharedFilePrefill(null);
+              }
+            }}
             onAuthError={handleGoogleAuthError}
+            initialUserEmail={adjustmentInitialUser?.email}
+            initialFile={sharedFilePrefill?.file}
           />
         ) : activeView === 'transfer-list' && userProfile ? (
           <TransferListPanel
@@ -4947,6 +4975,13 @@ export default function App() {
             setTransferReq(candidateReq);
             setPendingSharedRecord(null);
           }}
+          onSelectAdjustmentUser={(user, file) => {
+            setSharedFilePrefill({ file, recordId: pendingSharedRecord?.id });
+            setAdjustmentInitialUser(user);
+            setActiveRole(Role.FINANCE);
+            setActiveView('adjustment');
+            setPendingSharedRecord(null);
+          }}
           onClose={async () => {
             if (pendingSharedRecord?.id) {
               await deleteSharedReceipt(pendingSharedRecord.id);
@@ -5008,14 +5043,17 @@ export default function App() {
           onTransfer={handleAdminTransfer}
           onReject={handleRejectTransfer}
           histories={itemReviewHistories}
+          usageItems={usageItems}
           onPreviewDocument={setPreviewDocument}
           onClose={async () => {
-            if (sharedFilePrefill?.recordId) {
-              await deleteSharedReceipt(sharedFilePrefill.recordId);
-            }
-            await clearAllSharedReceipts();
             setTransferReq(null);
-            setSharedFilePrefill(null);
+            if (sharedFilePrefill?.recordId) {
+              const rec = await getLatestSharedReceipt();
+              if (rec) {
+                setPendingSharedRecord(rec);
+              }
+              setSharedFilePrefill(null);
+            }
           }}
           googleToken={token!}
           driveFolderId={driveFolderId}

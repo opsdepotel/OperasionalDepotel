@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { BudgetRequest, UserProfile, UsageReportItem, ItemReviewHistory, RequestStatus, ItemStatus, Role } from '../types';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
@@ -209,9 +210,12 @@ export const ReopenUidModal: React.FC<ReopenUidModalProps> = ({
 
   if (!isOpen) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
-      <div className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] my-auto animate-in fade-in zoom-in-95 duration-150">
+  return createPortal(
+    <div className="fixed inset-0 z-[100000] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-fade-in">
+      <div 
+        id="modal-reopen-uid"
+        className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] my-auto animate-in fade-in zoom-in-95 duration-150"
+      >
         
         {/* Header Modal with colorful gradient */}
         <div className="bg-gradient-to-r from-amber-600 via-orange-600 to-amber-700 text-white p-4 sm:p-5 flex items-center justify-between shrink-0 border-b border-amber-500/30 shadow-sm">
@@ -833,6 +837,7 @@ export const ReopenUidModal: React.FC<ReopenUidModalProps> = ({
           </div>
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 };

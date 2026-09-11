@@ -42,6 +42,7 @@ import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture } from '../lib/aiRecapture';
+import { ActivityLogMapContainer } from './ActivityLogMapContainer';
 
 // Helper to parse coordinate string and calculate Haversine distance
 function parseCoords(coordStr: string): { lat: number; lng: number } | null {
@@ -151,6 +152,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [divisiFilter, setDivisiFilter] = useState<string>('ALL');
   const [selectedUserFilter, setSelectedUserFilter] = useState<string>('');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showMapContainer, setShowMapContainer] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -1677,6 +1679,26 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           </div>
         )}
         
+        {/* Peta Lokasi Kegiatan Operasional Modal (Leaflet.js) - Akses Khusus ROLE ADMINISTRATOR */}
+        {currentRole === Role.ADMINISTRATOR && showMapContainer && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-slate-900/80 backdrop-blur-sm overflow-y-auto"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowMapContainer(false);
+            }}
+          >
+            <div className="relative w-full max-w-5xl my-auto shadow-2xl">
+              <ActivityLogMapContainer
+                activities={filteredActivities}
+                profiles={profiles}
+                sites={sites}
+                selectedDate={dateFilter}
+                onClose={() => setShowMapContainer(false)}
+              />
+            </div>
+          </div>
+        )}
+
         {/* Filter Panel */}
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm space-y-3.5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
@@ -1684,9 +1706,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               <Filter className="w-4 h-4 text-indigo-600" />
               <h2 className="font-display font-bold text-slate-800 text-xs tracking-wider uppercase">Filter Activity User</h2>
             </div>
-            <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md uppercase">
-              Role: {currentRole}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-md uppercase">
+                Role: {currentRole}
+              </span>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 gap-3">
@@ -1780,6 +1804,18 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             </span>
             <span className="font-display font-bold text-indigo-700 text-lg">{filteredActivities.length}</span>
           </div>
+
+          {/* Tombol Lihat Peta Kegiatan (Khusus Role ADMINISTRATOR) di dalam kontainer FILTER ACTIVITY USER */}
+          {currentRole === Role.ADMINISTRATOR && (
+            <button
+              onClick={() => setShowMapContainer(true)}
+              className="w-full bg-gradient-to-r from-indigo-600 via-indigo-700 to-slate-900 hover:from-indigo-500 hover:to-slate-800 text-white font-display font-bold text-xs py-2.5 px-4 rounded-xl shadow-sm hover:shadow-indigo-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer border border-indigo-500/30 mt-2"
+              id="btn-lihat-peta-kegiatan"
+            >
+              <Compass className="w-4 h-4 text-indigo-300" />
+              <span>Lihat Peta Kegiatan</span>
+            </button>
+          )}
         </div>
 
         {/* List of Activities */}

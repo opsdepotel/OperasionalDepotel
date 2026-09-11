@@ -31,6 +31,8 @@ interface AdjustmentPanelProps {
   ) => Promise<void>;
   onClose: () => void;
   onAuthError?: () => void;
+  initialUserEmail?: string;
+  initialFile?: File | null;
 }
 
 export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
@@ -41,7 +43,9 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   driveFolderId,
   onCreateAdjustment,
   onClose,
-  onAuthError
+  onAuthError,
+  initialUserEmail,
+  initialFile
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
@@ -225,6 +229,21 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     });
     return Array.from(map.values());
   }, [profiles]);
+
+  // Auto-select user and pre-fill file if triggered with initialUserEmail (e.g. from Brimo shared receipt)
+  useEffect(() => {
+    if (initialUserEmail && !selectedUser) {
+      const target = uniqueProfiles.find(p => p.email.toLowerCase() === initialUserEmail.toLowerCase()) ||
+                     profiles.find(p => p.email.toLowerCase() === initialUserEmail.toLowerCase());
+      if (target) {
+        setSelectedUser(target);
+        setAdjustmentType('Transfer Adjustment dari Finance');
+        if (initialFile) {
+          setSelectedFile(initialFile);
+        }
+      }
+    }
+  }, [initialUserEmail, uniqueProfiles, profiles, initialFile, selectedUser]);
 
   // Filter unbalanced users
   const unbalancedUsers = uniqueProfiles.filter(user => {
@@ -752,21 +771,29 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
 
             {/* Selected File Badge */}
             {selectedFile && (
-              <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl p-2.5 text-[10px] flex items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5 truncate">
-                  <Paperclip className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                  <span className="font-bold truncate">{selectedFile.name}</span>
-                  <span className="text-[9px] text-emerald-600 bg-emerald-100/50 px-1.5 py-0.5 rounded-md font-mono">
-                    {(selectedFile.size / 1024).toFixed(0)} KB
-                  </span>
+              <div className="space-y-1.5">
+                <div className="bg-emerald-50 border border-emerald-100 text-emerald-800 rounded-xl p-2.5 text-[10px] flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <Paperclip className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span className="font-bold truncate">{selectedFile.name}</span>
+                    <span className="text-[9px] text-emerald-600 bg-emerald-100/50 px-1.5 py-0.5 rounded-md font-mono">
+                      {(selectedFile.size / 1024).toFixed(0)} KB
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFile(null)}
+                    className="text-emerald-800 hover:text-red-500 font-bold px-1 text-xs cursor-pointer"
+                  >
+                    Hapus
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedFile(null)}
-                  className="text-emerald-800 hover:text-red-500 font-bold px-1 text-xs cursor-pointer"
-                >
-                  Hapus
-                </button>
+                {initialFile && selectedFile === initialFile && (
+                  <div className="flex items-center gap-1.5 text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2.5 py-1.5 rounded-lg">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <span>Bukti transfer otomatis terisi dari Share Nota BRImo</span>
+                  </div>
+                )}
               </div>
             )}
           </div>

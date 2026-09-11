@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { BudgetRequest, RequestStatus, Role, UserProfile, ItemReviewHistory, UsageReportItem, ItemStatus } from '../types';
 import { SharedReceiptRecord, deleteSharedReceipt, clearAllSharedReceipts } from '../lib/sharedReceiptStorage';
 import { ZoomableImage } from './ZoomableImage';
@@ -13,7 +13,10 @@ import {
   ShieldAlert,
   X,
   User,
-  UploadCloud
+  UploadCloud,
+  Coins,
+  ShieldCheck,
+  TrendingDown
 } from 'lucide-react';
 
 interface FinanceSharedReceiptModalProps {
@@ -24,6 +27,7 @@ interface FinanceSharedReceiptModalProps {
   usageItems?: UsageReportItem[];
   profiles?: UserProfile[];
   onSelectCandidate: (candidate: BudgetRequest, file: File) => void;
+  onSelectAdjustmentUser?: (user: UserProfile, file: File) => void;
   onSwitchToFinanceRole?: () => void;
   onClose: () => void;
 }
@@ -36,11 +40,13 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
   usageItems = [],
   profiles = [],
   onSelectCandidate,
+  onSelectAdjustmentUser,
   onSwitchToFinanceRole,
   onClose,
 }) => {
   const isFinance = activeRole === Role.FINANCE;
 
+  const [activeTab, setActiveTab] = useState<'TRANSFER' | 'ADJUSTMENT'>('TRANSFER');
   const [currentBlob, setCurrentBlob] = useState<Blob | null>(sharedRecord?.blob || null);
   const [currentFileName, setCurrentFileName] = useState<string>(sharedRecord?.fileName || 'bukti_transfer.jpg');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -81,17 +87,112 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
     }).format(num);
   };
 
-  const pendingTransferRequests = requests.filter((r) => {
-    if (r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED) return false;
+  // Helper checks for Operational Balance calculations
+  const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+  const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
 
-    // 1. UID berstatus "PENDING_TALANGAN_TRANSFER"
-    if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) return true;
+  const isTalanganRequest = (r: BudgetRequest) => {
+    return (
+      r.id.startsWith('OPT-') ||
+      r.keterangan?.toUpperCase().includes('[DANA TALANGAN]') ||
+      r.keterangan?.toUpperCase().includes('DANA TALANGAN') ||
+      r.keterangan?.toUpperCase().includes('TALANGAN') ||
+      r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
+    );
+  };
 
-    // 2. UID berstatus "PENDING_PENGAJUAN_TRANSFER"
-    if (r.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER) return true;
+  // Global user operational balance (including OP-, OPT-, ADJ-, excluding BBM)
+  const getUserBalance = (userEmail: string) => {
+    const userReqs = requests.filter(r => 
+      r.userEmail.toLowerCase() === userEmail.toLowerCase() && 
+      !isBbmRequest(r)
+    );
+    const userReqIds = userReqs.map(r => r.id);
+    const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItem(item));
 
-    // 3. UID yang berstatus Transfer Bertahap (belum CLOSED) yang semua itemnya telah diapproved Manager dan Finance
-    if (r.status !== RequestStatus.CLOSED) {
+    const totalTransferred = userReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalAdjustments = userReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalReportedApproved = userUsage
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+      .reduce((sum, item) => sum + item.nominal, 0);
+    
+    return totalTransferred + totalAdjustments - totalReportedApproved;
+  };
+
+  // Strictly OP- (Operasional Biasa) summary
+  const getUserOpSummary = (userEmail: string) => {
+    const userReqs = requests.filter(r => 
+      r.userEmail.toLowerCase() === userEmail.toLowerCase() && 
+      !isBbmRequest(r) && 
+      !isTalanganRequest(r)
+    );
+    const userReqIds = userReqs.map(r => r.id);
+    const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItem(item));
+
+    const totalTransferred = userReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalAdjustments = userReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalReportedApproved = userUsage
+      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
+      .reduce((sum, item) => sum + item.nominal, 0);
+
+    const balance = totalTransferred + totalAdjustments - totalReportedApproved;
+    const requiredNominal = Math.abs(balance);
+
+    return {
+      totalTransferred,
+      totalAdjustments,
+      totalReportedApproved,
+      balance,
+      requiredNominal
+    };
+  };
+
+  // Deduplicated unique profiles
+  const uniqueProfiles = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    profiles.forEach(p => {
+      const key = (p.email || '').toLowerCase().trim();
+      if (key && !map.has(key)) {
+        map.set(key, p);
+      }
+    });
+    return Array.from(map.values());
+  }, [profiles]);
+
+  // Users with negative operational balance (Saldo Kurang / Perlu Adjustment)
+  const minusBalanceUsers = useMemo(() => {
+    return uniqueProfiles.filter(user => {
+      const globalBal = getUserBalance(user.email);
+      const opSum = getUserOpSummary(user.email);
+      return globalBal < -0.01 || opSum.balance < -0.01;
+    });
+  }, [uniqueProfiles, requests, usageItems]);
+
+  const filteredMinusBalanceUsers = useMemo(() => {
+    if (!searchQuery.trim()) return minusBalanceUsers;
+    const q = searchQuery.toLowerCase();
+    return minusBalanceUsers.filter(user => {
+      const name = (user.nama || (user as any).name || '').toLowerCase();
+      const email = user.email.toLowerCase();
+      const div = formatDivisiSubDivisi(user.divisi, user.subDivisi).toLowerCase();
+      return name.includes(q) || email.includes(q) || div.includes(q);
+    });
+  }, [minusBalanceUsers, searchQuery]);
+
+  const pendingTransferRequests = useMemo(() => {
+    return requests.filter((r) => {
+      if (r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED || r.status === RequestStatus.CLOSED) return false;
+
+      // Check canonical isPendingTransferRequest (includes APPROVED, PARTIALLY_APPROVED for OP with Finance approval or Non-OP, PENDING_TALANGAN_TRANSFER, PENDING_PENGAJUAN_TRANSFER, etc.)
+      if (isPendingTransferRequest(r, histories, usageItems)) return true;
+
+      // 1. UID berstatus "PENDING_TALANGAN_TRANSFER"
+      if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) return true;
+
+      // 2. UID berstatus "PENDING_PENGAJUAN_TRANSFER"
+      if (r.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER) return true;
+
+      // 3. UID yang berstatus Transfer Bertahap (belum CLOSED) yang semua itemnya telah diapproved Manager dan Finance
       const isTransferBertahap = r.status === RequestStatus.TRANSFER_BERTAHAP || getTransferBertahap(r, histories, usageItems);
       if (isTransferBertahap) {
         const reqItems = usageItems.filter(i => i.requestId === r.id);
@@ -108,10 +209,10 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
           if (finApproved) return true;
         }
       }
-    }
 
-    return false;
-  });
+      return false;
+    });
+  }, [requests, histories, usageItems]);
 
   const filteredCandidates = pendingTransferRequests.filter((r) => {
     if (!searchQuery.trim()) return true;
@@ -137,6 +238,17 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
       type: blobToUse.type || sharedRecord.mimeType || 'image/jpeg',
     });
     onSelectCandidate(req, file);
+  };
+
+  const handleSelectAdjustment = (user: UserProfile) => {
+    const blobToUse = currentBlob || sharedRecord.blob;
+    const fileNameToUse = currentFileName || sharedRecord.fileName;
+    const file = new File([blobToUse], fileNameToUse, {
+      type: blobToUse.type || sharedRecord.mimeType || 'image/jpeg',
+    });
+    if (onSelectAdjustmentUser) {
+      onSelectAdjustmentUser(user, file);
+    }
   };
 
   const handleDiscard = async () => {
@@ -244,156 +356,315 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                 </button>
               </div>
 
-              {/* Transaction Candidates Section */}
-              <div className="space-y-3 pt-1">
-                <div className="space-y-2">
-                  <h4 className="font-bold text-sm text-slate-800 flex items-center gap-2">
-                    <FileCheck className="w-4 h-4 text-indigo-600" />
-                    <span>Daftar Transaksi Menunggu Transfer</span>
-                  </h4>
+              {/* Tab Navigation: Menunggu Transfer vs Perlu Adjusment */}
+              <div className="flex border-b border-slate-200 bg-slate-50/80 rounded-xl p-1 gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('TRANSFER');
+                    setSearchQuery('');
+                  }}
+                  className={`flex-1 py-2 px-3 text-xs font-bold rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    activeTab === 'TRANSFER'
+                      ? 'bg-white text-indigo-700 shadow-xs border border-slate-200/80'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-white/50'
+                  }`}
+                >
+                  <FileCheck className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>Menunggu Transfer</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                    activeTab === 'TRANSFER' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    {pendingTransferRequests.length}
+                  </span>
+                </button>
 
-                  {/* Search input positioned vertically below title */}
-                  <div className="relative w-full">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-                    <input
-                      type="text"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      placeholder="Cari UID / Site / Pemohon..."
-                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all outline-none"
-                    />
-                  </div>
-                </div>
-
-                {/* Candidate list */}
-                {pendingTransferRequests.length === 0 ? (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center text-slate-500 space-y-2">
-                    <AlertCircle className="w-8 h-8 text-slate-400 mx-auto" />
-                    <p className="font-bold text-xs text-slate-700">Tidak ada transaksi yang berstatus Menunggu Transfer saat ini.</p>
-                    <p className="text-[11px]">Semua transaksi pengajuan dana telah diproses atau belum disetujui Manager.</p>
-                  </div>
-                ) : filteredCandidates.length === 0 ? (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-center text-slate-500 text-xs">
-                    Pencarian "{searchQuery}" tidak ditemukan pada daftar transaksi menunggu transfer.
-                  </div>
-                ) : (
-                  <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
-                    {filteredCandidates.map((req) => {
-                      const reqProfile = profiles.find((p) => p.email.toLowerCase() === req.userEmail.toLowerCase());
-                      const reqName = reqProfile?.nama || (reqProfile as any)?.name || req.userEmail.split('@')[0];
-                      const divisiText = formatDivisiSubDivisi(reqProfile?.divisi || req.divisi, reqProfile?.subDivisi || req.subDivisi);
-                      const isTalangan = req.id.startsWith('OPT-') || req.id.startsWith('BBMDS') || req.id.startsWith('BBM_DurenSawit') || req.tipePengajuan === 'DANA_TALANGAN';
-                      
-                      const finApprovedAmt = getFinanceApprovedAmount(req, histories, usageItems);
-                      const transferredAmt = req.adminActionAmount || 0;
-                      const sisaTransfer = finApprovedAmt > 0 ? Math.max(0, finApprovedAmt - transferredAmt) : (req.managerActionAmount || req.jumlahPengajuan || 0);
-                      const nominal = isTalangan ? (finApprovedAmt > 0 ? finApprovedAmt : (req.managerActionAmount || req.jumlahPengajuan || 0)) : (sisaTransfer > 0 ? sisaTransfer : (req.managerActionAmount || req.jumlahPengajuan || 0));
-
-                      let statusBadgeLabel = 'Disetujui';
-                      let statusBadgeStyle = 'bg-emerald-50 text-emerald-700 border-emerald-200/80';
-
-                      if (req.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
-                        statusBadgeLabel = 'Pending Reimburse Talangan';
-                        statusBadgeStyle = 'bg-pink-50 text-pink-700 border-pink-200';
-                      } else if (req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER) {
-                        statusBadgeLabel = 'Pending Transfer Finance';
-                        statusBadgeStyle = 'bg-amber-50 text-amber-700 border-amber-200';
-                      } else if (req.status === RequestStatus.TRANSFER_BERTAHAP || getTransferBertahap(req, histories, usageItems)) {
-                        statusBadgeLabel = 'Transfer Bertahap';
-                        statusBadgeStyle = 'bg-purple-50 text-purple-700 border-purple-200';
-                      } else if (req.status === RequestStatus.PARTIALLY_APPROVED) {
-                        statusBadgeLabel = 'Disetujui Sebagian';
-                        statusBadgeStyle = 'bg-blue-50 text-blue-700 border-blue-200';
-                      }
-
-                      return (
-                        <div
-                          key={req.id}
-                          className="p-3.5 rounded-xl border transition-all flex flex-col gap-2.5 bg-white border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/20 shadow-xs w-full"
-                        >
-                          {/* Baris 1 (Paling atas): Rata kiri UID, Rata kanan Jenis UID */}
-                          <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 w-full">
-                            <span className="font-mono font-bold text-xs text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md border border-slate-200 shrink-0">
-                              {req.id}
-                            </span>
-                            <span
-                              className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border shrink-0 ${
-                                isTalangan
-                                  ? 'bg-pink-50 text-pink-700 border-pink-200'
-                                  : 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                              }`}
-                            >
-                              {isTalangan ? 'Dana Talangan' : 'Pengajuan Anggaran'}
-                            </span>
-                          </div>
-
-                          {/* Baris 2: Pemohon (kiri) & Divisi (rata kanan sejajar status UID) */}
-                          <div className="flex items-center justify-between gap-2 text-xs w-full">
-                            <div className="text-slate-700 truncate min-w-0">
-                              <span className="text-[10px] text-slate-400 mr-1.5 font-semibold">Pemohon:</span>
-                              <span className="font-bold text-slate-900">{reqName}</span>
-                            </div>
-                            <div className="text-slate-700 text-right shrink-0">
-                              <span className="text-[10px] text-slate-400 mr-1.5 font-semibold">Divisi:</span>
-                              <span className="font-bold text-slate-800">{divisiText || '-'}</span>
-                            </div>
-                          </div>
-
-                          {/* Baris 3 (Di bawah Pemohon): Informasi Status / Finance Approval */}
-                          <div className="text-xs flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] text-slate-400 font-semibold">Status Transfer:</span>
-                            <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 ${statusBadgeStyle}`}>
-                              {statusBadgeLabel}
-                            </span>
-                            {(req.adminComment || req.managerComment) && (
-                              <span className="text-[11px] text-slate-500 italic truncate max-w-[240px]">
-                                "{req.adminComment || req.managerComment}"
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Baris 4 (Di bawah Finance Approval): Nominal Menunggu Transfer */}
-                          <div className="text-xs flex items-center gap-1.5">
-                            <span className="text-[10px] text-slate-400 font-semibold">Menunggu Transfer:</span>
-                            <span className="font-extrabold text-emerald-600 text-sm">
-                              {formatIDR(nominal)}
-                            </span>
-                          </div>
-
-                          {/* Baris 5 (Di bawah Nominal): Site ID / Lokasi */}
-                          <div className="text-xs flex items-center gap-1.5">
-                            <span className="text-[10px] text-slate-400 font-semibold">Site ID:</span>
-                            <span className="text-[11px] font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
-                              {req.siteId || '-'}
-                            </span>
-                          </div>
-
-                          {/* Baris 6 (Di bawah Site ID): Badge Keterangan - Lebar mengikuti modal / card */}
-                          {req.keterangan && (
-                            <div className="w-full pt-0.5">
-                              <p className="w-full text-[11px] text-slate-600 italic bg-slate-50/90 p-2.5 rounded-lg border border-slate-200/80 leading-relaxed">
-                                "{req.keterangan}"
-                              </p>
-                            </div>
-                          )}
-
-                          {/* Baris 7 (Paling bawah): Tombol Lanjut Transfer Rata Kanan */}
-                          <div className="flex items-center justify-end w-full pt-1 border-t border-slate-100">
-                            <button
-                              type="button"
-                              onClick={() => handleSelect(req)}
-                              className="px-4 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100"
-                            >
-                              <span>Lanjut Transfer</span>
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('ADJUSTMENT');
+                    setSearchQuery('');
+                  }}
+                  className={`flex-1 py-2 px-3 text-xs font-bold rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    activeTab === 'ADJUSTMENT'
+                      ? 'bg-white text-rose-700 shadow-xs border border-slate-200/80'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-white/50'
+                  }`}
+                >
+                  <Coins className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Perlu Adjusment</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                    activeTab === 'ADJUSTMENT' ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    {minusBalanceUsers.length}
+                  </span>
+                </button>
               </div>
+
+              {activeTab === 'TRANSFER' ? (
+                /* Tab 1: Menunggu Transfer */
+                <div className="space-y-3 pt-1">
+                  <div className="space-y-2">
+                    <h4 className="font-bold text-sm text-slate-800 flex items-center gap-2">
+                      <FileCheck className="w-4 h-4 text-indigo-600" />
+                      <span>Daftar Transaksi Menunggu Transfer</span>
+                    </h4>
+
+                    {/* Search input positioned vertically below title */}
+                    <div className="relative w-full">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Cari UID / Site / Pemohon..."
+                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/20 transition-all outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Candidate list */}
+                  {pendingTransferRequests.length === 0 ? (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 text-center text-slate-500 space-y-2">
+                      <AlertCircle className="w-8 h-8 text-slate-400 mx-auto" />
+                      <p className="font-bold text-xs text-slate-700">Tidak ada transaksi yang berstatus Menunggu Transfer saat ini.</p>
+                      <p className="text-[11px]">Semua transaksi pengajuan dana telah diproses atau belum disetujui Manager.</p>
+                    </div>
+                  ) : filteredCandidates.length === 0 ? (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-center text-slate-500 text-xs">
+                      Pencarian "{searchQuery}" tidak ditemukan pada daftar transaksi menunggu transfer.
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+                      {filteredCandidates.map((req) => {
+                        const reqProfile = profiles.find((p) => p.email.toLowerCase() === req.userEmail.toLowerCase());
+                        const reqName = reqProfile?.nama || (reqProfile as any)?.name || req.userEmail.split('@')[0];
+                        const divisiText = formatDivisiSubDivisi(reqProfile?.divisi || req.divisi, reqProfile?.subDivisi || req.subDivisi);
+                        const isTalangan = req.id.startsWith('OPT-') || req.id.startsWith('BBMDS') || req.id.startsWith('BBM_DurenSawit') || req.tipePengajuan === 'DANA_TALANGAN';
+                        
+                        const finApprovedAmt = getFinanceApprovedAmount(req, histories, usageItems);
+                        const transferredAmt = req.adminActionAmount || 0;
+                        const sisaTransfer = finApprovedAmt > 0 ? Math.max(0, finApprovedAmt - transferredAmt) : (req.managerActionAmount || req.jumlahPengajuan || 0);
+                        const nominal = isTalangan ? (finApprovedAmt > 0 ? finApprovedAmt : (req.managerActionAmount || req.jumlahPengajuan || 0)) : (sisaTransfer > 0 ? sisaTransfer : (req.managerActionAmount || req.jumlahPengajuan || 0));
+
+                        let statusBadgeLabel = 'Disetujui';
+                        let statusBadgeStyle = 'bg-emerald-50 text-emerald-700 border-emerald-200/80';
+
+                        if (req.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
+                          statusBadgeLabel = 'Pending Reimburse Talangan';
+                          statusBadgeStyle = 'bg-pink-50 text-pink-700 border-pink-200';
+                        } else if (req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER) {
+                          statusBadgeLabel = 'Pending Transfer Finance';
+                          statusBadgeStyle = 'bg-amber-50 text-amber-700 border-amber-200';
+                        } else if (req.status === RequestStatus.TRANSFER_BERTAHAP || getTransferBertahap(req, histories, usageItems)) {
+                          statusBadgeLabel = 'Transfer Bertahap';
+                          statusBadgeStyle = 'bg-purple-50 text-purple-700 border-purple-200';
+                        } else if (req.status === RequestStatus.PARTIALLY_APPROVED) {
+                          statusBadgeLabel = 'Disetujui Sebagian';
+                          statusBadgeStyle = 'bg-blue-50 text-blue-700 border-blue-200';
+                        }
+
+                        return (
+                          <div
+                            key={req.id}
+                            className="p-3.5 rounded-xl border transition-all flex flex-col gap-2.5 bg-white border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/20 shadow-xs w-full"
+                          >
+                            {/* Baris 1 (Paling atas): Rata kiri UID, Rata kanan Jenis UID */}
+                            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 w-full">
+                              <span className="font-mono font-bold text-xs text-slate-900 bg-slate-100 px-2.5 py-0.5 rounded-md border border-slate-200 shrink-0">
+                                {req.id}
+                              </span>
+                              <span
+                                className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border shrink-0 ${
+                                  isTalangan
+                                    ? 'bg-pink-50 text-pink-700 border-pink-200'
+                                    : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                }`}
+                              >
+                                {isTalangan ? 'Dana Talangan' : 'Pengajuan Anggaran'}
+                              </span>
+                            </div>
+
+                            {/* Baris 2: Pemohon (kiri) & Divisi (rata kanan sejajar status UID) */}
+                            <div className="flex items-center justify-between gap-2 text-xs w-full">
+                              <div className="text-slate-700 truncate min-w-0">
+                                <span className="text-[10px] text-slate-400 mr-1.5 font-semibold">Pemohon:</span>
+                                <span className="font-bold text-slate-900">{reqName}</span>
+                              </div>
+                              <div className="text-slate-700 text-right shrink-0">
+                                <span className="text-[10px] text-slate-400 mr-1.5 font-semibold">Divisi:</span>
+                                <span className="font-bold text-slate-800">{divisiText || '-'}</span>
+                              </div>
+                            </div>
+
+                            {/* Baris 3 (Di bawah Pemohon): Informasi Status / Finance Approval */}
+                            <div className="text-xs flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] text-slate-400 font-semibold">Status Transfer:</span>
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border shrink-0 ${statusBadgeStyle}`}>
+                                {statusBadgeLabel}
+                              </span>
+                              {(req.adminComment || req.managerComment) && (
+                                <span className="text-[11px] text-slate-500 italic truncate max-w-[240px]">
+                                  "{req.adminComment || req.managerComment}"
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Baris 4 (Di bawah Finance Approval): Nominal Menunggu Transfer */}
+                            <div className="text-xs flex items-center gap-1.5">
+                              <span className="text-[10px] text-slate-400 font-semibold">Menunggu Transfer:</span>
+                              <span className="font-extrabold text-emerald-600 text-sm">
+                                {formatIDR(nominal)}
+                              </span>
+                            </div>
+
+                            {/* Baris 5 (Di bawah Nominal): Site ID / Lokasi */}
+                            <div className="text-xs flex items-center gap-1.5">
+                              <span className="text-[10px] text-slate-400 font-semibold">Site ID:</span>
+                              <span className="text-[11px] font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200">
+                                {req.siteId || '-'}
+                              </span>
+                            </div>
+
+                            {/* Baris 6 (Di bawah Site ID): Badge Keterangan - Lebar mengikuti modal / card */}
+                            {req.keterangan && (
+                              <div className="w-full pt-0.5">
+                                <p className="w-full text-[11px] text-slate-600 italic bg-slate-50/90 p-2.5 rounded-lg border border-slate-200/80 leading-relaxed">
+                                  "{req.keterangan}"
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Baris 7 (Paling bawah): Tombol Lanjut Transfer Rata Kanan */}
+                            <div className="flex items-center justify-end w-full pt-1 border-t border-slate-100">
+                              <button
+                                type="button"
+                                onClick={() => handleSelect(req)}
+                                className="px-4 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100"
+                              >
+                                <span>Lanjut Transfer</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Tab 2: Perlu Adjusment */
+                <div className="space-y-3 pt-1">
+                  <div className="space-y-2">
+                    <h4 className="font-bold text-sm text-slate-800 flex items-center gap-2">
+                      <Coins className="w-4 h-4 text-rose-600" />
+                      <span>Daftar User dengan Saldo Operasional Minus</span>
+                    </h4>
+
+                    {/* Search input positioned vertically below title */}
+                    <div className="relative w-full">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Cari User / Email / Divisi..."
+                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-rose-500 focus:ring-1 focus:ring-rose-500/20 transition-all outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Minus balance users list */}
+                  {minusBalanceUsers.length === 0 ? (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6 text-center text-emerald-800 space-y-2">
+                      <ShieldCheck className="w-8 h-8 text-emerald-600 mx-auto" />
+                      <p className="font-bold text-xs text-emerald-900">Tidak ada User yang saldo operasionalnya minus saat ini.</p>
+                      <p className="text-[11px] text-emerald-700">Semua saldo operasional user dalam kondisi balance atau bersaldo lebih.</p>
+                    </div>
+                  ) : filteredMinusBalanceUsers.length === 0 ? (
+                    <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-center text-slate-500 text-xs">
+                      Pencarian "{searchQuery}" tidak ditemukan pada daftar user yang perlu adjustment.
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
+                      {filteredMinusBalanceUsers.map((user, idx) => {
+                        const userGlobalBalance = getUserBalance(user.email);
+                        const summary = getUserOpSummary(user.email);
+                        const name = user.nama || (user as any).name || user.email.split('@')[0];
+                        const divText = formatDivisiSubDivisi(user.divisi, user.subDivisi);
+                        const requiredNominal = summary.requiredNominal > 0 ? summary.requiredNominal : Math.abs(userGlobalBalance);
+
+                        return (
+                          <div
+                            key={`${user.email}_${user.userId || idx}`}
+                            className="p-3.5 rounded-xl border transition-all flex flex-col gap-2.5 bg-white border-slate-200 hover:border-rose-300 hover:bg-rose-50/10 shadow-xs w-full"
+                          >
+                            {/* Baris 1: Identitas User & Status Minus */}
+                            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 w-full">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center shrink-0">
+                                  <User className="w-4 h-4" />
+                                </div>
+                                <div className="min-w-0">
+                                  <h5 className="font-bold text-xs text-slate-900 truncate">{name}</h5>
+                                  <p className="text-[9px] text-slate-400 font-mono truncate">{user.email}</p>
+                                </div>
+                              </div>
+                              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border shrink-0 bg-rose-50 text-rose-700 border-rose-200 flex items-center gap-1">
+                                <TrendingDown className="w-3 h-3 text-rose-600" />
+                                <span>Saldo Minus</span>
+                              </span>
+                            </div>
+
+                            {/* Baris 2: Divisi */}
+                            <div className="flex items-center justify-between gap-2 text-xs w-full">
+                              <span className="text-[10px] text-slate-400 font-semibold">Divisi:</span>
+                              <span className="font-bold text-slate-800 text-right">{divText || '-'}</span>
+                            </div>
+
+                            {/* Baris 3: Saldo Operasional Saat Ini */}
+                            <div className="flex items-center justify-between gap-2 text-xs w-full bg-rose-50/70 p-2.5 rounded-xl border border-rose-200/80">
+                              <span className="text-[10px] text-rose-800 font-bold uppercase tracking-wider">Saldo Operasional:</span>
+                              <span className="font-black font-mono text-rose-600 text-sm">
+                                {formatIDR(userGlobalBalance)}
+                              </span>
+                            </div>
+
+                            {/* Baris 4: Financial Summary Breakdown */}
+                            <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100 text-[9px]">
+                              <div>
+                                <span className="block text-[8px] font-bold text-slate-400 uppercase">Transfer Diterima</span>
+                                <span className="text-[10px] font-bold font-mono text-slate-700">{formatIDR(summary.totalTransferred)}</span>
+                              </div>
+                              <div>
+                                <span className="block text-[8px] font-bold text-slate-400 uppercase">Laporan Disetujui</span>
+                                <span className="text-[10px] font-bold font-mono text-emerald-600">{formatIDR(summary.totalReportedApproved)}</span>
+                              </div>
+                              <div>
+                                <span className="block text-[8px] font-bold text-indigo-600 uppercase">Butuh Adjustment</span>
+                                <span className="text-[10px] font-extrabold font-mono text-indigo-700">{formatIDR(requiredNominal)}</span>
+                              </div>
+                            </div>
+
+                            {/* Baris 5: Tombol Aksi Proses Adjustment */}
+                            <div className="flex items-center justify-end w-full pt-1 border-t border-slate-100">
+                              <button
+                                type="button"
+                                onClick={() => handleSelectAdjustment(user)}
+                                className="px-4 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer bg-rose-600 hover:bg-rose-700 text-white shadow-rose-100"
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5" />
+                                <span>Proses Adjustment</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

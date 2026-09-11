@@ -540,22 +540,7 @@ async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<v
   });
   if (usersRes.ok) {
     const usersData = await usersRes.json();
-    if (!usersData.values || usersData.values.length <= 1) {
-      // Seed default users
-      const defaultUsers = [
-        ['finance', 'finance123', 'Finance Depotel', 'ops.depotel@gmail.com', 'FINANCE', '', 'HQ-CENTRAL', 'TRUE'],
-        ['manager', 'manager123', 'Manager Keuangan', 'manager@company.com', 'MANAGER', '', 'JKT-SOUTH-02', 'FALSE'],
-        ['staff', 'staff123', 'Staff Lapangan', 'staff@company.com', 'USER', 'manager@company.com', 'JKT-SOUTH-02', 'TRUE']
-      ];
-      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Users!A2:H4?valueInputOption=USER_ENTERED`, {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ values: defaultUsers })
-      });
-    }
+
   }
 }
 
@@ -583,13 +568,7 @@ const setMockData = <T>(key: string, data: T): void => {
   }
 };
 
-export const defaultUsers: UserProfile[] = [
-  { userId: 'admin', password: 'admin123', nama: 'Administrator System', email: 'admin@company.com', role: Role.ADMINISTRATOR, managerEmail: '', divisi: 'HQ-ADMIN', aksesBBM: false },
-  { userId: 'direktur', password: 'direktur123', nama: 'Margono (Direktur Utama)', email: 'margono@depotel.com', role: Role.DIREKTUR, managerEmail: '', divisi: 'HQ-EXECUTIVE', aksesBBM: false },
-  { userId: 'finance', password: 'finance123', nama: 'Finance Depotel', email: 'ops.depotel@gmail.com', role: Role.FINANCE, managerEmail: 'margono@depotel.com', divisi: 'HQ-CENTRAL', aksesBBM: true },
-  { userId: 'manager', password: 'manager123', nama: 'Manager Keuangan', email: 'manager@company.com', role: Role.MANAGER, managerEmail: 'margono@depotel.com', divisi: 'JKT-SOUTH-02', aksesBBM: false },
-  { userId: 'staff', password: 'staff123', nama: 'Staff Lapangan', email: 'staff@company.com', role: Role.USER, managerEmail: 'manager@company.com', divisi: 'JKT-SOUTH-02', aksesBBM: true }
-];
+export const defaultUsers: UserProfile[] = [];
 
 /**
  * Safely merges multiple sources of UserProfile arrays.
@@ -954,6 +933,7 @@ export async function uploadReceiptFile(
   }
 
   if (ext === '.jpeg') ext = '.jpg';
+  if (!ext) ext = '.jpg';
 
   const metadata = {
     name: `bukti_${Date.now()}${ext}`,
@@ -1095,7 +1075,7 @@ export async function fetchUsageItems(token: string, spreadsheetId: string): Pro
 // Fetch Profiles
 export async function fetchProfiles(token: string, spreadsheetId: string): Promise<UserProfile[]> {
   if (token === 'mock_demo_token') {
-    return getMockData<UserProfile[]>('mock_db_users', defaultUsers);
+    return getMockData<UserProfile[]>('mock_db_users', []);
   }
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`, {
     headers: { Authorization: `Bearer ${token}` }

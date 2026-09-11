@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { UserProfile, Role } from '../types';
 import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw, Smartphone, CheckCircle2, Globe, AlertTriangle } from 'lucide-react';
 import { validateDeviceAccessAndBind, getOrCreateDeviceId, getOrCreateDeviceIdAsync, getInAppBrowserInfo, detectPrivateBrowsing, InAppBrowserInfo, requestPersistentStorage } from '../lib/deviceUtils';
-import { mergeUserProfiles, findMatchingUser, defaultUsers } from '../lib/googleApi';
+import { mergeUserProfiles, findMatchingUser } from '../lib/googleApi';
 import { DevicePermissionsStatus } from '../lib/devicePermissions';
 
 interface AppLoginFormProps {
@@ -128,7 +128,7 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
       });
     } else {
       // Find user by matching UserID/Email and Password against merged candidate profiles
-      const candidateProfiles = mergeUserProfiles(profiles, defaultUsers);
+      const candidateProfiles = mergeUserProfiles(profiles);
       const matched = findMatchingUser(candidateProfiles, userId, password);
 
       if (matched) {

@@ -23,7 +23,7 @@ import {
   Sparkles,
   Eye
 } from 'lucide-react';
-import { uploadReceiptFile } from '../lib/googleApi';
+import { uploadReceiptFile, DRIVE_FOLDER_ID } from '../lib/googleApi';
 
 interface TransferModalProps {
   request: BudgetRequest;
@@ -100,6 +100,36 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   // File Upload State
   const [selectedFile, setSelectedFile] = useState<File | null>(initialFile || null);
   const [showCameraStream, setShowCameraStream] = useState(false);
+
+  // Sync initialFile if provided or changed
+  useEffect(() => {
+    if (initialFile) {
+      setSelectedFile(initialFile);
+    }
+  }, [initialFile]);
+
+  // Sync transferredAmount if empty/0 and remainingAmount is available
+  useEffect(() => {
+    if (parseNumericValue(transferredAmount) === 0 && remainingAmount > 0) {
+      setTransferredAmount(String(remainingAmount));
+    }
+  }, [remainingAmount]);
+
+  // Preview URL for selected image file
+  const filePreviewUrl = React.useMemo(() => {
+    if (selectedFile && selectedFile.type.startsWith('image/')) {
+      return URL.createObjectURL(selectedFile);
+    }
+    return null;
+  }, [selectedFile]);
+
+  useEffect(() => {
+    return () => {
+      if (filePreviewUrl) {
+        URL.revokeObjectURL(filePreviewUrl);
+      }
+    };
+  }, [filePreviewUrl]);
 
   // Refs for upload/capture
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -217,11 +247,12 @@ export const TransferModal: React.FC<TransferModalProps> = ({
     try {
       const shouldUpload = selectedFile && (amt > 0 || !isTalangan || isFinalTalanganTransfer);
       if (shouldUpload) {
-        if (!driveFolderId) {
+        const targetFolderId = driveFolderId || DRIVE_FOLDER_ID;
+        if (!targetFolderId) {
           throw new Error('ID Folder Google Drive belum terinisialisasi.');
         }
         setSubmitStep('Mengunggah bukti transfer ke Google Drive...');
-        const uploadResult = await uploadReceiptFile(googleToken, driveFolderId, selectedFile);
+        const uploadResult = await uploadReceiptFile(googleToken, targetFolderId, selectedFile);
         finalBuktiUrl = uploadResult.viewUrl;
         finalBuktiFileId = uploadResult.fileId;
       }
@@ -627,9 +658,13 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               <div className="bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-xl p-3 text-xs flex items-start gap-2.5">
                 <Sparkles className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
                 <div className="space-y-0.5">
-                  <p className="font-bold text-indigo-950">Data Terisi Otomatis dari Share Nota (Brimo)</p>
+                  <p className="font-bold text-indigo-950">Bukti Transfer Otomatis dari Share BRImo</p>
                   <p className="text-[11px] text-indigo-800 leading-relaxed">
-                    Nominal (<strong>{formatIDR(transferredAmount)}</strong>) dan bukti transfer telah terisi otomatis hasil pembacaan OCR AI.
+                    {initialOcrAmount > 0 ? (
+                      <>Nominal (<strong>{formatIDR(transferredAmount)}</strong>) dan bukti transfer telah terisi otomatis.</>
+                    ) : (
+                      <>Bukti transfer telah terlampir otomatis dari file resi yang Anda bagikan.</>
+                    )}
                   </p>
                 </div>
               </div>
@@ -785,21 +820,54 @@ export const TransferModal: React.FC<TransferModalProps> = ({
                       </label>
                       
                       {selectedFile && (
-                        <div className="bg-emerald-50 border border-emerald-100 text-emerald-700 p-3 rounded-xl text-xs flex items-center justify-between">
-                          <div className="flex items-center gap-2 truncate">
-                            <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500 shrink-0" />
-                            <div className="truncate">
-                              <p className="font-bold truncate">{selectedFile.name}</p>
-                              <p className="text-[9px] text-emerald-500 font-mono">{(selectedFile.size / 1024).toFixed(0)} KB</p>
+                        <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-xl text-xs flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2.5 truncate min-w-0">
+                            {filePreviewUrl ? (
+                              <button
+                                type="button"
+                                onClick={() => onPreviewDocument && onPreviewDocument({ url: filePreviewUrl, title: selectedFile.name })}
+                                className="relative group shrink-0 rounded-lg overflow-hidden border border-emerald-300 w-10 h-10 cursor-pointer bg-white"
+                                title="Klik untuk melihat bukti full screen"
+                              >
+                                <img src={filePreviewUrl} alt="Thumbnail Bukti" className="w-full h-full object-cover" />
+                                <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <Eye className="w-4 h-4 text-white" />
+                                </div>
+                              </button>
+                            ) : (
+                              <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+                            )}
+                            <div className="truncate min-w-0">
+                              <p className="font-bold truncate text-emerald-950">{selectedFile.name}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] text-emerald-600 font-mono">{(selectedFile.size / 1024).toFixed(0)} KB</span>
+                                {initialFile && selectedFile === initialFile && (
+                                  <span className="text-[9px] bg-emerald-200/80 text-emerald-800 px-1.5 py-0.5 rounded font-bold">
+                                    Dari Share BRImo
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedFile(null)}
-                            className="text-[10px] font-bold text-red-500 hover:text-red-700 hover:underline px-2 py-1 bg-red-50 rounded-lg shrink-0 cursor-pointer"
-                          >
-                            Hapus
-                          </button>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {filePreviewUrl && onPreviewDocument && (
+                              <button
+                                type="button"
+                                onClick={() => onPreviewDocument({ url: filePreviewUrl, title: selectedFile.name })}
+                                className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 px-2 py-1 bg-emerald-100/70 hover:bg-emerald-200 rounded-lg cursor-pointer flex items-center gap-1"
+                              >
+                                <Eye className="w-3.5 h-3.5" />
+                                <span>Lihat</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => setSelectedFile(null)}
+                              className="text-[11px] font-bold text-red-500 hover:text-red-700 hover:bg-red-100 px-2 py-1 bg-red-50 rounded-lg shrink-0 cursor-pointer transition-colors"
+                            >
+                              Hapus
+                            </button>
+                          </div>
                         </div>
                       )}
 
