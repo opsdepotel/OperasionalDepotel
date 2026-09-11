@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useRef } from 'react';
-import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus, formatTimestamp } from '../types';
+import React, { useState, useRef, useMemo } from 'react';
+import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus, formatTimestamp, Role } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
 import { saveOfflineTalanganRequest } from '../lib/offlineReportStorage';
 import { FormProgressOverlay } from './FormProgressOverlay';
@@ -25,6 +25,8 @@ interface BudgetRequestFormProps {
   initialRequest?: BudgetRequest;
   userProfile?: UserProfile;
   onRefreshOfflineQueues?: () => void;
+  profiles?: UserProfile[];
+  managerName?: string;
 }
 
 // Helper to get today's date in local Jakarta timezone
@@ -50,9 +52,32 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   sites = [],
   initialRequest,
   userProfile,
-  onRefreshOfflineQueues
+  onRefreshOfflineQueues,
+  profiles = [],
+  managerName
 }) => {
   const todayStr = getTodayDateStr();
+
+  // Resolve supervisor / reviewer display name
+  const reviewerProfile = useMemo(() => {
+    // If requester is Manager or Finance, supervisor is Direktur per rules
+    const isManagerOrFinance = userProfile?.role === Role.MANAGER || userProfile?.role === Role.FINANCE;
+    if (isManagerOrFinance) {
+      const dirProf = profiles.find(p => p.role === Role.DIREKTUR);
+      if (dirProf) return dirProf;
+    }
+
+    // Otherwise match by managerEmail or userId
+    const targetEmail = (managerEmail || userProfile?.managerEmail || '').trim().toLowerCase();
+    if (!targetEmail) return null;
+
+    return profiles.find(p => 
+      (p.email || '').trim().toLowerCase() === targetEmail || 
+      (p.userId && p.userId.trim().toLowerCase() === targetEmail)
+    ) || null;
+  }, [profiles, managerEmail, userProfile]);
+
+  const displayReviewerName = managerName || reviewerProfile?.nama || (managerEmail ? managerEmail.split('@')[0] : 'Atasan Langsung');
 
   const [isTalangan, setIsTalangan] = useState(() => {
     if (initialRequest) {
@@ -409,7 +434,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         <div className="bg-blue-50/50 border border-blue-100 text-blue-700 rounded-xl p-3 text-xs">
           <p className="font-semibold">Reviewer Persetujuan Laporan:</p>
           <p className="font-medium text-[10px] text-slate-500 mt-1">
-            Laporan/Pengajuan ini otomatis dialokasikan ke atasan langsung Anda: <span className="font-bold text-blue-600">{managerEmail}</span>
+            Laporan/Pengajuan ini otomatis dialokasikan ke atasan langsung Anda: <span className="font-bold text-blue-600">{displayReviewerName}</span>
           </p>
         </div>
 

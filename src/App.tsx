@@ -3496,6 +3496,7 @@ export default function App() {
             initialRequest={editingRequest || undefined}
             userProfile={userProfile}
             onRefreshOfflineQueues={refreshOfflineQueues}
+            profiles={profiles}
           />
         ) : activeView === 'report-usage' && selectedRequest ? (
           <UsageReportForm
