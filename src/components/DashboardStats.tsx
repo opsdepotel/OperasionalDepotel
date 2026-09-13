@@ -12,6 +12,8 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
 import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
 import { ReopenUidModal } from './ReopenUidModal';
+import { AdminBackupCard } from './AdminBackupCard';
+import { AdminManualActivityModal, ManualActivitySubmitData } from './AdminManualActivityModal';
 import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing, Smartphone } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -41,6 +43,10 @@ interface DashboardStatsProps {
   onSelectTab?: (tab: 'APPROVAL' | 'SUBMISSION') => void;
   onPurgeOrphanHistories?: () => Promise<{ purgedCount: number; remainingCount: number } | null>;
   onReopenRequest?: (req: BudgetRequest) => Promise<boolean>;
+  onSaveManualActivity?: (data: ManualActivitySubmitData, photoFile: File) => Promise<void>;
+  token?: string | null;
+  spreadsheetId?: string | null;
+  driveFolderId?: string | null;
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -67,7 +73,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   activeTab,
   onSelectTab,
   onPurgeOrphanHistories,
-  onReopenRequest
+  onReopenRequest,
+  onSaveManualActivity,
+  token,
+  spreadsheetId,
+  driveFolderId
 }) => {
   const [internalTab, setInternalTab] = useState<'APPROVAL' | 'SUBMISSION'>('APPROVAL');
   const currentTab = activeTab !== undefined ? activeTab : internalTab;
@@ -128,6 +138,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   // Reopen UID Modal States (Administrator)
   const [isReopenUidModalOpen, setIsReopenUidModalOpen] = useState(false);
   useBackHandler(isReopenUidModalOpen, () => setIsReopenUidModalOpen(false), 'dashboardStats_reopenUidModal');
+
+  // Manual Activity Report Modal States (Administrator)
+  const [isManualActivityModalOpen, setIsManualActivityModalOpen] = useState(false);
+  useBackHandler(isManualActivityModalOpen, () => setIsManualActivityModalOpen(false), 'dashboardStats_manualActivityModal');
 
   const defaultSitesList: SiteInfo[] = [
     { siteId: 'JKT-SOUTH-02', siteName: 'Depotel JKT South 02', coordinates: '-6.2088, 106.8456' },
@@ -2358,6 +2372,50 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
+        {/* Administrator Kartu Backup Database (Google Drive Cadangan) */}
+        <AdminBackupCard
+          token={token}
+          spreadsheetId={spreadsheetId}
+          driveFolderId={driveFolderId}
+          adminEmail={email}
+        />
+
+        {/* Administrator Kartu Manual Activity Report (Input Kegiatan Susulan) */}
+        {onSaveManualActivity && (
+          <div
+            onClick={() => setIsManualActivityModalOpen(true)}
+            className="p-5 rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/90 via-white to-blue-50/60 shadow-md hover:shadow-lg hover:border-indigo-400 transition-all cursor-pointer group flex items-center justify-between gap-4"
+            id="admin-manual-activity-report-card"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-indigo-200 group-hover:scale-105 transition-transform">
+                <CalendarCheck className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition-colors">
+                    Manual Activity Report
+                  </h3>
+                  <span className="text-[9px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full border border-indigo-300/60 uppercase">
+                    Fitur Administrator
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                  Input susulan foto & log kegiatan harian untuk staf/pengguna yang berhalangan atau lupa mengambil data di lapangan.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="hidden sm:inline-block text-xs font-semibold text-indigo-700 group-hover:text-indigo-900 transition-colors">
+                Buka Form
+              </span>
+              <div className="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+                &rarr;
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Card: Reopen UID (Mengubah status CLOSED menjadi REPORTING) */}
         <div
           onClick={() => setIsReopenUidModalOpen(true)}
@@ -3124,6 +3182,18 @@ User Agent: ${navigator.userAgent}`;
           histories={histories}
           onReopenRequest={onReopenRequest || (async () => false)}
         />
+
+        {/* Modal Manual Activity Report (Administrator) */}
+        {onSaveManualActivity && (
+          <AdminManualActivityModal
+            isOpen={isManualActivityModalOpen}
+            onClose={() => setIsManualActivityModalOpen(false)}
+            profiles={profiles}
+            sites={sites}
+            currentAdminEmail={email}
+            onSubmitManualActivity={onSaveManualActivity}
+          />
+        )}
       </div>
     );
   }

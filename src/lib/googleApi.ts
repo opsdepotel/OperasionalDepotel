@@ -2293,8 +2293,27 @@ export async function fetchSites(token: string, spreadsheetId: string): Promise<
       };
     }).filter(s => s.siteId !== '');
 
-    console.log(`Berhasil memuat ${sitesList.length} site dari Google Sheet.`);
-    return sitesList;
+    // Deduplicate sites by siteId (case-insensitive) to prevent duplicate key errors and inconsistent site lookups
+    const uniqueSitesMap = new Map<string, SiteInfo>();
+    for (const site of sitesList) {
+      const key = site.siteId.toUpperCase();
+      if (!uniqueSitesMap.has(key)) {
+        uniqueSitesMap.set(key, site);
+      } else {
+        const existing = uniqueSitesMap.get(key)!;
+        if ((!existing.coordinates && site.coordinates) || (!existing.siteName && site.siteName)) {
+          uniqueSitesMap.set(key, {
+            ...existing,
+            siteName: existing.siteName || site.siteName,
+            coordinates: existing.coordinates || site.coordinates
+          });
+        }
+      }
+    }
+    const deduplicatedSites = Array.from(uniqueSitesMap.values());
+
+    console.log(`Berhasil memuat ${deduplicatedSites.length} site unik dari Google Sheet (total baris: ${sitesList.length}).`);
+    return deduplicatedSites;
   } catch (err: any) {
     console.warn('Kendala membaca sheet SiteID dari Google Sheet, mencoba menggunakan data cache lokal:', err?.message || err);
     try {

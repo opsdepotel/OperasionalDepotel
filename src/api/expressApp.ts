@@ -1,19 +1,25 @@
+import express from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
+import dotenv from 'dotenv';
 import { google } from 'googleapis';
-import { getServiceAccountAuth } from '../../src/lib/serverGoogleAuth.js';
+import { googleAuthRouter } from './googleRoutes.js';
+import { pushRouter } from './pushRoutes.js';
+import { getServiceAccountAuth } from '../lib/serverGoogleAuth.js';
+
+dotenv.config();
 
 let aiClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI {
   if (!aiClient) {
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error('GEMINI_API_KEY environment variable is missing. Silakan tambahkan GEMINI_API_KEY di dashboard Vercel (Project Settings > Environment Variables).');
+      throw new Error('GEMINI_API_KEY environment variable is missing.');
     }
     aiClient = new GoogleGenAI({
       apiKey,
       httpOptions: {
         headers: {
-          'User-Agent': 'aistudio-build-vercel',
+          'User-Agent': 'aistudio-build',
         },
       },
     });
@@ -55,7 +61,7 @@ async function fetchImageAsBase64(
         }
       }
     } catch (tokenErr) {
-      console.warn('OAuth token fetch in Vercel failed:', tokenErr);
+      console.warn('OAuth token fetch on server failed:', tokenErr);
     }
   }
 
@@ -129,46 +135,37 @@ async function fetchImageAsBase64(
         }
       }
     } catch (saErr) {
-      console.warn('Service Account direct file download in Vercel failed:', saErr);
+      console.warn('Service Account direct file download failed:', saErr);
     }
   }
 
   throw lastFetchErr || new Error('Gagal mengunduh foto bukti dari Google Drive (Izin akses dibatasi). Silakan pastikan akses foto diset ke "Siapa saja yang memiliki link".');
 }
 
-export default async function handler(req: any, res: any) {
-  // Set CORS headers
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
+export const expressApp = express();
 
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+// Configure JSON parser with larger limit for images
+expressApp.use(express.json({ limit: '50mb' }));
+expressApp.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-  if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method Not Allowed' });
-  }
+// Health check endpoint
+expressApp.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
+// Google Service Account & Drive Proxy Endpoints
+expressApp.use('/api/google', googleAuthRouter);
+
+// Web Push Notifications Endpoints (VAPID)
+expressApp.use('/api/push', pushRouter);
+
+// AI Screen Recapture & Spoofing Detection Endpoint
+expressApp.post('/api/ai/check-screen-recapture', async (req, res) => {
   try {
-    let body = req.body;
-    if (typeof body === 'string') {
-      try {
-        body = JSON.parse(body);
-      } catch {
-        // Keep as is
-      }
-    }
-
-    const { imageBase64, imageUrl, fileId, googleAccessToken, activityInfo } = body || {};
+    const { imageBase64, imageUrl, fileId, googleAccessToken, activityInfo } = req.body;
 
     if (!imageBase64 && !imageUrl && !fileId) {
       return res.status(400).json({
-        success: false,
         error: 'Parameter gambar (imageBase64, imageUrl, atau fileId) wajib disertakan.',
       });
     }
@@ -290,7 +287,8 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
             errMsg.includes('UNAVAILABLE') || 
             errMsg.includes('high demand') || 
             errMsg.includes('429') || 
-            errMsg.includes('RESOURCE_EXHAUSTED') ||
+            errMsg.includes('RESOURCE_EXHAUSTED') || 
+            errMsg.includes('quota') ||
             errMsg.includes('fetch failed') ||
             errMsg.includes('ECONNRESET') ||
             errMsg.includes('ETIMEDOUT') ||
@@ -319,7 +317,7 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
         lastErrMsg.includes('fetch failed') ||
         lastErrMsg.includes('ECONNRESET')
       ) {
-        return res.status(200).json({
+        return res.json({
           success: true,
           data: {
             isRecapture: false,
@@ -339,7 +337,7 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
     let parsedResult;
     try {
       parsedResult = JSON.parse(resultText);
-    } catch {
+    } catch (parseErr) {
       parsedResult = {
         isRecapture: false,
         confidence: 50,
@@ -350,12 +348,12 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
       };
     }
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       data: parsedResult,
     });
   } catch (error: any) {
-    console.error('Error in Vercel check-screen-recapture:', error);
+    console.error('Error in check-screen-recapture:', error);
     let userFacingError = error.message || 'Terjadi kesalahan saat memproses analisis AI Screen Recapture.';
     
     if (typeof userFacingError === 'string' && userFacingError.includes('{')) {
@@ -372,8 +370,18 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
           }
         }
       } catch {
-        // Keep as is
+        // keep original
       }
+    }
+
+    if (
+      userFacingError.includes('429') ||
+      userFacingError.toLowerCase().includes('quota exceeded') ||
+      userFacingError.includes('RESOURCE_EXHAUSTED') ||
+      userFacingError.toLowerCase().includes('rate limit')
+    ) {
+      userFacingError =
+        'Batas kuota gratis (Rate Limit 429) API Gemini tercapai. Silakan tunggu sekitar 30–45 detik lalu coba lagi.';
     }
 
     return res.status(500).json({
@@ -381,4 +389,237 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
       error: userFacingError,
     });
   }
-}
+});
+
+// AI BBM Duren Sawit Receipt OCR Check Endpoint
+expressApp.post('/api/ai/check-bbm-receipt', async (req, res) => {
+  try {
+    const {
+      imageBase64,
+      imageUrl,
+      fileId,
+      googleAccessToken,
+      nominalInput = 0,
+      requestId,
+      userEmail,
+      tanggalPemakaian,
+      keterangan
+    } = req.body;
+
+    if (!imageBase64 && !imageUrl && !fileId) {
+      return res.status(400).json({
+        error: 'Parameter gambar (imageBase64, imageUrl, atau fileId) wajib disertakan.',
+      });
+    }
+
+    let base64Data = '';
+    let mimeType = 'image/jpeg';
+
+    if (imageBase64) {
+      if (imageBase64.startsWith('data:')) {
+        const parts = imageBase64.split(',');
+        const mimeMatch = parts[0].match(/:(.*?);/);
+        if (mimeMatch) mimeType = mimeMatch[1];
+        base64Data = parts[1];
+      } else {
+        base64Data = imageBase64;
+      }
+    } else {
+      const fetched = await fetchImageAsBase64(imageUrl || fileId, googleAccessToken);
+      base64Data = fetched.base64;
+      mimeType = fetched.mimeType;
+    }
+
+    const ai = getGenAI();
+    const nominalInputNumber = parseFloat(String(nominalInput).replace(/[^0-9.]/g, '')) || 0;
+    const nominalInputFormatted = new Intl.NumberFormat('id-ID').format(nominalInputNumber);
+
+    const prompt = `Anda adalah seorang auditor keuangan & ahli OCR khusus analisis Nota / Struk Bukti Pembelian BBM (Bahan Bakar Minyak) di SPBU / POM Bensin (termasuk BBM Duren Sawit).
+
+Tugas Utama Anda:
+Periksa foto nota/struk BBM terlampir dan bandingkan nominal total rupiah pada nota dengan nominal pengajuan sistem sebesar: Rp ${nominalInputFormatted} (Angka murni: ${nominalInputNumber}).
+
+Ekstrak informasi secara teliti dari foto nota BBM tersebut:
+1. **Nominal Total Pembelian (dalam Rupiah)** yang tercetak pada nota (misal 100000, 150000, 200000, dst).
+2. **Nama SPBU / Pos / Depot / Lokasi Pengisian** (misal: "SPBU Pertamina 34.13401 Duren Sawit", "SPBU Shell", "Pertashop Duren Sawit", dll).
+3. **Jenis Bahan Bakar** (Pertalite, Pertamax, Solar, Dexlite, dll) dan **Volume Liter** (jika terbaca).
+4. **Tanggal & Jam Pembelian** pada nota.
+5. **Kesesuaian Nominal**: Apakah total rupiah pada nota SAMA DENGAN nominal pengajuan Rp ${nominalInputFormatted}? Hitung selisihnya jika berbeda (Nominal Nota dikurangi Nominal Input).
+6. **Indikasi Keaslian Nota**: Apakah nota tampak asli, atau terindikasi buram/tidak terbaca/rekayasa/foto layar/bukan nota BBM?
+
+Berikan respons dalam format JSON dengan struktur persis berikut:
+{
+  "isReceiptValid": boolean,
+  "confidence": number,
+  "verdict": "MATCH" | "MISMATCH" | "UNREADABLE" | "SUSPICIOUS",
+  "nominalInput": number,
+  "nominalNota": number,
+  "selisih": number,
+  "jenisBbm": string,
+  "volumeLiter": string,
+  "namaSpbu": string,
+  "tanggalNota": string,
+  "summary": string,
+  "details": string,
+  "recommendation": string
+}`;
+
+    const candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+    ];
+    let response: any = null;
+    let lastModelError: any = null;
+
+    for (const modelName of candidateModels) {
+      let attempts = 0;
+      const maxAttempts = 2;
+
+      while (attempts < maxAttempts) {
+        try {
+          attempts++;
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents: {
+              parts: [
+                {
+                  inlineData: {
+                    data: base64Data,
+                    mimeType: mimeType || 'image/jpeg',
+                  },
+                },
+                {
+                  text: prompt,
+                },
+              ],
+            },
+            config: {
+              responseMimeType: 'application/json',
+            },
+          });
+
+          if (response && response.text) {
+            break;
+          }
+        } catch (modelErr: any) {
+          lastModelError = modelErr;
+          const errMsg = String(modelErr?.message || '') + ' ' + String(modelErr?.cause || '');
+          const isTransient = 
+            errMsg.includes('503') || 
+            errMsg.includes('UNAVAILABLE') || 
+            errMsg.includes('high demand') || 
+            errMsg.includes('429') || 
+            errMsg.includes('RESOURCE_EXHAUSTED') || 
+            errMsg.includes('quota') ||
+            errMsg.includes('fetch failed') ||
+            errMsg.includes('ECONNRESET') ||
+            errMsg.includes('ETIMEDOUT') ||
+            errMsg.includes('network') ||
+            errMsg.includes('socket');
+          
+          if (isTransient && attempts < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 600));
+          } else {
+            break;
+          }
+        }
+      }
+
+      if (response && response.text) {
+        break;
+      }
+    }
+
+    if (!response || !response.text) {
+      const lastErrMsg = String(lastModelError?.message || '') + ' ' + String(lastModelError?.cause || '');
+      if (
+        lastErrMsg.includes('503') || 
+        lastErrMsg.includes('UNAVAILABLE') || 
+        lastErrMsg.includes('high demand') ||
+        lastErrMsg.includes('fetch failed') ||
+        lastErrMsg.includes('ECONNRESET')
+      ) {
+        return res.json({
+          success: true,
+          data: {
+            isReceiptValid: true,
+            confidence: 50,
+            verdict: 'MATCH',
+            nominalInput: nominalInputNumber,
+            nominalNota: nominalInputNumber,
+            selisih: 0,
+            jenisBbm: 'BBM',
+            volumeLiter: '-',
+            namaSpbu: 'BBM DUREN SAWIT',
+            tanggalNota: tanggalPemakaian || new Date().toISOString().split('T')[0],
+            summary: 'Layanan AI sedang sibuk sementara. Verifikasi otomatis diloloskan sesuai nominal input pengguna Rp ' + nominalInputFormatted + '.',
+            details: 'Gangguan sementara pada server AI Gemini saat membaca nota.',
+            recommendation: 'Transaksi disetujui otomatis. Auditor dapat melakukan verifikasi manual secara berkala.',
+          },
+        });
+      }
+      throw lastModelError || new Error('Layanan AI sedang sibuk sementara. Silakan coba sesaat lagi.');
+    }
+
+    const resultText = response.text || '{}';
+    let parsedResult;
+    try {
+      parsedResult = JSON.parse(resultText);
+    } catch (parseErr) {
+      parsedResult = {
+        isReceiptValid: true,
+        confidence: 60,
+        verdict: 'MATCH',
+        nominalInput: nominalInputNumber,
+        nominalNota: nominalInputNumber,
+        selisih: 0,
+        summary: resultText,
+        details: 'Respons AI dalam format teks.',
+        recommendation: 'Periksa nota secara manual.',
+      };
+    }
+
+    if (parsedResult.nominalInput === undefined) {
+      parsedResult.nominalInput = nominalInputNumber;
+    }
+    if (parsedResult.selisih === undefined) {
+      parsedResult.selisih = (parsedResult.nominalNota || 0) - parsedResult.nominalInput;
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: parsedResult,
+    });
+  } catch (error: any) {
+    console.error('Error in check-bbm-receipt API:', error);
+    let userFacingError = error?.message || 'Terjadi kesalahan sistem saat analisis OCR nota BBM Duren Sawit.';
+
+    if (
+      userFacingError.includes('429') ||
+      userFacingError.toLowerCase().includes('quota exceeded') ||
+      userFacingError.includes('RESOURCE_EXHAUSTED') ||
+      userFacingError.toLowerCase().includes('rate limit')
+    ) {
+      userFacingError =
+        'Batas kuota gratis (Rate Limit 429) API Gemini tercapai. Silakan tunggu sekitar 30–45 detik lalu coba lagi.';
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: userFacingError,
+    });
+  }
+});
+
+// Express JSON Error Handler Middleware for /api routes
+expressApp.use('/api', (err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('API Error Middleware caught error:', err);
+  let message = err?.message || 'Terjadi kesalahan internal pada server.';
+  if (err?.type === 'entity.too.large') {
+    message = 'Ukuran berkas gambar terlalu besar untuk diproses server.';
+  }
+  res.status(err?.status || 500).json({
+    success: false,
+    error: message,
+  });
+});

@@ -64,10 +64,10 @@ export const FormProgressOverlay: React.FC<FormProgressOverlayProps> = ({
   return (
     <div
       id="unified-form-progress-overlay"
-      className={`${basePosition} bg-slate-900/10 backdrop-blur-[1px] flex flex-col items-center justify-center p-4 text-center animate-in fade-in duration-100 pointer-events-auto ${className}`}
+      className={`${basePosition} bg-transparent flex flex-col items-center justify-center p-4 text-center animate-in fade-in duration-100 pointer-events-auto ${className}`}
     >
-      {/* Floating Card Hampir Full Transparan di Tengah */}
-      <div className="bg-white/40 backdrop-blur-xs border border-white/60 shadow-xs rounded-2xl px-5 py-3.5 flex flex-col items-center justify-center gap-2 animate-in zoom-in-95 duration-100 min-w-[120px]">
+      {/* Floating Card di Tengah dengan Kontras Jelas & Rapi */}
+      <div className="bg-white/80 backdrop-blur-md border border-slate-200/60 shadow-lg rounded-2xl px-5 py-3.5 flex flex-col items-center justify-center gap-2 animate-in zoom-in-95 duration-100 min-w-[120px]">
         {/* Komponen 1: Spinner / Check Icon */}
         {isSuccess ? (
           <CheckCircle2 className="w-7 h-7 text-emerald-600 animate-in zoom-in-75 duration-150" />

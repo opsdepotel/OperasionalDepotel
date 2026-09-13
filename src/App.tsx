@@ -15,9 +15,12 @@ import {
   removeOfflineTalanganRequest,
   getOfflineUsageItems,
   removeOfflineUsageItem,
+  getOfflineBbmRefills,
+  removeOfflineBbmRefill,
   dataURLtoFile,
   OfflineTalanganRequest,
-  OfflineUsageItem
+  OfflineUsageItem,
+  OfflineBbmRefill
 } from './lib/offlineReportStorage';
 import {
   findOrCreateDatabase,
@@ -83,6 +86,7 @@ import { FinanceSharedReceiptModal } from './components/FinanceSharedReceiptModa
 import { OP_TimeLine } from './components/OP_TimeLine';
 import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt, clearAllSharedReceipts } from './lib/sharedReceiptStorage';
 import { DevicePermissionsModal } from './components/DevicePermissionsModal';
+import { ManualActivitySubmitData } from './components/AdminManualActivityModal';
 import { checkAllDevicePermissions, DevicePermissionsStatus } from './lib/devicePermissions';
 import { subscribeToPushNotifications, triggerPushNotification, parsePushSubscriptions } from './lib/pushNotifications';
 
@@ -260,6 +264,7 @@ export default function App() {
   // Offline Report Queue States
   const [offlineTalanganList, setOfflineTalanganList] = useState<OfflineTalanganRequest[]>([]);
   const [offlineUsageList, setOfflineUsageList] = useState<OfflineUsageItem[]>([]);
+  const [offlineBbmList, setOfflineBbmList] = useState<OfflineBbmRefill[]>([]);
   const [isSyncingOfflineReports, setIsSyncingOfflineReports] = useState(false);
   const [offlineReportNotice, setOfflineReportNotice] = useState<string | null>(null);
 
@@ -267,8 +272,10 @@ export default function App() {
     try {
       const talangan = await getOfflineTalanganRequests();
       const usage = await getOfflineUsageItems();
+      const bbm = await getOfflineBbmRefills();
       setOfflineTalanganList(talangan);
       setOfflineUsageList(usage);
+      setOfflineBbmList(bbm);
     } catch (err) {
       console.warn('Gagal memuat antrean offline:', err);
     }
@@ -1022,7 +1029,7 @@ export default function App() {
     // 1. Sync Offline Talangan Requests
     for (const tReq of pendingTalangan) {
       try {
-        const photoFile = dataURLtoFile(tReq.photoDataUrl, tReq.photoFileName);
+        const photoFile = dataURLtoFile(tReq.photoDataUrl, tReq.photoFileName, tReq.photoBlob);
         const folderId = driveFolderId || DRIVE_FOLDER_ID;
         let uploadResult = { viewUrl: '', fileId: '' };
         if (photoFile && folderId) {
@@ -1100,7 +1107,7 @@ export default function App() {
     // 2. Sync Offline Usage Items
     for (const uItem of pendingUsage) {
       try {
-        const photoFile = dataURLtoFile(uItem.photoDataUrl, uItem.photoFileName);
+        const photoFile = dataURLtoFile(uItem.photoDataUrl, uItem.photoFileName, uItem.photoBlob);
         const folderId = driveFolderId || DRIVE_FOLDER_ID;
         let uploadResult = { viewUrl: '', fileId: '' };
         if (photoFile && folderId) {
@@ -1149,6 +1156,30 @@ export default function App() {
         syncedCount++;
       } catch (err) {
         console.error('Failed to sync offline usage item:', uItem.id, err);
+        break;
+      }
+    }
+
+    // 3. Sync Offline BBM Refills
+    const pendingBbm = await getOfflineBbmRefills();
+    for (const bbmItem of pendingBbm) {
+      try {
+        const photoFile = dataURLtoFile(bbmItem.photoDataUrl, bbmItem.photoFileName, bbmItem.photoBlob);
+        const folderId = driveFolderId || DRIVE_FOLDER_ID;
+        let finalReportItem = { ...bbmItem.reportItemPayload };
+
+        if (photoFile && folderId) {
+          const uploadRes = await uploadReceiptFile(currentToken, folderId, photoFile);
+          finalReportItem.buktiUrl = uploadRes.viewUrl;
+          finalReportItem.buktiFileId = uploadRes.fileId;
+        }
+
+        await createBudgetRequest(currentToken, currentSheetId, bbmItem.reqPayload, { skipLock: true });
+        await createUsageItem(currentToken, currentSheetId, finalReportItem);
+        await removeOfflineBbmRefill(bbmItem.id);
+        syncedCount++;
+      } catch (err) {
+        console.error('Failed to sync offline BBM refill:', bbmItem.id, err);
         break;
       }
     }
@@ -2574,6 +2605,114 @@ export default function App() {
     }
   };
 
+  const handleSaveManualActivity = async (
+    manualData: ManualActivitySubmitData,
+    photoFile: File
+  ) => {
+    let activeToken = token;
+    if (!activeToken || activeToken === 'mock_demo_token' || isGoogleTokenExpired()) {
+      try {
+        const saData = await fetchServiceAccountToken();
+        if (saData && saData.token) {
+          activeToken = saData.token;
+          setToken(saData.token);
+        }
+      } catch (e) {}
+    }
+
+    if (!activeToken || !spreadsheetId) {
+      throw new Error('Koneksi database tidak aktif. Silakan segarkan aplikasi.');
+    }
+
+    let finalBuktiUrl = '';
+    let finalBuktiFileId = '';
+
+    if (photoFile) {
+      if (activeToken === 'mock_demo_token') {
+        const mockId = `mock_act_file_${Date.now()}`;
+        finalBuktiUrl = `https://drive.google.com/file/d/${mockId}/view`;
+        finalBuktiFileId = mockId;
+      } else {
+        try {
+          const uploadResult = await uploadReceiptFile(activeToken, driveFolderId || DRIVE_FOLDER_ID, photoFile);
+          finalBuktiUrl = uploadResult.viewUrl;
+          finalBuktiFileId = uploadResult.fileId;
+        } catch (upErr: any) {
+          console.warn('Photo upload returned error, attempting retry with fresh server token:', upErr);
+          const freshSa = await fetchServiceAccountToken(true);
+          if (freshSa && freshSa.token) {
+            activeToken = freshSa.token;
+            setToken(freshSa.token);
+            const uploadResult = await uploadReceiptFile(freshSa.token, driveFolderId || DRIVE_FOLDER_ID, photoFile);
+            finalBuktiUrl = uploadResult.viewUrl;
+            finalBuktiFileId = uploadResult.fileId;
+          } else {
+            throw upErr;
+          }
+        }
+      }
+    }
+
+    const todayStr = manualData.tanggal.replace(/-/g, '');
+    const randomDigits = Math.floor(1000 + Math.random() * 9000);
+    const activityId = `ACT-MANUAL-${todayStr}-${randomDigits}`;
+
+    const adminEmail = userProfile?.email || user?.email || 'admin@depotel.com';
+    const createdAtTime = `${manualData.tanggal} ${manualData.jam || '12:00'}`;
+    const nowTimestamp = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
+    const newActivity: UserActivity = {
+      id: activityId,
+      userEmail: manualData.userEmail,
+      tanggal: manualData.tanggal,
+      createdAt: createdAtTime,
+      timestamp: nowTimestamp,
+      siteId: manualData.siteId,
+      siteName: manualData.siteName,
+      coordinatesDb: manualData.coordinatesDb,
+      coordinatesActual: manualData.coordinatesActual || `[MANUAL ADMIN] ${manualData.coordinatesDb || '-'}`,
+      keterangan: `[INPUT SUSULAN ADMIN: ${adminEmail}] ${manualData.keterangan} (Alasan: ${manualData.alasanSusulan})`,
+      buktiUrl: finalBuktiUrl,
+      buktiFileId: finalBuktiFileId || undefined,
+      indikasiFake: false,
+      fakeReason: `Manual Activity Report oleh Admin: ${adminEmail} (Alasan: ${manualData.alasanSusulan})`
+    };
+
+    try {
+      await createUserActivity(activeToken, spreadsheetId, newActivity);
+    } catch (err: any) {
+      const errStr = (err.message || String(err)).toLowerCase();
+      const isAuthError = errStr.includes('401') ||
+        errStr.includes('authentication credentials') ||
+        errStr.includes('unauthenticated') ||
+        errStr.includes('unauthorized') ||
+        errStr.includes('invalid_grant');
+
+      if (isAuthError) {
+        console.warn('createUserActivity encountered 401 error, fetching fresh token and retrying...');
+        const freshSa = await fetchServiceAccountToken(true);
+        if (freshSa && freshSa.token) {
+          activeToken = freshSa.token;
+          setToken(freshSa.token);
+          await createUserActivity(freshSa.token, spreadsheetId, newActivity);
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
+
+    // Refresh activities state
+    try {
+      const allActs = await fetchUserActivities(activeToken, spreadsheetId);
+      setActivities(allActs);
+      safeSetJson('op_app_cached_activities', allActs, 30);
+    } catch (fetchErr) {
+      setActivities(prev => [newActivity, ...prev]);
+    }
+  };
+
   const handleUpdateActivity = async (updatedActivity: UserActivity) => {
     const currentToken = token || 'mock_demo_token';
     const currentSheetId = spreadsheetId || 'mock_sheet_id';
@@ -3423,13 +3562,13 @@ export default function App() {
         )}
 
         {/* Offline Reports Sync Banner */}
-        {(offlineTalanganList.length > 0 || offlineUsageList.length > 0) && userProfile && (
+        {(offlineTalanganList.length > 0 || offlineUsageList.length > 0 || offlineBbmList.length > 0) && userProfile && (
           <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-3 shadow-xs flex items-center justify-between text-xs animate-slide-up">
             <div className="flex items-center gap-2 text-amber-900">
               <RefreshCw className={`w-4 h-4 text-amber-600 shrink-0 ${isSyncingOfflineReports ? 'animate-spin' : ''}`} />
               <div>
-                <p className="font-bold">Laporan Belum Disinkronkan ({offlineTalanganList.length + offlineUsageList.length})</p>
-                <p className="text-[10px] text-amber-700">Tersimpan di memori HP. Akan dikirim otomatis saat internet tersedia.</p>
+                <p className="font-bold">Laporan Belum Disinkronkan ({offlineTalanganList.length + offlineUsageList.length + offlineBbmList.length})</p>
+                <p className="text-[10px] text-amber-700">Tersimpan di memori HP (IndexedDB). Akan dikirim otomatis saat internet tersedia.</p>
               </div>
             </div>
             <button
@@ -3574,6 +3713,7 @@ export default function App() {
             role={activeRole}
             onSaveActivity={handleSaveActivity}
             onUpdateActivity={handleUpdateActivity}
+            onSaveManualActivity={handleSaveManualActivity}
             onBack={() => setActiveView('dashboard')}
           />
         ) : activeView === 'push-test' && userProfile ? (
@@ -3685,6 +3825,10 @@ export default function App() {
                   onSelectTab={handleSelectDashboardTab}
                   onPurgeOrphanHistories={handlePurgeOrphanHistories}
                   onReopenRequest={handleReopenRequest}
+                  onSaveManualActivity={handleSaveManualActivity}
+                  token={token}
+                  spreadsheetId={spreadsheetId}
+                  driveFolderId={driveFolderId}
                 />
               </>
             ) : (
@@ -5203,7 +5347,7 @@ export default function App() {
         userProfile={userProfile}
       />
 
-      {/* Global Loading Overlay (Hampir Full Transparan, Spinner + Label Singkat, Non-Destructive) */}
+      {/* Global Loading Overlay (Transparansi Penuh, Spinner + Label Singkat, Non-Destructive) */}
       <FormProgressOverlay
         isOpen={Boolean(isLoading && loadingStep)}
         title="Memproses Data"

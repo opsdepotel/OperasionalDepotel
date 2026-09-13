@@ -7,6 +7,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, SiteInfo, UserProfile } from '../types';
 import { parseNumericValue } from '../lib/googleApi';
+import { saveOfflineBbmRefill } from '../lib/offlineReportStorage';
 import { Fuel, Calendar, MapPin, Coins, FileText, Camera, RefreshCw, CheckCircle2, AlertCircle, X, ExternalLink, UploadCloud } from 'lucide-react';
 
 interface BbmRefillModalProps {
@@ -384,6 +385,70 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
       alert('Penyimpanan transaksi BBM Duren Sawit berhasil!');
       onClose();
     } catch (err: any) {
+      const errStr = (err?.message || '').toLowerCase();
+      const isOfflineErr = !navigator.onLine || errStr.includes('offline') || errStr.includes('fetch') || errStr.includes('network') || errStr.includes('gagal menyimpan transaksi');
+
+      if (isOfflineErr) {
+        try {
+          setSubmitStep('Menyimpan laporan BBM ke IndexedDB HP...');
+          const uid = generateBbmUid();
+          const nowIso = new Date().toISOString();
+          const req: BudgetRequest = {
+            id: uid,
+            userEmail,
+            managerEmail: managerEmail || userEmail,
+            tanggalPemakaian: tanggal,
+            siteId: siteId.trim().toUpperCase(),
+            jumlahPengajuan: amount,
+            keterangan: keterangan.trim(),
+            status: RequestStatus.CLOSED,
+            managerActionAmount: amount,
+            managerComment: 'Otomatis disetujui & closed oleh sistem BBM Duren Sawit.',
+            adminActionAmount: 0,
+            createdAt: nowIso
+          };
+          const reportItem: UsageReportItem = {
+            id: `${uid}-1`,
+            requestId: uid,
+            tanggalPenggunaan: tanggal,
+            nominal: amount,
+            keterangan: keterangan.trim(),
+            buktiUrl: photoDataUrl || '',
+            buktiFileId: `BBM_NOTA_${Date.now()}`,
+            statusManager: ItemStatus.APPROVED,
+            managerComment: 'Otomatis terverifikasi sistem BBM Duren Sawit',
+            statusAdmin: ItemStatus.APPROVED,
+            adminComment: 'Otomatis terverifikasi sistem BBM Duren Sawit',
+            updatedAt: nowIso
+          };
+
+          await saveOfflineBbmRefill(
+            {
+              userEmail,
+              managerEmail: managerEmail || userEmail,
+              tanggal,
+              siteId: siteId.trim().toUpperCase(),
+              siteName: someFound ? (siteResults.find(r => r.found)?.siteName || 'Depot / Pos Utama') : 'BBM DUREN SAWIT',
+              nominal: amount,
+              keterangan: keterangan.trim(),
+              reqPayload: req,
+              reportItemPayload: reportItem
+            },
+            photoDataUrl || ''
+          );
+
+          try {
+            localStorage.removeItem(draftStorageKey);
+          } catch {}
+
+          alert('Pengisian BBM Duren Sawit berhasil disimpan secara OFFLINE pada perangkat HP. Laporan Belum Disinkronkan dan akan terkirim otomatis saat jaringan kembali terhubung.');
+          onClose();
+          return;
+        } catch (offErr) {
+          console.error('Gagal menyimpan BBM offline ke IndexedDB:', offErr);
+        }
+      }
+
       const errorMsg = err.message || 'Gagal menyimpan transaksi BBM Duren Sawit.';
       setError(errorMsg);
       alert(`Penyimpanan transaksi BBM Duren Sawit gagal: ${errorMsg}`);

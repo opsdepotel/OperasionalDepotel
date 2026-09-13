@@ -48,6 +48,65 @@ export function getServerOAuthClient() {
 }
 
 /**
+ * Safely parses Service Account credentials from either Option 1 (GOOGLE_SERVICE_ACCOUNT_JSON)
+ * or Option 2 (GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY).
+ * Handles raw JSON, escaped quotes, Base64 strings, and literal '\n' characters from Vercel env.
+ */
+export function parseServiceAccountCredentials(): { client_email?: string; private_key?: string } | null {
+  const serviceAccountJson = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  if (serviceAccountJson) {
+    try {
+      let rawJson = serviceAccountJson;
+      if (!rawJson.startsWith('{') && !rawJson.startsWith('"')) {
+        // Might be base64 encoded in Vercel environment variables
+        try {
+          rawJson = Buffer.from(rawJson, 'base64').toString('utf-8');
+        } catch {}
+      }
+      if (rawJson.startsWith('"') && rawJson.endsWith('"')) {
+        try {
+          rawJson = JSON.parse(rawJson);
+        } catch {}
+      }
+      const credentials = typeof rawJson === 'string' 
+        ? JSON.parse(rawJson) 
+        : rawJson;
+      
+      let pKey = credentials.private_key || '';
+      if (pKey.includes('\\n')) {
+        pKey = pKey.replace(/\\n/g, '\n');
+      }
+
+      if (credentials.client_email && pKey) {
+        return {
+          client_email: credentials.client_email,
+          private_key: pKey
+        };
+      }
+    } catch (err) {
+      console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:', err);
+    }
+  }
+
+  const clientEmail = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
+  let privateKey = cleanEnvVal(process.env.GOOGLE_PRIVATE_KEY);
+
+  if (clientEmail && privateKey) {
+    // Handle escaped newlines in private key string if present
+    if (privateKey.includes('\\n')) {
+      privateKey = privateKey.replace(/\\n/g, '\n');
+    }
+
+    return {
+      client_email: clientEmail,
+      private_key: privateKey
+    };
+  }
+
+  return null;
+}
+
+/**
  * Returns Google Auth Client using Service Account credentials.
  * Supports:
  * 1. GOOGLE_SERVICE_ACCOUNT_JSON (full JSON content / stringified)
@@ -64,52 +123,11 @@ export function getServiceAccountAuth() {
     'https://www.googleapis.com/auth/drive.file'
   ];
 
-  const serviceAccountJson = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  if (serviceAccountJson) {
-    try {
-      let rawJson = serviceAccountJson;
-      if (!rawJson.startsWith('{') && !rawJson.startsWith('"')) {
-        // Might be base64 encoded in Vercel environment variables
-        try {
-          rawJson = Buffer.from(rawJson, 'base64').toString('utf-8');
-        } catch {}
-      }
-      if (rawJson.startsWith('"') && rawJson.endsWith('"')) {
-        rawJson = JSON.parse(rawJson);
-      }
-      const credentials = typeof rawJson === 'string' 
-        ? JSON.parse(rawJson) 
-        : rawJson;
-      
-      let pKey = credentials.private_key || '';
-      if (pKey.includes('\\n')) {
-        pKey = pKey.replace(/\\n/g, '\n');
-      }
-
-      const auth = new google.auth.JWT({
-        email: credentials.client_email,
-        key: pKey,
-        scopes
-      });
-      cachedAuthClient = auth;
-      return auth;
-    } catch (err) {
-      console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:', err);
-    }
-  }
-
-  const clientEmail = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
-  let privateKey = cleanEnvVal(process.env.GOOGLE_PRIVATE_KEY);
-
-  if (clientEmail && privateKey) {
-    // Handle escaped newlines in private key string if present
-    if (privateKey.includes('\\n')) {
-      privateKey = privateKey.replace(/\\n/g, '\n');
-    }
-
+  const credentials = parseServiceAccountCredentials();
+  if (credentials && credentials.client_email && credentials.private_key) {
     const auth = new google.auth.JWT({
-      email: clientEmail,
-      key: privateKey,
+      email: credentials.client_email,
+      key: credentials.private_key,
       scopes
     });
     cachedAuthClient = auth;
@@ -242,20 +260,11 @@ export function getGoogleAuthStatus() {
  */
 export function getServiceAccountStatus() {
   const auth = getServiceAccountAuth();
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || 
-    (() => {
-      try {
-        if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-          const parsed = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-          return parsed.client_email;
-        }
-      } catch (e) {}
-      return null;
-    })();
+  const credentials = parseServiceAccountCredentials();
 
   return {
     isConfigured: Boolean(auth),
-    serviceAccountEmail: email || null
+    serviceAccountEmail: credentials?.client_email || null
   };
 }
 

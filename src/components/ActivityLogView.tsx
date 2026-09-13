@@ -7,42 +7,22 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
 import { safeSetJson } from '../lib/storage';
+import {
+  saveOfflineActivityLog,
+  getOfflineActivityLogs,
+  removeOfflineActivityLog,
+  dataURLtoFile,
+  OfflineActivityItem
+} from '../lib/offlineReportStorage';
 import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone, Wifi, WifiOff, CloudOff, Send, Trash2, CheckCircle2, HardDrive } from 'lucide-react';
 
-export interface OfflineActivityItem {
-  id: string;
-  timestamp: string;
-  tanggal: string;
-  siteId: string;
-  siteName: string;
-  coordinatesDb: string;
-  coordinatesActual: string;
-  keterangan: string;
-  indikasiFake?: boolean;
-  fakeReason?: string;
-  photoDataUrl: string;
-  photoFileName: string;
-  userEmail: string;
-  userName: string;
-}
 
-function dataURLtoFile(dataurl: string, filename: string): File {
-  const arr = dataurl.split(',');
-  const mimeMatch = arr[0].match(/:(.*?);/);
-  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-  const bstr = atob(arr[1]);
-  let n = bstr.length;
-  const u8arr = new Uint8Array(n);
-  while (n--) {
-    u8arr[n] = bstr.charCodeAt(n);
-  }
-  return new File([u8arr], filename, { type: mime });
-}
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture } from '../lib/aiRecapture';
 import { ActivityLogMapContainer } from './ActivityLogMapContainer';
+import { AdminManualActivityModal, ManualActivitySubmitData } from './AdminManualActivityModal';
 
 // Helper to parse coordinate string and calculate Haversine distance
 function parseCoords(coordStr: string): { lat: number; lng: number } | null {
@@ -96,6 +76,7 @@ interface ActivityLogViewProps {
     fakeReason?: string;
   }, photoFile?: File) => Promise<void>;
   onUpdateActivity?: (act: UserActivity) => Promise<void> | void;
+  onSaveManualActivity?: (data: ManualActivitySubmitData, photoFile: File) => Promise<void>;
   onBack: () => void;
 }
 
@@ -108,6 +89,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   role,
   onSaveActivity,
   onUpdateActivity,
+  onSaveManualActivity,
   onBack
 }) => {
   const currentRole = role || userProfile?.role || Role.USER;
@@ -171,15 +153,21 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   }, []);
 
   // Offline Activities Queue
-  const [offlineQueue, setOfflineQueue] = useState<OfflineActivityItem[]>(() => {
+  const [offlineQueue, setOfflineQueue] = useState<OfflineActivityItem[]>([]);
+
+  // Load offline activities from IndexedDB
+  const refreshOfflineActivities = async () => {
     try {
-      const saved = localStorage.getItem('op_app_offline_activities');
-      return saved ? JSON.parse(saved) : [];
+      const logs = await getOfflineActivityLogs();
+      setOfflineQueue(logs);
     } catch (err) {
-      console.error('Failed to parse offline activities:', err);
-      return [];
+      console.error('Failed to load offline activities:', err);
     }
-  });
+  };
+
+  useEffect(() => {
+    refreshOfflineActivities();
+  }, []);
 
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
@@ -198,40 +186,16 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     },
     photoBlobOrUrl: File | string
   ) => {
-    let dataUrl = '';
-    let fileName = 'kegiatan_offline.jpg';
+    const newItem = await saveOfflineActivityLog(
+      {
+        ...data,
+        userEmail: userEmail || userProfile?.email || '',
+        userName: userProfile?.nama || userEmail || 'User'
+      },
+      photoBlobOrUrl
+    );
 
-    if (typeof photoBlobOrUrl === 'string') {
-      dataUrl = photoBlobOrUrl;
-    } else {
-      fileName = photoBlobOrUrl.name || 'kegiatan_offline.jpg';
-      dataUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(photoBlobOrUrl);
-      });
-    }
-
-    const newItem: OfflineActivityItem = {
-      id: `OFFLINE-ACT-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
-      tanggal: data.tanggal,
-      siteId: data.siteId,
-      siteName: data.siteName,
-      coordinatesDb: data.coordinatesDb,
-      coordinatesActual: data.coordinatesActual,
-      keterangan: data.keterangan,
-      indikasiFake: data.indikasiFake,
-      fakeReason: data.fakeReason,
-      photoDataUrl: dataUrl,
-      photoFileName: fileName,
-      userEmail: userEmail || userProfile?.email || '',
-      userName: userProfile?.nama || userEmail || 'User'
-    };
-
-    const updated = [newItem, ...offlineQueue];
-    setOfflineQueue(updated);
-    safeSetJson('op_app_offline_activities', updated, 20);
+    setOfflineQueue(prev => [newItem, ...prev.filter(q => q.id !== newItem.id)]);
     return newItem;
   };
 
@@ -247,7 +211,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     for (let i = offlineQueue.length - 1; i >= 0; i--) {
       const item = offlineQueue[i];
       try {
-        const photoFile = dataURLtoFile(item.photoDataUrl, item.photoFileName);
+        const photoFile = dataURLtoFile(item.photoDataUrl, item.photoFileName, item.photoBlob);
         await onSaveActivity(
           {
             tanggal: item.tanggal,
@@ -262,6 +226,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           photoFile
         );
 
+        await removeOfflineActivityLog(item.id);
         const idx = remaining.findIndex(q => q.id === item.id);
         if (idx !== -1) {
           remaining.splice(idx, 1);
@@ -275,7 +240,6 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     }
 
     setOfflineQueue(remaining);
-    safeSetJson('op_app_offline_activities', remaining, 20);
     setIsSyncing(false);
 
     if (successCount > 0) {
@@ -290,10 +254,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     }
   }, [isOnline]);
 
-  const handleDeleteOfflineDraft = (id: string) => {
-    const updated = offlineQueue.filter(q => q.id !== id);
-    setOfflineQueue(updated);
-    safeSetJson('op_app_offline_activities', updated, 20);
+  const handleDeleteOfflineDraft = async (id: string) => {
+    await removeOfflineActivityLog(id);
+    setOfflineQueue(prev => prev.filter(q => q.id !== id));
   };
   const [selectedPhotoActivity, setSelectedPhotoActivity] = useState<UserActivity | null>(null);
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
@@ -476,6 +439,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     handleResetZoomPan();
   };
 
+  // Screen Recapture back handlers
   useBackHandler(showAddForm, () => {
     setShowAddForm(false);
     formOpenPositionRef.current = null;
@@ -483,6 +447,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   }, 'activity_addForm');
   useBackHandler(!!selectedPhotoUrl, resetPhotoModal, 'activity_photoModal');
   useBackHandler(isAiRecaptureModalOpen, () => setIsAiRecaptureModalOpen(false), 'activity_aiRecaptureModal');
+
+  // Manual Activity Report Modal State (Administrator)
+  const [showAdminManualModal, setShowAdminManualModal] = useState(false);
+  useBackHandler(showAdminManualModal, () => setShowAdminManualModal(false), 'activity_adminManualModal');
 
   // Trigger AI Screen Recapture Inspection
   const handleRunAiRecapture = async (
@@ -1689,7 +1657,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           >
             <div className="relative w-full max-w-5xl my-auto shadow-2xl">
               <ActivityLogMapContainer
-                activities={filteredActivities}
+                activities={allCombinedActivities}
                 profiles={profiles}
                 sites={sites}
                 selectedDate={dateFilter}
@@ -1870,9 +1838,26 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
                       <div>
                         <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
-                            Site: {act.siteId}
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                              Site: {act.siteId}
+                            </span>
+                            {(() => {
+                              const isManualAdmin = act.keterangan?.includes('[INPUT SUSULAN ADMIN') ||
+                                                    act.coordinatesActual?.includes('[MANUAL ADMIN]') ||
+                                                    act.fakeReason?.includes('Manual Activity Report') ||
+                                                    act.id.startsWith('ACT-MANUAL-');
+                              if (isManualAdmin) {
+                                return (
+                                  <span className="text-[9px] font-bold text-amber-800 bg-amber-50 border border-amber-300 px-2 py-0.5 rounded-md flex items-center gap-1 shadow-2xs" title="Laporan kegiatan diinput susulan oleh Administrator">
+                                    <ShieldCheck className="w-3 h-3 text-amber-600" />
+                                    Manual Admin
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </div>
                           
                           <div className="flex items-center gap-2">
                             {act.buktiUrl && (
@@ -2060,6 +2045,18 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           >
             <Plus className="w-4 h-4" />
             Tambah Activity Hari Ini
+          </button>
+        )}
+
+        {/* "Manual Activity Report" Button - For Role ADMINISTRATOR */}
+        {currentRole === Role.ADMINISTRATOR && onSaveManualActivity && (
+          <button
+            onClick={() => setShowAdminManualModal(true)}
+            className="w-full bg-gradient-to-r from-slate-900 via-indigo-900 to-indigo-800 text-white font-display font-bold text-xs py-3 px-4 rounded-xl shadow-md hover:bg-slate-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2 mt-4 cursor-pointer"
+            id="btn-admin-manual-activity-trigger"
+          >
+            <Plus className="w-4 h-4 text-indigo-300" />
+            <span>+ Manual Activity Report (Admin)</span>
           </button>
         )}
 
@@ -2292,6 +2289,18 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         }}
         profiles={profiles}
       />
+
+      {/* Manual Activity Report Modal for Administrator */}
+      {showAdminManualModal && onSaveManualActivity && (
+        <AdminManualActivityModal
+          isOpen={showAdminManualModal}
+          onClose={() => setShowAdminManualModal(false)}
+          profiles={profiles}
+          sites={sites}
+          currentAdminEmail={userEmail}
+          onSubmitManualActivity={onSaveManualActivity}
+        />
+      )}
     </div>
   );
 };

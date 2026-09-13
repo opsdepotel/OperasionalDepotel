@@ -17,6 +17,70 @@ interface ActivityLogMapContainerProps {
   onSelectPhoto?: (act: UserActivity) => void;
 }
 
+// Helper to normalize any date representation into standard ISO YYYY-MM-DD
+function normalizeToYmd(dateStr?: string | null): string {
+  if (!dateStr || typeof dateStr !== 'string') return '';
+  const s = dateStr.trim();
+  if (!s) return '';
+
+  // 1. YYYY-MM-DD or YYYY/MM/DD (with optional time)
+  const iso = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (iso) {
+    return `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+  }
+
+  // 2. DD/MM/YYYY or DD-MM-YYYY (with optional time)
+  const dmy = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+  if (dmy) {
+    return `${dmy[3]}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  }
+
+  // 3. ACT-YYYYMMDD pattern in id
+  const act = s.match(/ACT-(\d{4})(\d{2})(\d{2})/i);
+  if (act) {
+    return `${act[1]}-${act[2]}-${act[3]}`;
+  }
+
+  // 4. Native JS date parse fallback
+  const parsed = Date.parse(s);
+  if (!isNaN(parsed)) {
+    const d = new Date(parsed);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    if (y >= 2000 && y <= 2040) {
+      return `${y}-${m}-${day}`;
+    }
+  }
+
+  return s;
+}
+
+// Extract YYYY-MM-DD from UserActivity checking all possible date fields
+function extractActivityDate(act: UserActivity): string {
+  // Check act.tanggal
+  if (act.tanggal) {
+    const ymd = normalizeToYmd(act.tanggal);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  }
+  // Check act.createdAt
+  if (act.createdAt) {
+    const ymd = normalizeToYmd(act.createdAt);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  }
+  // Check act.timestamp
+  if (act.timestamp) {
+    const ymd = normalizeToYmd(act.timestamp);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  }
+  // Check act.id (e.g. ACT-20260912-...)
+  if (act.id) {
+    const ymd = normalizeToYmd(act.id);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ymd;
+  }
+  return normalizeToYmd(act.tanggal) || '';
+}
+
 // Helper to parse coordinate string safely
 function parseCoords(coordStr?: string | null): { lat: number; lng: number } | null {
   if (!coordStr || typeof coordStr !== 'string') return null;
@@ -69,10 +133,20 @@ export const ActivityLogMapContainer: React.FC<ActivityLogMapContainerProps> = (
   const mapInstanceRef = useRef<L.Map | null>(null);
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
 
-  const [filterDate, setFilterDate] = useState<string>(selectedDate || new Date().toISOString().split('T')[0]);
+  const [filterDate, setFilterDate] = useState<string>(() => {
+    return normalizeToYmd(selectedDate) || new Date().toISOString().split('T')[0];
+  });
   const [mapMode, setMapMode] = useState<'LATEST' | 'ROUTE'>('LATEST');
   const [selectedUserEmail, setSelectedUserEmail] = useState<string>('ALL');
   const [selectedDivisi, setSelectedDivisi] = useState<string>('ALL');
+
+  // Sync filterDate if selectedDate prop changes
+  useEffect(() => {
+    if (selectedDate) {
+      const norm = normalizeToYmd(selectedDate);
+      if (norm) setFilterDate(norm);
+    }
+  }, [selectedDate]);
 
   // Inject Leaflet CSS on mount
   useEffect(() => {
@@ -117,37 +191,41 @@ export const ActivityLogMapContainer: React.FC<ActivityLogMapContainerProps> = (
 
   // Filter activities matching the filter parameters
   const validMapActivities = useMemo(() => {
+    const targetYmd = normalizeToYmd(filterDate);
+
     return activities.filter(act => {
-      // Date filter
-      if (filterDate) {
-        const actDate = act.tanggal?.trim() || '';
-        if (actDate && actDate !== filterDate) {
-          // Normalize check
-          const normAct = actDate.replace(/\//g, '-');
-          const normFilter = filterDate.replace(/\//g, '-');
-          if (normAct !== normFilter && !actDate.includes(filterDate)) {
+      // 1. Date filter
+      if (targetYmd) {
+        const actYmd = extractActivityDate(act);
+        if (actYmd) {
+          if (actYmd !== targetYmd) return false;
+        } else {
+          // Fallback if no exact YMD extracted: check if targetYmd or filterDate is contained
+          const raw = `${act.tanggal || ''} ${act.createdAt || ''} ${act.timestamp || ''}`;
+          if (!raw.includes(targetYmd) && (filterDate && !raw.includes(filterDate))) {
             return false;
           }
         }
       }
 
-      // User filter
+      // 2. User filter
       if (selectedUserEmail !== 'ALL') {
-        if (act.userEmail.toLowerCase().trim() !== selectedUserEmail.toLowerCase().trim()) {
+        const userClean = (act.userEmail || '').toLowerCase().trim();
+        if (userClean !== selectedUserEmail.toLowerCase().trim()) {
           return false;
         }
       }
 
-      // Division filter
+      // 3. Division filter
       if (selectedDivisi !== 'ALL') {
-        const prof = profiles.find(p => p.email.toLowerCase().trim() === act.userEmail.toLowerCase().trim());
+        const prof = profiles.find(p => p.email.toLowerCase().trim() === (act.userEmail || '').toLowerCase().trim());
         const userDiv = prof?.divisi?.trim().toLowerCase() || '';
         if (userDiv !== selectedDivisi.toLowerCase().trim()) {
           return false;
         }
       }
 
-      // Must have valid actual coordinates
+      // 4. Must have valid actual coordinates
       const coords = parseCoords(act.coordinatesActual) || parseCoords(act.coordinatesDb);
       return !!coords;
     });
@@ -409,9 +487,6 @@ export const ActivityLogMapContainer: React.FC<ActivityLogMapContainerProps> = (
           <div>
             <h3 className="font-display font-bold text-sm tracking-tight flex items-center gap-2">
               <span>Peta Lokasi Kegiatan Operasional</span>
-              <span className="text-[10px] bg-indigo-500/30 border border-indigo-400/40 text-indigo-200 px-2 py-0.5 rounded-full font-mono">
-                Leaflet.js
-              </span>
             </h3>
             <p className="text-[11px] text-slate-300 leading-tight mt-0.5">
               Monitoring sebaran lokasi dan rute kunjungan kegiatan pengguna
