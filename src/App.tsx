@@ -58,7 +58,7 @@ import {
   fetchGlobalConfig
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
-import { validateDeviceAccessAndBind, requestPersistentStorage, isMobileDevice, generateHardwareFingerprint } from './lib/deviceUtils';
+import { validateDeviceAccessAndBind, requestPersistentStorage, isMobileDevice, generateHardwareFingerprint, isCurrentDeviceValidForUserSync } from './lib/deviceUtils';
 import { safeSetItem, safeSetJson } from './lib/storage';
 
 // Components
@@ -393,8 +393,7 @@ export default function App() {
               return null;
             }
             if (matched.deviceId && matched.deviceId.trim()) {
-              const currentHwId = generateHardwareFingerprint(matched.email);
-              if (matched.deviceId.trim().toLowerCase() !== currentHwId.toLowerCase()) {
+              if (!isCurrentDeviceValidForUserSync(matched)) {
                 localStorage.removeItem('op_app_logged_in_user_id');
                 sessionStorage.removeItem('op_app_logged_in_user_id');
                 return null;
@@ -881,8 +880,7 @@ export default function App() {
                   return;
                 }
                 if (matchedUser.deviceId && matchedUser.deviceId.trim()) {
-                  const currentHwId = generateHardwareFingerprint(matchedUser.email);
-                  if (matchedUser.deviceId.trim().toLowerCase() !== currentHwId.toLowerCase()) {
+                  if (!isCurrentDeviceValidForUserSync(matchedUser)) {
                     localStorage.removeItem('op_app_logged_in_user_id');
                     sessionStorage.removeItem('op_app_logged_in_user_id');
                     return;
@@ -997,8 +995,7 @@ export default function App() {
               return null;
             }
             if (updatedProfile.deviceId && updatedProfile.deviceId.trim()) {
-              const currentHwId = generateHardwareFingerprint(updatedProfile.email);
-              if (updatedProfile.deviceId.trim().toLowerCase() !== currentHwId.toLowerCase()) {
+              if (!isCurrentDeviceValidForUserSync(updatedProfile)) {
                 localStorage.removeItem('op_app_logged_in_user_id');
                 sessionStorage.removeItem('op_app_logged_in_user_id');
                 setLoginRejectError(`Akses Ditolak: Akun Anda telah terikat pada perangkat lain (ID: ${updatedProfile.deviceId}).`);
@@ -1013,6 +1010,28 @@ export default function App() {
 
         return null;
       });
+
+      // Auto-upgrade legacy DEV-MOB deviceId to cryptographically secure UUID for active mobile session
+      if (userProfile && (userProfile.mobile === true || String(userProfile.mobile).trim().toUpperCase() === 'TRUE')) {
+        if (userProfile.deviceId && !userProfile.deviceId.toLowerCase().startsWith('dev-uuid-') && isCurrentDeviceValidForUserSync(userProfile)) {
+          validateDeviceAccessAndBind(
+            userProfile,
+            async (upgraded) => {
+              try {
+                await saveUserProfile(accessToken, sheetId, upgraded);
+              } catch (e) {
+                console.warn('Auto-upgrade deviceId background sync error:', e);
+              }
+            },
+            allProfs
+          ).then((res) => {
+            if (res.success && res.updatedUser) {
+              setUserProfile(res.updatedUser);
+              setProfiles(prev => prev.map(p => p.email.toLowerCase() === res.updatedUser!.email.toLowerCase() ? res.updatedUser! : p));
+            }
+          }).catch(console.warn);
+        }
+      }
 
       // Ensure the admin profile in Google Sheets has the correct email associated with it in the background
       if (user && user.email) {

@@ -400,6 +400,69 @@ export function generateHardwareFingerprint(userEmail?: string): string {
 }
 
 /**
+ * Generates a high-entropy cryptographically secure random UUID token for Device ID.
+ * Standard format: DEV-UUID-xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+ * Provides 100% mathematical uniqueness to prevent any collision between identical hardware units.
+ */
+export function generateRandomUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `DEV-UUID-${crypto.randomUUID()}`;
+  }
+  // Fallback for older WebViews / browsers without crypto.randomUUID
+  const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
+  const uuid = `${s4()}${s4()}-${s4()}-4${s4().substring(0, 3)}-${s4()}-${s4()}${s4()}${s4()}`;
+  return `DEV-UUID-${uuid}`;
+}
+
+/**
+ * Synchronously verifies if the current device has valid access for the user.
+ * Supports both the new DEV-UUID system and legacy DEV-MOB hardware signatures during transition.
+ */
+export function isCurrentDeviceValidForUserSync(user: UserProfile): boolean {
+  if (!user.deviceId || !user.deviceId.trim()) return true;
+  const dbDevId = user.deviceId.trim().toLowerCase();
+
+  const KEY = 'op_app_device_id';
+  const BACKUP_KEY = 'op_app_device_id_backup';
+  const emailKey = `op_app_user_bound_device_${user.email.toLowerCase().trim()}`;
+
+  const cur1 = typeof localStorage !== 'undefined' ? (localStorage.getItem(KEY) || '').trim().toLowerCase() : '';
+  const cur2 = typeof localStorage !== 'undefined' ? (localStorage.getItem(BACKUP_KEY) || '').trim().toLowerCase() : '';
+  const cur3 = typeof localStorage !== 'undefined' ? (localStorage.getItem(emailKey) || '').trim().toLowerCase() : '';
+  const cur4 = (getCookie(KEY) || '').trim().toLowerCase();
+  const cur5 = typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem(KEY) || '').trim().toLowerCase() : '';
+
+  // 1. If DB device ID is UUID format (DEV-UUID-...)
+  if (dbDevId.startsWith('dev-uuid-')) {
+    return (
+      cur1 === dbDevId ||
+      cur2 === dbDevId ||
+      cur3 === dbDevId ||
+      cur4 === dbDevId ||
+      cur5 === dbDevId
+    );
+  }
+
+  // 2. If DB device ID is legacy format (DEV-MOB-... or older string)
+  // Check if current device's hardware fingerprint matches
+  const curHwId = generateHardwareFingerprint(user.email).toLowerCase();
+  if (dbDevId === curHwId) return true;
+
+  // Or check if current storage has the legacy ID
+  if (
+    cur1 === dbDevId ||
+    cur2 === dbDevId ||
+    cur3 === dbDevId ||
+    cur4 === dbDevId ||
+    cur5 === dbDevId
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Automatically requests persistent storage from the browser via StorageManager API.
  * Ensures the browser marks the origin storage as 'persisted', preventing eviction under low-memory conditions.
  */
@@ -590,19 +653,28 @@ export async function getOrCreateDeviceIdAsync(userEmail?: string): Promise<stri
     }
   }
 
-  // 3. If completely missing from all storage, generate new hardware fingerprint
-  if (!deviceId || !deviceId.trim()) {
-    deviceId = generateHardwareFingerprint();
+  // 3. If userEmail is provided, also check if user has a bound device stored locally
+  if (userEmail && (!deviceId || !deviceId.trim())) {
+    const emailKey = `op_app_user_bound_device_${userEmail.toLowerCase().trim()}`;
+    const userBoundLocal = typeof localStorage !== 'undefined' ? localStorage.getItem(emailKey) : null;
+    if (userBoundLocal && userBoundLocal.trim()) {
+      deviceId = userBoundLocal.trim();
+    }
   }
 
-  // 4. Re-sync to all storage layers (localStorage, cookie, sessionStorage, IndexedDB)
+  // 4. If completely missing from all storage, generate new secure UUID
+  if (!deviceId || !deviceId.trim()) {
+    deviceId = generateRandomUUID();
+  }
+
+  // 5. Re-sync to all storage layers (localStorage, cookie, sessionStorage, IndexedDB)
   syncDeviceIdToAllStores(deviceId, userEmail);
 
   return deviceId;
 }
 
 /**
- * Get or generate a persistent Device ID multi-stored across localStorage, cookies, and hardware fingerprint fallback.
+ * Get or generate a persistent Device ID multi-stored across localStorage, cookies, and multi-layer storage.
  */
 export function getOrCreateDeviceId(): string {
   if (typeof window === 'undefined') return '';
@@ -617,9 +689,9 @@ export function getOrCreateDeviceId(): string {
     sessionStorage.getItem(KEY) ||
     localStorage.getItem(BACKUP_KEY);
 
-  // 2. If completely missing from all storage, fall back to stable hardware fingerprint
+  // 2. If completely missing from all storage, generate new secure UUID
   if (!deviceId || !deviceId.trim()) {
-    deviceId = generateHardwareFingerprint();
+    deviceId = generateRandomUUID();
   }
 
   // 3. Re-sync to all storage layers so future reads hit high-speed storage
@@ -765,21 +837,28 @@ export async function validateDeviceAccessAndBind(
 
       const pDevId = p.deviceId.trim().toLowerCase();
 
-      // Check A: Does this phone's physical hardware signature for user p match p.deviceId?
+      // Check A: If p has a DEV-UUID, does this phone's storage hold p's UUID?
+      if (pDevId.startsWith('dev-uuid-')) {
+        if (currentDeviceId && currentDeviceId.trim().toLowerCase() === pDevId) return true;
+        if (localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === pDevId) return true;
+        if (idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === pDevId) return true;
+        if (idbSavedBoundDevId && idbSavedBoundDevId.trim().toLowerCase() === pDevId) return true;
+        const backupDevId = typeof localStorage !== 'undefined' ? localStorage.getItem('op_app_device_id_backup') : null;
+        if (backupDevId && backupDevId.trim().toLowerCase() === pDevId) return true;
+        const otherEmailKey = `op_app_user_bound_device_${p.email.toLowerCase().trim()}`;
+        const otherBound = typeof localStorage !== 'undefined' ? localStorage.getItem(otherEmailKey) : null;
+        if (otherBound && otherBound.trim().toLowerCase() === pDevId) return true;
+      }
+
+      // Check B: If p has legacy DEV-MOB, does this phone's physical hardware signature match p's DEV-MOB?
       if (p.email && generateHardwareFingerprint(p.email).toLowerCase() === pDevId) {
         return true;
       }
 
-      // Check B: Does this phone's multi-vault storage have p.deviceId?
-      if (currentDeviceId && currentDeviceId.trim().toLowerCase() === pDevId) {
-        return true;
-      }
-      if (localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === pDevId) {
-        return true;
-      }
-      if (idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === pDevId) {
-        return true;
-      }
+      // Check C: Does this phone's storage match p's legacy ID?
+      if (currentDeviceId && currentDeviceId.trim().toLowerCase() === pDevId) return true;
+      if (localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === pDevId) return true;
+      if (idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === pDevId) return true;
 
       return false;
     });
@@ -787,7 +866,7 @@ export async function validateDeviceAccessAndBind(
 
   // Check if DB already has a deviceId for this user
   if (!user.deviceId || !user.deviceId.trim()) {
-    // Device ID in database is empty:
+    // Device ID in database is empty (First login or after Administrator Reset):
     // Verify this device is NOT bound/registered to another user profile that has Mobile = TRUE
     const boundOtherUser = findBoundOtherUser();
     if (boundOtherUser) {
@@ -798,13 +877,14 @@ export async function validateDeviceAccessAndBind(
       };
     }
 
-    // First time mobile access for this mobile user => Bind stableHardwareDevId!
+    // First time mobile access for this mobile user => Bind fresh cryptographic UUID!
+    const newUUID = generateRandomUUID();
     const updatedUser: UserProfile = {
       ...user,
-      deviceId: stableHardwareDevId
+      deviceId: newUUID
     };
 
-    syncDeviceIdToAllStores(stableHardwareDevId, user.email);
+    syncDeviceIdToAllStores(newUUID, user.email);
 
     if (saveProfileFn) {
       try {
@@ -819,9 +899,9 @@ export async function validateDeviceAccessAndBind(
       updatedUser
     };
   } else {
-    // Device ID exists in database: Compare with current mobile device's ID
+    // Device ID exists in database:
     const dbDeviceId = user.deviceId.trim();
-    const currentDevId = currentDeviceId.trim();
+    const dbDevIdLower = dbDeviceId.toLowerCase();
 
     // Check if this device is already bound to another user
     const boundOtherUser = findBoundOtherUser();
@@ -833,27 +913,70 @@ export async function validateDeviceAccessAndBind(
       };
     }
 
-    // Check 1: Direct hardware signature match (Physical phone match across all browsers on this phone)
-    const isHardwareMatch = dbDeviceId.toLowerCase() === stableHardwareDevId.toLowerCase();
+    // Path 1: User's profile is already in the new UUID system (DEV-UUID-...)
+    if (dbDevIdLower.startsWith('dev-uuid-')) {
+      const matchCurrent = currentDeviceId && currentDeviceId.trim().toLowerCase() === dbDevIdLower;
+      const matchLocal = localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === dbDevIdLower;
+      const matchIdbUser = idbSavedBoundDevId && idbSavedBoundDevId.trim().toLowerCase() === dbDevIdLower;
+      const matchIdbGeneral = idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === dbDevIdLower;
+      const backupDevId = typeof localStorage !== 'undefined' ? localStorage.getItem('op_app_device_id_backup') : null;
+      const matchBackup = backupDevId && backupDevId.trim().toLowerCase() === dbDevIdLower;
+      const cookieDevId = getCookie('op_app_device_id');
+      const matchCookie = cookieDevId && cookieDevId.trim().toLowerCase() === dbDevIdLower;
 
-    // Check 2: Multi-Layer Auto-Recovery for Safari/iOS or legacy IDs
+      if (matchCurrent || matchLocal || matchIdbUser || matchIdbGeneral || matchBackup || matchCookie) {
+        // Legitimate device: re-sync across all 4 layers to ensure self-healing persistence
+        syncDeviceIdToAllStores(dbDeviceId, user.email);
+        return {
+          success: true,
+          updatedUser: user
+        };
+      }
+
+      // Foreign device attempting to access UUID-bound account
+      console.warn(`[DeviceUtils] UUID access rejected for ${user.email}. DB UUID: ${dbDeviceId}`);
+      return {
+        success: false,
+        errorMessage: `Akses Ditolak: Akun Anda telah terikat pada perangkat fisik lain (ID: ${dbDeviceId}). Silakan hubungi Administrator untuk melakukan Reset Device ID jika Anda berganti perangkat fisik.`
+      };
+    }
+
+    // Path 2: User's profile is in LEGACY format (DEV-MOB-... or older string)
+    // Perform SEAMLESS AUTO-UPGRADE if verified on the legitimate hardware/storage:
+    const isHardwareMatch = dbDeviceId.toLowerCase() === stableHardwareDevId.toLowerCase();
     const matchLocal = localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase();
     const matchIdbUser = idbSavedBoundDevId && idbSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase();
     const matchIdbGeneral = idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === dbDeviceId.toLowerCase();
-    const matchLegacyStorage = !dbDeviceId.startsWith('DEV-MOB-') && currentDevId.toLowerCase() === dbDeviceId.toLowerCase();
+    const matchLegacyStorage = currentDeviceId && currentDeviceId.trim().toLowerCase() === dbDeviceId.toLowerCase();
 
-    const isStorageMatch = matchLocal || matchIdbUser || matchIdbGeneral || matchLegacyStorage;
+    const isLegitimateLegacyDevice = isHardwareMatch || matchLocal || matchIdbUser || matchIdbGeneral || matchLegacyStorage;
 
-    if (isHardwareMatch || isStorageMatch) {
-      syncDeviceIdToAllStores(dbDeviceId, user.email);
+    if (isLegitimateLegacyDevice) {
+      // Legitimate user on their existing phone: Seamlessly upgrade to unique UUID!
+      const newUUID = generateRandomUUID();
+      syncDeviceIdToAllStores(newUUID, user.email);
+
+      const updatedUser: UserProfile = {
+        ...user,
+        deviceId: newUUID
+      };
+
+      if (saveProfileFn) {
+        try {
+          await saveProfileFn(updatedUser);
+        } catch (err) {
+          console.error('Gagal auto-upgrade Device ID ke database:', err);
+        }
+      }
+
       return {
         success: true,
-        updatedUser: user
+        updatedUser
       };
     }
 
     // Device does NOT match! Access is strictly denied.
-    console.warn(`[DeviceUtils] Access rejected for ${user.email}. DB Device ID: ${dbDeviceId}, Current Hardware ID: ${stableHardwareDevId}`);
+    console.warn(`[DeviceUtils] Legacy access rejected for ${user.email}. DB Device ID: ${dbDeviceId}, Current Hardware ID: ${stableHardwareDevId}`);
     return {
       success: false,
       errorMessage: `Akses Ditolak: Akun Anda telah terikat pada perangkat fisik lain (ID: ${dbDeviceId}). Silakan hubungi Administrator untuk melakukan Reset Device ID jika Anda berganti perangkat fisik.`

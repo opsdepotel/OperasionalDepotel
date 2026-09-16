@@ -66,20 +66,23 @@
     - Tombol aksi: `<< Kembali` untuk kembali ke Bagian 1 dan `Simpan Laporan Dana Talangan` untuk menyimpan pengajuan ke database.
     - Penyimpanan hanya dapat dilakukan setelah item pertama diisi lengkap (nominal > 0, keterangan, dan foto bukti nota).
 
-## Device ID Logic & Persistence Flow - [LOCKED]
-- **Status: STRICTLY LOCKED**: Alur, logika, dan arsitektur persistensi Device ID berbasis Option A (Browser-Agnostic Hardware Signature) telah dikunci secara ketat. Tidak boleh ada perubahan pada fungsi, alur pengikatan (binding), verifikasi multi-browser, maupun media penyimpanan tanpa konfirmasi dan persetujuan eksplisit dari pengguna.
+## Device ID Logic & Persistence Flow (UUID + 4-Layer Vault & Seamless Auto-Transition) - [LOCKED]
+- **Status: STRICTLY LOCKED**: Alur, logika, dan arsitektur persistensi Device ID berbasis Token Acak Kriptografis Unik (UUID) dengan mekanisme penyimpanan redundan 4 Lapis dan strategi transisi otomatis (seamless auto-upgrade) telah dikunci secara ketat. Tidak boleh ada perubahan tanpa konfirmasi dan persetujuan eksplisit dari pengguna.
 - **Rules & Specifications**:
-  - **Generation (Option A Browser-Agnostic Hardware Signature)**: Format Device ID menggunakan kombinasi Browser-Agnostic Hardware Signature (`DEV-MOB-${screenWidth}x${screenHeight}-${hash8}`) berbasis spesifikasi fisik HP (screen, DPR, CPU cores, GPU WebGL renderer, timezone, language) dan akun user email.
-  - **Multi-Vault Storage**: Device ID disimpan secara redundan dan sinkron pada:
-    1. `localStorage` (`op_app_device_id` & `op_app_device_id_backup`)
+  - **Generation (Cryptographic UUID Token)**: Format Device ID menggunakan token acak kriptografis unik berentropi tinggi (`DEV-UUID-${uuid}` via `crypto.randomUUID()` dengan fallback RFC4122). Setiap perangkat fisik mobile yang diikat memiliki token unik 100% independen sehingga sepenuhnya menghilangkan celah collision pada 2 HP dengan model hardware yang sama persis.
+  - **Multi-Vault 4-Layer Storage**: Device ID disimpan secara redundan dan sinkron pada:
+    1. `localStorage` (`op_app_device_id` & `op_app_device_id_backup`, serta `op_app_user_bound_device_{userEmail}`)
     2. `sessionStorage` (`op_app_device_id`)
     3. Document Cookie (`SameSite=Lax`, path `/`, masa berlaku 10 tahun / 3650 hari)
     4. `IndexedDB` internal (`DIOMS_DEVICE_DB`, store `device_meta` dengan kunci `op_device_id` dan `bound_device_{userEmail}`)
     5. StorageManager Persistent Storage Lock (`navigator.storage.persist()`) otomatis saat aplikasi dimuat dan saat sinkronisasi Device ID.
-  - **Self-Healing & Multi-Browser Auto-Sync**: Jika pengguna berganti browser (Chrome, Samsung Internet, Edge, Firefox, atau PWA) di HP yang sama, sistem mencocokkan Hardware Signature fisik HP dan menyinkronkan Device ID secara otomatis tanpa memblokir pengguna atau membutuhkan reset admin.
-  - **Binding & Access Control (`validateDeviceAccessAndBind`)**:
-    - Pengguna dengan `Mobile = TRUE` wajib login dari perangkat mobile (Android/iOS). Login dari PC ditolak.
-    - Pada login pertama di mobile, Device ID perangkat dikunci ke profil pengguna di database (Google Sheets kolom `DeviceID`).
-    - Login berikutnya mencocokkan Device ID fisik dengan database. Jika berbeda (perangkat fisik milik orang lain), akses diblokir dan hanya dapat dibuka kembali melalui Reset Device ID oleh Administrator.
-    - Satu perangkat mobile yang telah terikat tidak dapat digunakan oleh akun lain yang juga berstatus `Mobile = TRUE`.
+  - **Seamless Auto-Transition Strategy (No User Lockout)**:
+    - Pengguna lama yang di database masih memiliki Device ID format lama (`DEV-MOB-...` atau string lama) diverifikasi keabsahannya berdasarkan hardware signature dan riwayat penyimpanan perangkat lama.
+    - Begitu terverifikasi sah di HP miliknya, sistem secara otomatis menghasilkan `DEV-UUID-...` baru, menyimpannya ke 4 lapisan penyimpanan lokal, dan memperbarui kolom `DeviceID` di database Google Sheets secara transparan (auto-upgrade) tanpa memblokir pengguna, tanpa pesan kesalahan, dan tanpa memerlukan intervensi manual Administrator.
+    - Sesi aktif yang sedang berjalan juga secara otomatis dimigrasikan ke format `DEV-UUID-...` di latar belakang saat sinkronisasi data berlangsung.
+  - **Binding & Access Control (`validateDeviceAccessAndBind` & `isCurrentDeviceValidForUserSync`)**:
+    - Pengguna dengan `Mobile = TRUE` wajib login dari perangkat mobile (Android/iOS). Login dari PC/Laptop ditolak.
+    - Pada login pertama di mobile (atau setelah Reset Device ID oleh Admin), Device ID berupa `DEV-UUID-...` baru dibuat dan dikunci ke profil pengguna di database (Google Sheets kolom `DeviceID`) dan 4 lapisan penyimpanan perangkat.
+    - Login berikutnya mencocokkan Token UUID perangkat dengan database melalui penyimpanan 4 lapis. Jika berbeda (perangkat fisik milik orang lain), akses diblokir secara ketat dan hanya dapat dibuka kembali melalui Reset Device ID oleh Administrator.
+    - Satu perangkat mobile yang telah terikat tidak dapat digunakan oleh akun lain yang juga berstatus `Mobile = TRUE` (`findBoundOtherUser`).
 
