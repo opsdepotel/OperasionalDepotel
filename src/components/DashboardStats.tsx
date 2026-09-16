@@ -12,7 +12,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
 import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
 import { ReopenUidModal } from './ReopenUidModal';
-import { AdminBackupCard } from './AdminBackupCard';
+import { AdminDatabaseToolsCard } from './AdminDatabaseToolsCard';
 import { AdminManualActivityModal, ManualActivitySubmitData } from './AdminManualActivityModal';
 import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing, Smartphone } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -47,6 +47,7 @@ interface DashboardStatsProps {
   token?: string | null;
   spreadsheetId?: string | null;
   driveFolderId?: string | null;
+  onConfigUpdated?: (newSheetId: string, newFolderId: string) => void;
 }
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
@@ -77,7 +78,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onSaveManualActivity,
   token,
   spreadsheetId,
-  driveFolderId
+  driveFolderId,
+  onConfigUpdated
 }) => {
   const [internalTab, setInternalTab] = useState<'APPROVAL' | 'SUBMISSION'>('APPROVAL');
   const currentTab = activeTab !== undefined ? activeTab : internalTab;
@@ -2278,9 +2280,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <div>
                 <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition-colors flex items-center gap-2">
                   Kelola User / Pengguna System
-                  <span className="text-[9px] font-bold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full uppercase">
-                    Akses Utama
-                  </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 font-medium mt-0.5">
                   Tambah user baru, edit akun, atasi reset Device ID, ubah role &amp; relasi manager.
@@ -2307,9 +2306,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               <div>
                 <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-purple-600 transition-colors flex items-center gap-2">
                   Pintasan Dashboard &amp; Status UID User
-                  <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full uppercase">
-                    Pintasan Admin
-                  </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 font-medium mt-0.5">
                   Pilih akun pengguna untuk melihat statistik, saldo operasional, task &amp; status UID sama seperti user terpilih.
@@ -2347,9 +2343,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-sky-600 transition-colors">
                     Kartu Blast Notifikasi
                   </h3>
-                  <span className="text-[9px] font-bold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full border border-sky-300/60 uppercase">
-                    Fitur Administrator
-                  </span>
                   <span className="text-[9px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
                     <Smartphone className="w-3 h-3 text-emerald-600" />
                     {activeSubsUsersCount} Akun Terhubung
@@ -2372,12 +2365,13 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
-        {/* Administrator Kartu Backup Database (Google Drive Cadangan) */}
-        <AdminBackupCard
+        {/* Administrator Kartu Tools Database (Backup & Switch Database) */}
+        <AdminDatabaseToolsCard
           token={token}
           spreadsheetId={spreadsheetId}
           driveFolderId={driveFolderId}
           adminEmail={email}
+          onConfigUpdated={onConfigUpdated}
         />
 
         {/* Administrator Kartu Manual Activity Report (Input Kegiatan Susulan) */}
@@ -2396,9 +2390,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-indigo-600 transition-colors">
                     Manual Activity Report
                   </h3>
-                  <span className="text-[9px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full border border-indigo-300/60 uppercase">
-                    Fitur Administrator
-                  </span>
                 </div>
                 <p className="text-[11px] text-slate-500 font-medium mt-0.5">
                   Input susulan foto & log kegiatan harian untuk staf/pengguna yang berhalangan atau lupa mengambil data di lapangan.
@@ -2501,7 +2492,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                         <span>Membersihkan...</span>
                       </>
                     ) : (
-                      <span>Ya, Bersihkan Sekarang</span>
+                      <span>Lanjutkan</span>
                     )}
                   </button>
                 </div>

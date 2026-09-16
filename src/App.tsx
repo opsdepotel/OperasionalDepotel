@@ -48,12 +48,14 @@ import {
   createItemReviewHistory,
   createBatchItemReviewHistories,
   purgeOrphanItemReviewHistories,
+  generateUniqueUID,
   parseNumericValue,
   formatDivisiSubDivisi,
   mergeUserProfiles,
   findMatchingUser,
   SPREADSHEET_ID,
-  DRIVE_FOLDER_ID
+  DRIVE_FOLDER_ID,
+  fetchGlobalConfig
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
 import { validateDeviceAccessAndBind, requestPersistentStorage } from './lib/deviceUtils';
@@ -261,6 +263,28 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loginRejectError, setLoginRejectError] = useState<string | null>(null);
 
+  // Sync Global Server Database Config across all users
+  useEffect(() => {
+    let isMounted = true;
+    const syncServerConfig = async () => {
+      try {
+        const cfg = await fetchGlobalConfig();
+        if (isMounted && cfg.spreadsheetId) {
+          setSpreadsheetId((prev) => (prev !== cfg.spreadsheetId ? cfg.spreadsheetId : prev));
+          setDriveFolderId((prev) => (prev !== cfg.driveFolderId ? cfg.driveFolderId : prev));
+        }
+      } catch (err) {
+        console.warn('Gagal sinkronisasi server database config:', err);
+      }
+    };
+    syncServerConfig();
+    const interval = setInterval(syncServerConfig, 60000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, []);
+
   // Offline Report Queue States
   const [offlineTalanganList, setOfflineTalanganList] = useState<OfflineTalanganRequest[]>([]);
   const [offlineUsageList, setOfflineUsageList] = useState<OfflineUsageItem[]>([]);
@@ -373,6 +397,7 @@ export default function App() {
   // Review Modals Active
   const [reviewBudgetReq, setReviewBudgetReq] = useState<BudgetRequest | null>(null);
   const [reviewReportReq, setReviewReportReq] = useState<BudgetRequest | null>(null);
+  const [isReviewOnlyModal, setIsReviewOnlyModal] = useState<boolean>(false);
   const [transferReq, setTransferReq] = useState<BudgetRequest | null>(null);
   const [closingConfirmReq, setClosingConfirmReq] = useState<BudgetRequest | null>(null);
   const [cancelConfirmReq, setCancelConfirmReq] = useState<BudgetRequest | null>(null);
@@ -1036,9 +1061,7 @@ export default function App() {
           uploadResult = await uploadReceiptFile(currentToken, folderId, photoFile);
         }
 
-        const todayStr = tReq.tanggalPemakaian.replace(/-/g, '');
-        const randomDigits = Math.floor(1000 + Math.random() * 9000);
-        const uid = `OPT-${todayStr}-${randomDigits}`;
+        const uid = generateUniqueUID('OPT', tReq.tanggalPemakaian, requests);
         const nowTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
 
         const newRequest: BudgetRequest = {
@@ -1775,10 +1798,8 @@ export default function App() {
         const targetUser = profiles.find(p => p.email.toLowerCase() === targetUserEmail.toLowerCase());
         const targetManagerEmail = targetUser?.managerEmail || '';
 
-        // Generate clean unique ID based on selected date
-        const dateStr = tanggal.replace(/-/g, '');
-        const randomDigits = Math.floor(1000 + Math.random() * 9000);
-        const uid = `ADJ-${dateStr}-${randomDigits}`;
+        // Generate clean collision-resistant unique ID based on selected date
+        const uid = generateUniqueUID('ADJ', tanggal, requests);
 
         const nowTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
         const newRequest: BudgetRequest = {
@@ -3634,6 +3655,7 @@ export default function App() {
             sites={sites}
             initialRequest={editingRequest || undefined}
             userProfile={userProfile}
+            requests={requests}
             onRefreshOfflineQueues={refreshOfflineQueues}
             profiles={profiles}
           />
@@ -3829,6 +3851,13 @@ export default function App() {
                   token={token}
                   spreadsheetId={spreadsheetId}
                   driveFolderId={driveFolderId}
+                  onConfigUpdated={(newSheetId, newFolderId) => {
+                    setSpreadsheetId(newSheetId);
+                    setDriveFolderId(newFolderId);
+                    if (token) {
+                      handleManualRefresh().catch(() => {});
+                    }
+                  }}
                 />
               </>
             ) : (
@@ -4799,6 +4828,46 @@ export default function App() {
                                                 Tinjau Anggaran (Finance)
                                               </button>
                                             ) : (
+                                              <div className="flex flex-col items-end gap-1.5">
+                                                {usageItems.some(i => i.requestId === req.id) && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setIsReviewOnlyModal(true);
+                                                      setReviewReportReq(req);
+                                                    }}
+                                                    className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl transition-all border border-indigo-200/80 flex items-center gap-1.5 cursor-pointer text-xs shadow-xs"
+                                                  >
+                                                    <ClipboardList className="w-3.5 h-3.5 text-indigo-600" />
+                                                    <span>Tinjau Item Laporan</span>
+                                                  </button>
+                                                )}
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setTransferReq(req)}
+                                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
+                                                >
+                                                  Proses Transfer
+                                                </button>
+                                              </div>
+                                            )
+                                          )}
+
+                                          {(req.status === RequestStatus.PENDING_TALANGAN_TRANSFER || req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER || req.status === RequestStatus.TRANSFER_BERTAHAP || (isOpBiasaRequest(req) && req.status !== RequestStatus.CLOSED && req.status !== RequestStatus.APPROVED && req.status !== RequestStatus.PARTIALLY_APPROVED && getTransferBertahap(req, itemReviewHistories, usageItems))) && (
+                                            <div className="flex flex-col items-end gap-1.5">
+                                              {usageItems.some(i => i.requestId === req.id) && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    setIsReviewOnlyModal(true);
+                                                    setReviewReportReq(req);
+                                                  }}
+                                                  className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl transition-all border border-indigo-200/80 flex items-center gap-1.5 cursor-pointer text-xs shadow-xs"
+                                                >
+                                                  <ClipboardList className="w-3.5 h-3.5 text-indigo-600" />
+                                                  <span>Tinjau Item Laporan</span>
+                                                </button>
+                                              )}
                                               <button
                                                 type="button"
                                                 onClick={() => setTransferReq(req)}
@@ -4806,17 +4875,7 @@ export default function App() {
                                               >
                                                 Proses Transfer
                                               </button>
-                                            )
-                                          )}
-
-                                          {(req.status === RequestStatus.PENDING_TALANGAN_TRANSFER || req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER || req.status === RequestStatus.TRANSFER_BERTAHAP || (isOpBiasaRequest(req) && req.status !== RequestStatus.CLOSED && getTransferBertahap(req, itemReviewHistories, usageItems))) && (
-                                            <button
-                                              type="button"
-                                              onClick={() => setTransferReq(req)}
-                                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"
-                                            >
-                                              Proses Transfer
-                                            </button>
+                                            </div>
                                           )}
 
                                           {(req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REPORTING) && (
@@ -4963,6 +5022,7 @@ export default function App() {
           userProfile={userProfile}
           onSubmit={handleBbmRefillSubmit}
           onClose={() => setIsBbmModalOpen(false)}
+          requests={requests}
         />
       )}
 
@@ -5092,12 +5152,16 @@ export default function App() {
           items={usageItems}
           role={activeRole}
           onSubmitReview={handleReviewUsageItems}
-          onClose={() => setReviewReportReq(null)}
+          onClose={() => {
+            setReviewReportReq(null);
+            setIsReviewOnlyModal(false);
+          }}
           onPreviewDocument={setPreviewDocument}
           activities={activities}
           profiles={profiles}
           requests={requests}
           histories={itemReviewHistories}
+          isReviewOnly={isReviewOnlyModal}
         />
       )}
 

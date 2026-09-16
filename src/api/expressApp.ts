@@ -1,12 +1,78 @@
 import express from 'express';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 import { google } from 'googleapis';
 import { googleAuthRouter } from './googleRoutes.js';
 import { pushRouter } from './pushRoutes.js';
 import { getServiceAccountAuth } from '../lib/serverGoogleAuth.js';
 
 dotenv.config();
+
+// Server-side App Database Config Storage
+export interface ServerAppConfig {
+  spreadsheetId: string;
+  driveFolderId: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+const DEFAULT_CONFIG: ServerAppConfig = {
+  spreadsheetId: '1H39tuO0E_WLJUtl6ebzH4w3kd76XZa9rMLadwDuxwQs',
+  driveFolderId: '1RZHDhcGEdrEu1S1OJh24Za1qkxfU-1kE',
+  updatedAt: new Date().toISOString(),
+  updatedBy: 'SYSTEM_DEFAULT'
+};
+
+function getConfigFilePaths(): string[] {
+  return [
+    path.join('/tmp', 'app_config.json'),
+    path.join(process.cwd(), 'tmp_app_config.json')
+  ];
+}
+
+export function readServerConfig(): ServerAppConfig {
+  for (const p of getConfigFilePaths()) {
+    try {
+      if (fs.existsSync(p)) {
+        const raw = fs.readFileSync(p, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return {
+            spreadsheetId: parsed.spreadsheetId || DEFAULT_CONFIG.spreadsheetId,
+            driveFolderId: parsed.driveFolderId || DEFAULT_CONFIG.driveFolderId,
+            updatedAt: parsed.updatedAt || DEFAULT_CONFIG.updatedAt,
+            updatedBy: parsed.updatedBy || DEFAULT_CONFIG.updatedBy
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('Error reading server config from', p, e);
+    }
+  }
+  return { ...DEFAULT_CONFIG };
+}
+
+export function writeServerConfig(newConfig: Partial<ServerAppConfig>): ServerAppConfig {
+  const current = readServerConfig();
+  const updated: ServerAppConfig = {
+    spreadsheetId: newConfig.spreadsheetId ? newConfig.spreadsheetId.trim() : current.spreadsheetId,
+    driveFolderId: newConfig.driveFolderId ? newConfig.driveFolderId.trim() : current.driveFolderId,
+    updatedAt: new Date().toISOString(),
+    updatedBy: newConfig.updatedBy || current.updatedBy || 'ADMINISTRATOR'
+  };
+
+  for (const p of getConfigFilePaths()) {
+    try {
+      fs.writeFileSync(p, JSON.stringify(updated, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('Error writing server config to', p, e);
+    }
+  }
+
+  return updated;
+}
 
 let aiClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI {
@@ -152,6 +218,57 @@ expressApp.use(express.urlencoded({ limit: '50mb', extended: true }));
 expressApp.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Centralized Database & Folder Config Endpoints
+const handleGetConfig = (req: express.Request, res: express.Response) => {
+  try {
+    const config = readServerConfig();
+    res.json({
+      success: true,
+      ...config
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Gagal membaca konfigurasi terpusat server.'
+    });
+  }
+};
+
+const handlePostConfig = (req: express.Request, res: express.Response) => {
+  try {
+    const { spreadsheetId, driveFolderId, userEmail, actorRole } = req.body;
+    if (!spreadsheetId || typeof spreadsheetId !== 'string' || !spreadsheetId.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'ID Google Sheet wajib diisi.'
+      });
+    }
+
+    const updated = writeServerConfig({
+      spreadsheetId: spreadsheetId.trim(),
+      driveFolderId: driveFolderId ? driveFolderId.trim() : undefined,
+      updatedBy: userEmail || actorRole || 'ADMINISTRATOR'
+    });
+
+    res.json({
+      success: true,
+      message: 'Konfigurasi database terpusat berhasil diperbarui secara global!',
+      ...updated
+    });
+  } catch (error: any) {
+    console.error('Error updating server config:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Gagal memperbarui konfigurasi terpusat server.'
+    });
+  }
+};
+
+expressApp.get('/api/config', handleGetConfig);
+expressApp.post('/api/config', handlePostConfig);
+expressApp.get('/api/google/config', handleGetConfig);
+expressApp.post('/api/google/config', handlePostConfig);
 
 // Google Service Account & Drive Proxy Endpoints
 expressApp.use('/api/google', googleAuthRouter);

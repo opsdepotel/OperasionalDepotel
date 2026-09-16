@@ -5,19 +5,301 @@
 
 import { UserProfile } from '../types';
 
+export type DeviceType = 'Mobile' | 'Tablet' | 'Desktop';
+
+export interface BrowserInfo {
+  name: string;
+  version: string;
+}
+
+export interface OperatingSystemInfo {
+  name: string;
+  version: string;
+}
+
+export interface DeviceEnvironmentInfo {
+  browser: BrowserInfo;
+  os: OperatingSystemInfo;
+  deviceType: DeviceType;
+  userAgent: string;
+}
+
 /**
- * Utility function to check if the app is currently running on a mobile device (Android, iPhone, iPad, etc.)
+ * Detects detailed browser information (Name and Version).
+ */
+export function getBrowserInfo(customUa?: string): BrowserInfo {
+  if (typeof window === 'undefined' && !customUa) {
+    return { name: 'Unknown', version: '' };
+  }
+
+  const ua = customUa || (typeof navigator !== 'undefined' ? (navigator.userAgent || navigator.vendor || (window as any).opera || '') : '');
+
+  if (!ua) return { name: 'Unknown', version: '' };
+
+  const matchVersion = (regex: RegExp): string => {
+    const m = ua.match(regex);
+    return m && m[1] ? m[1].replace(/_/g, '.') : '';
+  };
+
+  // 1. In-App Browsers
+  if (/WhatsApp/i.test(ua)) {
+    return { name: 'WhatsApp', version: matchVersion(/WhatsApp\/([\d.]+)/i) };
+  }
+  if (/Instagram/i.test(ua)) {
+    return { name: 'Instagram', version: matchVersion(/Instagram[\s\/]([\d.]+)/i) };
+  }
+  if (/FBAN|FBAV|Facebook/i.test(ua)) {
+    return { name: 'Facebook', version: matchVersion(/FBAV\/([\d.]+)/i) };
+  }
+  if (/Telegram/i.test(ua)) {
+    return { name: 'Telegram', version: matchVersion(/Telegram[\s\/]([\d.]+)/i) };
+  }
+  if (/Line\//i.test(ua)) {
+    return { name: 'LINE', version: matchVersion(/Line\/([\d.]+)/i) };
+  }
+  if (/MicroMessenger/i.test(ua)) {
+    return { name: 'WeChat', version: matchVersion(/MicroMessenger\/([\d.]+)/i) };
+  }
+  if (/TikTok/i.test(ua)) {
+    return { name: 'TikTok', version: matchVersion(/TikTok[\s\/]([\d.]+)/i) };
+  }
+  if (/GSA\//i.test(ua)) {
+    return { name: 'Google App', version: matchVersion(/GSA\/([\d.]+)/i) };
+  }
+
+  // 2. Samsung Internet
+  if (/SamsungBrowser/i.test(ua)) {
+    return { name: 'Samsung Internet', version: matchVersion(/SamsungBrowser\/([\d.]+)/i) };
+  }
+
+  // 3. Microsoft Edge variants (EdgA, EdgiOS, Edg, Edge)
+  if (/EdgA/i.test(ua)) {
+    return { name: 'Edge', version: matchVersion(/EdgA\/([\d.]+)/i) };
+  }
+  if (/EdgiOS/i.test(ua)) {
+    return { name: 'Edge', version: matchVersion(/EdgiOS\/([\d.]+)/i) };
+  }
+  if (/Edg\/|Edge\//i.test(ua)) {
+    return { name: 'Edge', version: matchVersion(/(?:Edg|Edge)\/([\d.]+)/i) };
+  }
+
+  // 4. Opera variants (OPR, OPT, Opera Mini, Opera)
+  if (/OPR\/|OPT\/|Opera/i.test(ua)) {
+    return { name: 'Opera', version: matchVersion(/(?:OPR|OPT|Opera Mini|Opera)\/([\d.]+)/i) };
+  }
+
+  // 5. Firefox & Firefox iOS (FxiOS)
+  if (/FxiOS/i.test(ua)) {
+    return { name: 'Firefox', version: matchVersion(/FxiOS\/([\d.]+)/i) };
+  }
+  if (/Firefox/i.test(ua)) {
+    return { name: 'Firefox', version: matchVersion(/Firefox\/([\d.]+)/i) };
+  }
+
+  // 6. Chrome & Chrome iOS (CriOS)
+  if (/CriOS/i.test(ua)) {
+    return { name: 'Chrome', version: matchVersion(/CriOS\/([\d.]+)/i) };
+  }
+  if (/Chrome\/|HeadlessChrome\//i.test(ua)) {
+    return { name: 'Chrome', version: matchVersion(/(?:Chrome|HeadlessChrome)\/([\d.]+)/i) };
+  }
+
+  // 7. Safari (standalone)
+  if (/Safari/i.test(ua) && !/Chrome|CriOS|Android/i.test(ua)) {
+    const ver = matchVersion(/Version\/([\d.]+)/i) || matchVersion(/Safari\/([\d.]+)/i);
+    return { name: 'Safari', version: ver };
+  }
+
+  return { name: 'Browser', version: '' };
+}
+
+/**
+ * Detects Operating System information (Name and Version).
+ */
+export function getOperatingSystemInfo(customUa?: string): OperatingSystemInfo {
+  if (typeof window === 'undefined' && !customUa) {
+    return { name: 'Unknown', version: '' };
+  }
+
+  const ua = customUa || (typeof navigator !== 'undefined' ? (navigator.userAgent || navigator.vendor || (window as any).opera || '') : '');
+  const platform = typeof navigator !== 'undefined' ? (navigator.platform || '') : '';
+  const maxTouchPoints = typeof navigator !== 'undefined' ? (navigator.maxTouchPoints || 0) : 0;
+
+  if (!ua && !platform) return { name: 'Unknown', version: '' };
+
+  const matchVersion = (regex: RegExp): string => {
+    const m = ua.match(regex);
+    return m && m[1] ? m[1].replace(/_/g, '.') : '';
+  };
+
+  // 1. Android
+  if (/Android/i.test(ua)) {
+    return {
+      name: 'Android',
+      version: matchVersion(/Android\s+([\d.]+)/i)
+    };
+  }
+
+  // 2. iPadOS (check explicit iPad or MacIntel with touch points)
+  const isIpadUA = /iPad/i.test(ua);
+  const isMacIntelTouch = /MacIntel|Macintosh/i.test(platform) && maxTouchPoints > 1;
+
+  if (isIpadUA || isMacIntelTouch) {
+    const ver = matchVersion(/CPU(?: iPad)? OS ([\d_]+)/i) || matchVersion(/Mac OS X ([\d_.]+)/i);
+    return {
+      name: 'iPadOS',
+      version: ver
+    };
+  }
+
+  // 3. iOS (iPhone / iPod)
+  if (/iPhone|iPod/i.test(ua) || (/CPU OS \d+/i.test(ua) && !/Android/i.test(ua))) {
+    return {
+      name: 'iOS',
+      version: matchVersion(/CPU(?: iPhone)? OS ([\d_]+)/i)
+    };
+  }
+
+  // 4. Windows
+  if (/Windows NT|Windows/i.test(ua) || /Win32|Win64|WOW64/i.test(platform)) {
+    const winVer = matchVersion(/Windows NT\s+([\d.]+)/i);
+    return {
+      name: 'Windows',
+      version: winVer
+    };
+  }
+
+  // 5. ChromeOS
+  if (/CrOS/i.test(ua)) {
+    return {
+      name: 'ChromeOS',
+      version: matchVersion(/CrOS\s+[\w_]+\s+([\d.]+)/i)
+    };
+  }
+
+  // 6. macOS (desktop Mac)
+  if (/Macintosh|Mac OS X/i.test(ua) || /MacIntel|MacPPC|Mac68K/i.test(platform)) {
+    return {
+      name: 'macOS',
+      version: matchVersion(/Mac OS X\s+([\d_.]+)/i)
+    };
+  }
+
+  // 7. Linux
+  if (/Linux|X11/i.test(ua) || /Linux/i.test(platform)) {
+    return {
+      name: 'Linux',
+      version: ''
+    };
+  }
+
+  return { name: 'Unknown', version: '' };
+}
+
+/**
+ * Categorizes the device into 'Mobile', 'Tablet', or 'Desktop'.
+ */
+export function getDeviceType(customUa?: string): DeviceType {
+  if (typeof window === 'undefined' && !customUa) {
+    return 'Desktop';
+  }
+
+  const ua = customUa || (typeof navigator !== 'undefined' ? (navigator.userAgent || navigator.vendor || (window as any).opera || '') : '');
+  const platform = typeof navigator !== 'undefined' ? (navigator.platform || '') : '';
+  const maxTouchPoints = typeof navigator !== 'undefined' ? (navigator.maxTouchPoints || 0) : 0;
+
+  // 1. iPhone / iPod -> Mobile
+  if (/iPhone|iPod/i.test(ua)) {
+    return 'Mobile';
+  }
+
+  // 2. iPad -> Tablet (including iPadOS modern reporting MacIntel with touch)
+  if (/iPad/i.test(ua)) {
+    return 'Tablet';
+  }
+  if (/MacIntel|Macintosh/i.test(platform) && maxTouchPoints > 1) {
+    return 'Tablet';
+  }
+
+  // 3. Android:
+  // - if User Agent contains "Mobile" -> Mobile
+  // - if Android but does NOT contain "Mobile" -> Tablet
+  if (/Android/i.test(ua)) {
+    if (/Mobile/i.test(ua)) {
+      return 'Mobile';
+    }
+    return 'Tablet';
+  }
+
+  // 4. Windows desktop/laptop -> Desktop
+  if (/Windows NT|Windows/i.test(ua) || /Win32|Win64|WOW64/i.test(platform)) {
+    return 'Desktop';
+  }
+
+  // 5. macOS desktop/laptop -> Desktop
+  if (/Macintosh|Mac OS X/i.test(ua) || (/MacIntel/i.test(platform) && maxTouchPoints <= 1)) {
+    return 'Desktop';
+  }
+
+  // 6. Linux desktop -> Desktop
+  if (/Linux|X11/i.test(ua) && !/Android/i.test(ua)) {
+    return 'Desktop';
+  }
+
+  // 7. ChromeOS -> Desktop or Tablet
+  if (/CrOS/i.test(ua)) {
+    if (/Mobile/i.test(ua)) {
+      return 'Mobile';
+    }
+    if (/Tablet/i.test(ua)) {
+      return 'Tablet';
+    }
+    return 'Desktop';
+  }
+
+  // 8. Other Mobile / Tablet UA keywords
+  if (/webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua)) {
+    return 'Mobile';
+  }
+  if (/Tablet|PlayBook|Silk/i.test(ua)) {
+    return 'Tablet';
+  }
+
+  // 9. Fallback ONLY if OS/UA is completely unrecognized:
+  const isTouchScreen = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator && navigator.maxTouchPoints > 0));
+  const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
+
+  if (isTouchScreen && isSmallScreen) {
+    return 'Mobile';
+  }
+
+  return 'Desktop';
+}
+
+/**
+ * Aggregates complete device environment information (browser, OS, deviceType, userAgent).
+ */
+export function getDeviceEnvironmentInfo(customUa?: string): DeviceEnvironmentInfo {
+  const ua = customUa || (typeof navigator !== 'undefined' ? (navigator.userAgent || navigator.vendor || (window as any).opera || '') : '');
+  const browser = getBrowserInfo(ua);
+  const os = getOperatingSystemInfo(ua);
+  const deviceType = getDeviceType(ua);
+
+  return {
+    browser,
+    os,
+    deviceType,
+    userAgent: ua
+  };
+}
+
+/**
+ * Utility function to check if the app is currently running on a mobile or tablet device.
  */
 export function isMobileDevice(): boolean {
   if (typeof window === 'undefined' || !navigator) return false;
-  const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
-
-  // Check specifically for mobile User Agent strings or mobile touch viewport
-  const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet|Touch/i.test(ua);
-  const isTouchScreen = typeof window !== 'undefined' && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0));
-  const isSmallScreen = typeof window !== 'undefined' && window.innerWidth <= 768;
-
-  return isMobileUA || (isTouchScreen && isSmallScreen);
+  const env = getDeviceEnvironmentInfo();
+  return env.deviceType === 'Mobile' || env.deviceType === 'Tablet';
 }
 
 /**
@@ -357,27 +639,13 @@ export function getInAppBrowserInfo(): InAppBrowserInfo {
     return { isInApp: false, name: '', isIos: false };
   }
 
-  const ua = navigator.userAgent || navigator.vendor || (window as any).opera || '';
-  const isIos = /iPhone|iPad|iPod/i.test(ua);
+  const env = getDeviceEnvironmentInfo();
+  const isIos = env.os.name === 'iOS' || env.os.name === 'iPadOS';
 
   let name = '';
-  if (/WhatsApp/i.test(ua)) {
-    name = 'WhatsApp';
-  } else if (/Instagram/i.test(ua)) {
-    name = 'Instagram';
-  } else if (/FBAN|FBAV|Facebook/i.test(ua)) {
-    name = 'Facebook';
-  } else if (/Telegram/i.test(ua)) {
-    name = 'Telegram';
-  } else if (/Line\//i.test(ua)) {
-    name = 'LINE';
-  } else if (/MicroMessenger/i.test(ua)) {
-    name = 'WeChat';
-  } else if (/TikTok/i.test(ua)) {
-    name = 'TikTok';
-  } else if (/GSA\//i.test(ua)) {
-    name = 'Google App';
-  } else if (isIos && /AppleWebKit/i.test(ua) && !/Safari/i.test(ua)) {
+  if (env.browser.name !== 'Browser' && env.browser.name !== 'Chrome' && env.browser.name !== 'Firefox' && env.browser.name !== 'Safari' && env.browser.name !== 'Edge' && env.browser.name !== 'Samsung Internet' && env.browser.name !== 'Opera') {
+    name = env.browser.name;
+  } else if (isIos && typeof navigator !== 'undefined' && /AppleWebKit/i.test(navigator.userAgent) && !/Safari/i.test(navigator.userAgent)) {
     name = 'In-App Webview';
   }
 
@@ -456,13 +724,13 @@ export async function validateDeviceAccessAndBind(
     };
   }
 
-  // 2. If Mobile IS set to TRUE, user MUST use a mobile device (Android/iPhone). PC/Windows is rejected.
+  // 2. If Mobile IS set to TRUE, user MUST use a mobile device (Android/iPhone/iPad). Desktop is rejected.
   const isMobile = isMobileDevice();
 
   if (!isMobile) {
     return {
       success: false,
-      errorMessage: 'Akses Ditolak: Akun Anda dikonfigurasi wajib menggunakan perangkat mobile (Android/iPhone). Login melalui PC/Windows tidak diizinkan.'
+      errorMessage: 'Akses Ditolak: Akun Anda dikonfigurasi wajib menggunakan perangkat mobile (Android/iPhone/iPad). Perangkat desktop tidak diizinkan.'
     };
   }
 
@@ -580,4 +848,5 @@ export async function validateDeviceAccessAndBind(
     }
   }
 }
+
 

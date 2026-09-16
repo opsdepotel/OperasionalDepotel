@@ -53,6 +53,48 @@ async function fetchWithTimeout(resource: string | Request, options: RequestInit
 }
 const fetch = fetchWithTimeout;
 
+/**
+ * Generates a collision-resistant unique Request UID (e.g. OP-20260915-213745-8492, OPT-..., BBMDS-..., ADJ-...)
+ * Uses YYYYMMDD date, HHMMSS time, and a 4-digit random number.
+ * Continuously checks against existing requests/IDs to guarantee uniqueness.
+ */
+export function generateUniqueUID(
+  prefix: 'OP' | 'OPT' | 'BBMDS' | 'ADJ' | string,
+  dateStr: string,
+  existingList: Array<{ id: string }> | string[] = []
+): string {
+  const cleanDate = (dateStr || '').replace(/-/g, '');
+  const existingSet = new Set(
+    existingList.map(item => (typeof item === 'string' ? item : item?.id || '').toUpperCase())
+  );
+
+  let attempts = 0;
+  let uid = '';
+
+  do {
+    const now = new Date();
+    let hours = String(now.getHours()).padStart(2, '0');
+    let minutes = String(now.getMinutes()).padStart(2, '0');
+    let seconds = String(now.getSeconds()).padStart(2, '0');
+    try {
+      const jakartaStr = now.toLocaleTimeString('en-US', { timeZone: 'Asia/Jakarta', hour12: false });
+      const parts = jakartaStr.split(':');
+      if (parts.length >= 3) {
+        hours = parts[0].padStart(2, '0');
+        minutes = parts[1].padStart(2, '0');
+        seconds = parts[2].padStart(2, '0');
+      }
+    } catch (e) {}
+
+    const timeStr = `${hours}${minutes}${seconds}`;
+    const randomDigits = Math.floor(1000 + Math.random() * 9000);
+    uid = `${prefix}-${cleanDate}-${timeStr}-${randomDigits}`;
+    attempts++;
+  } while (existingSet.has(uid.toUpperCase()) && attempts < 100);
+
+  return uid;
+}
+
 const DB_FILE_NAME = 'Operasional Perusahaan DB';
 const FOLDER_NAME = 'Operasional Perusahaan Bukti';
 
@@ -459,8 +501,103 @@ export const DRIVE_FOLDER_ID_KEY = 'op_company_folder_id';
 export const SPREADSHEET_ID = '1H39tuO0E_WLJUtl6ebzH4w3kd76XZa9rMLadwDuxwQs';
 export const DRIVE_FOLDER_ID = '1RZHDhcGEdrEu1S1OJh24Za1qkxfU-1kE';
 
+export interface GlobalAppConfigResponse {
+  success: boolean;
+  spreadsheetId: string;
+  driveFolderId: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  message?: string;
+}
+
+export async function fetchGlobalConfig(): Promise<GlobalAppConfigResponse> {
+  try {
+    const res = await fetch('/api/config');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && data.spreadsheetId) {
+        localStorage.setItem(SPREADSHEET_ID_KEY, data.spreadsheetId);
+        if (data.driveFolderId) {
+          localStorage.setItem(DRIVE_FOLDER_ID_KEY, data.driveFolderId);
+        }
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('Backend /api/config fetch failed, using localStorage fallback:', err);
+  }
+
+  const localSheet = localStorage.getItem(SPREADSHEET_ID_KEY) || SPREADSHEET_ID;
+  const localFolder = localStorage.getItem(DRIVE_FOLDER_ID_KEY) || DRIVE_FOLDER_ID;
+  return {
+    success: true,
+    spreadsheetId: localSheet,
+    driveFolderId: localFolder,
+    updatedAt: new Date().toISOString(),
+    updatedBy: 'LOCAL_CACHE'
+  };
+}
+
+export async function updateGlobalConfig(
+  token: string,
+  newSpreadsheetId: string,
+  newDriveFolderId: string,
+  userEmail: string
+): Promise<GlobalAppConfigResponse> {
+  const cleanSheetId = newSpreadsheetId.trim();
+  const cleanFolderId = newDriveFolderId.trim() || DRIVE_FOLDER_ID;
+
+  if (!cleanSheetId) {
+    throw new Error('ID Google Sheet tidak boleh kosong.');
+  }
+
+  // 1. Verify schema on target Google Sheet
+  await ensureSheetsAndHeaders(token, cleanSheetId);
+
+  // 2. Persist to server config endpoint
+  try {
+    const res = await fetch('/api/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        spreadsheetId: cleanSheetId,
+        driveFolderId: cleanFolderId,
+        userEmail
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success) {
+        localStorage.setItem(SPREADSHEET_ID_KEY, data.spreadsheetId);
+        localStorage.setItem(DRIVE_FOLDER_ID_KEY, data.driveFolderId);
+        return data;
+      } else {
+        throw new Error(data?.error || 'Gagal menyimpan konfigurasi terpusat di server.');
+      }
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData?.error || `Gagal memperbarui server config [HTTP ${res.status}]`);
+    }
+  } catch (err: any) {
+    console.warn('API POST /api/config failed, updating localStorage fallback:', err.message);
+    localStorage.setItem(SPREADSHEET_ID_KEY, cleanSheetId);
+    localStorage.setItem(DRIVE_FOLDER_ID_KEY, cleanFolderId);
+    return {
+      success: true,
+      spreadsheetId: cleanSheetId,
+      driveFolderId: cleanFolderId,
+      updatedAt: new Date().toISOString(),
+      updatedBy: userEmail,
+      message: 'Konfigurasi disimpan di penyimpanan lokal (Server offline).'
+    };
+  }
+}
+
 // Helper to ensure sheets exist and set headers/seeds
-async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<void> {
+export async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<void> {
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`, {
     headers: { Authorization: `Bearer ${token}` }
   });
@@ -1253,15 +1390,10 @@ export async function createBudgetRequest(
   if (token === 'mock_demo_token') {
     const list = getMockData<BudgetRequest[]>('mock_db_pengajuan', []);
     const todayStr = req.tanggalPemakaian.replace(/-/g, '');
-    let finalUid = req.id;
-    const prefix = req.id.startsWith('BBMDS') ? 'BBMDS' : req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : 'OP';
-    let isUnique = !list.some(r => r.id.toUpperCase() === finalUid.toUpperCase());
-    while (!isUnique) {
-      const randomDigits = Math.floor(1000 + Math.random() * 9000);
-      finalUid = `${prefix}-${todayStr}-${randomDigits}`;
-      isUnique = !list.some(r => r.id.toUpperCase() === finalUid.toUpperCase());
+    const prefix = req.id.startsWith('BBMDS') ? 'BBMDS' : req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : req.id.startsWith('ADJ') ? 'ADJ' : 'OP';
+    if (list.some(r => r.id.toUpperCase() === req.id.toUpperCase())) {
+      req.id = generateUniqueUID(prefix, req.tanggalPemakaian, list);
     }
-    req.id = finalUid;
     const newList = [req, ...list];
     setMockData('mock_db_pengajuan', newList);
     return;
@@ -1289,19 +1421,10 @@ export async function createBudgetRequest(
       }
     }
     
-    const todayStr = req.tanggalPemakaian.replace(/-/g, '');
-    let finalUid = req.id;
-    let isUnique = !existingUIDs.includes(finalUid.toUpperCase());
     const prefix = req.id.startsWith('BBMDS') ? 'BBMDS' : req.id.startsWith('BBM_DurenSawit') ? 'BBM_DurenSawit' : req.id.startsWith('OPT') ? 'OPT' : req.id.startsWith('ADJ') ? 'ADJ' : 'OP';
-    
-    // Regenerate until we find a completely unused ID
-    while (!isUnique) {
-      const randomDigits = Math.floor(1000 + Math.random() * 9000); // 4-digit code
-      finalUid = `${prefix}-${todayStr}-${randomDigits}`;
-      isUnique = !existingUIDs.includes(finalUid.toUpperCase());
+    if (existingUIDs.includes(req.id.toUpperCase())) {
+      req.id = generateUniqueUID(prefix, req.tanggalPemakaian, existingUIDs);
     }
-    
-    req.id = finalUid; // Save back to the request object so caller knows the final unique UID
 
     // Convert base64 data URL to Google Drive link if needed
     if (req.buktiTransferUrl && req.buktiTransferUrl.startsWith('data:')) {

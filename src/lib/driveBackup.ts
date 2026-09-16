@@ -51,6 +51,7 @@ export interface BackupHistoryItem {
   adminEmail: string;
   backupFolderId: string;
   backupFolderName?: string;
+  copiedSheetId?: string;
   copiedSheetName?: string;
   copiedSheetLink?: string;
   totalPhotosSource: number;
@@ -289,6 +290,7 @@ export async function executeDriveBackup({
           adminEmail,
           backupFolderId: targetFolderId,
           backupFolderName: data.backupFolderName || 'Google Drive Cadangan',
+          copiedSheetId: data.copiedSheet?.id,
           copiedSheetName: data.copiedSheet?.name,
           copiedSheetLink: data.copiedSheet?.webViewLink,
           totalPhotosSource: data.photosSummary?.totalSource || 0,
@@ -490,6 +492,15 @@ export async function executeDriveBackup({
 
             for (let i = 0; i < replacements.length; i += CHUNK_SIZE) {
               const chunk = replacements.slice(i, i + CHUNK_SIZE);
+              const currentMasterId = chunk[0]?.masterId;
+              const currentFileName = sourceFiles.find(sf => sf.id === currentMasterId)?.name || 'berkas_foto';
+
+              onProgress?.({
+                step: 'UPDATE_LINKS',
+                percent: 96 + Math.round((i / replacements.length) * 3),
+                detail: `Menyelaraskan tautan foto ${i + 1}-${Math.min(i + CHUNK_SIZE, replacements.length)} dari ${replacements.length}: ${currentFileName}...`
+              });
+
               const requests = chunk.map(r => ({
                 findReplace: {
                   find: r.masterId,
@@ -561,6 +572,7 @@ export async function executeDriveBackup({
       adminEmail,
       backupFolderId: targetFolderId,
       backupFolderName,
+      copiedSheetId: copiedSheetInfo?.id,
       copiedSheetName: copiedSheetInfo?.name,
       copiedSheetLink: copiedSheetInfo?.webViewLink,
       totalPhotosSource: totalSource,

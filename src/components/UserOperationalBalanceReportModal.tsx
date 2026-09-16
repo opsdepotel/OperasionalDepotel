@@ -242,7 +242,7 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
 
       return [
         idx + 1,
-        getRequestDate(r),
+        getTransferDateDisplay(r),
         uidDisplay,
         formatIDR(r.jumlahPengajuan),
         formatIDR(r.adminActionAmount),

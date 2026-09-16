@@ -5,7 +5,7 @@
 
 import React, { useState, useRef, useMemo } from 'react';
 import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus, formatTimestamp, Role } from '../types';
-import { parseNumericValue } from '../lib/googleApi';
+import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
 import { saveOfflineTalanganRequest } from '../lib/offlineReportStorage';
 import { FormProgressOverlay } from './FormProgressOverlay';
 import {
@@ -27,6 +27,7 @@ interface BudgetRequestFormProps {
   onRefreshOfflineQueues?: () => void;
   profiles?: UserProfile[];
   managerName?: string;
+  requests?: BudgetRequest[];
 }
 
 // Helper to get today's date in local Jakarta timezone
@@ -54,7 +55,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   userProfile,
   onRefreshOfflineQueues,
   profiles = [],
-  managerName
+  managerName,
+  requests = []
 }) => {
   const todayStr = getTodayDateStr();
 
@@ -197,12 +199,11 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 
   const someFound = siteResults.some(r => r.found);
 
-  // Helper to generate a clean UID
+  // Helper to generate a clean, unique collision-resistant UID
   const generateUID = () => {
-    const todayStr = tanggalPemakaian.replace(/-/g, '');
-    const randomHex = Math.floor(1000 + Math.random() * 9000);
     const prefix = isTalangan ? 'OPT' : 'OP';
-    return `${prefix}-${todayStr}-${randomHex}`;
+    const dateForUid = isTalangan ? todayStr : tanggalPemakaian;
+    return generateUniqueUID(prefix, dateForUid, requests);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

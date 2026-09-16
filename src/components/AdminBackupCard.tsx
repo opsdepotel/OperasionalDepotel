@@ -35,13 +35,19 @@ interface AdminBackupCardProps {
   spreadsheetId?: string | null;
   driveFolderId?: string | null;
   adminEmail?: string;
+  isOpen?: boolean;
+  onClose?: () => void;
+  hideCardPreview?: boolean;
 }
 
 export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
   token,
   spreadsheetId,
   driveFolderId,
-  adminEmail = 'admin@depotel.co.id'
+  adminEmail = 'admin@depotel.co.id',
+  isOpen,
+  onClose,
+  hideCardPreview = false
 }) => {
   const [copySheet, setCopySheet] = useState(true);
   const [copyPhotos, setCopyPhotos] = useState(true);
@@ -57,8 +63,14 @@ export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
   const [history, setHistory] = useState<BackupHistoryItem[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [copiedFolderId, setCopiedFolderId] = useState(false);
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isModalOpen, setIsModalOpen] = useState(isOpen || false);
   const cancelLoopRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof isOpen === 'boolean') {
+      setIsModalOpen(isOpen);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     setHistory(getBackupHistory());
@@ -68,16 +80,34 @@ export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isModalOpen && !isExecuting) {
         setIsModalOpen(false);
+        if (onClose) onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isModalOpen, isExecuting]);
+  }, [isModalOpen, isExecuting, onClose]);
 
   const handleCopyFolderId = () => {
     navigator.clipboard.writeText(BACKUP_TARGET_FOLDER_ID);
     setCopiedFolderId(true);
     setTimeout(() => setCopiedFolderId(false), 2000);
+  };
+
+  const getActivePhotoName = (progressDetail?: string): string | null => {
+    if (!progressDetail) return null;
+    const match = progressDetail.match(/:\s*([^\s:]+\.(?:jpg|jpeg|png|webp|heic|pdf|gif))/i) ||
+                  progressDetail.match(/:\s*([^\s:]+)/i);
+    if (match && match[1]) {
+      const clean = match[1].replace(/\.{3}$/, '').trim();
+      if (clean.length > 2 && !clean.includes(' ') && clean.includes('.')) {
+        return clean;
+      }
+    }
+    const extMatch = progressDetail.match(/([a-zA-Z0-9_\-.]+\.(?:jpg|jpeg|png|webp|heic|pdf|gif))/i);
+    if (extMatch && extMatch[1]) {
+      return extMatch[1];
+    }
+    return null;
   };
 
   const handleScan = async () => {
@@ -198,54 +228,68 @@ export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
 
   const lastBackup = history.length > 0 ? history[0] : null;
 
+  const handleClose = () => {
+    if (!isExecuting) {
+      setIsModalOpen(false);
+      onClose?.();
+    } else {
+      if (confirm('Proses pencadangan sedang berjalan. Tutup tampilan form modal? (Pencadangan akan tetap berjalan sampai selesai di latar belakang)')) {
+        setIsModalOpen(false);
+        onClose?.();
+      }
+    }
+  };
+
   return (
     <>
       {/* Simple Clickable Administrator Card */}
-      <div
-        id="admin-backup-card"
-        onClick={() => setIsModalOpen(true)}
-        className="p-4 sm:p-5 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/50 shadow-md hover:shadow-lg hover:border-emerald-400 transition-all cursor-pointer group flex items-center justify-between gap-4 select-none"
-        title="Klik untuk membuka Form Detail Backup Database"
-      >
-        <div className="flex items-center gap-3.5">
-          <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-200 group-hover:scale-105 transition-transform">
-            <HardDriveDownload className="w-5 h-5 sm:w-6 sm:h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="font-display font-bold text-slate-900 text-sm sm:text-base group-hover:text-emerald-700 transition-colors">
-                Kartu Backup Database
-              </h3>
-              <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300/60 uppercase flex items-center gap-1">
-                <ShieldCheck className="w-3 h-3 text-emerald-700" />
-                Fitur Administrator
-              </span>
-              {isExecuting ? (
-                <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-300 animate-pulse flex items-center gap-1">
-                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
-                  Sedang Berjalan...
-                </span>
-              ) : lastBackup ? (
-                <span className="text-[9px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">
-                  Terakhir: {formatBackupTimestamp(lastBackup.timestamp)}
-                </span>
-              ) : null}
+      {!hideCardPreview && (
+        <div
+          id="admin-backup-card"
+          onClick={() => setIsModalOpen(true)}
+          className="p-4 sm:p-5 rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50/90 via-white to-teal-50/50 shadow-md hover:shadow-lg hover:border-emerald-400 transition-all cursor-pointer group flex items-center justify-between gap-4 select-none"
+          title="Klik untuk membuka Form Detail Backup Database"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-200 group-hover:scale-105 transition-transform">
+              <HardDriveDownload className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
-            <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5">
-              Cadangkan berkas master Google Sheet & foto bukti transaksi ke Google Drive cadangan secara aman.
-            </p>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-display font-bold text-slate-900 text-sm sm:text-base group-hover:text-emerald-700 transition-colors">
+                  Kartu Backup Database
+                </h3>
+                <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300/60 uppercase flex items-center gap-1">
+                  <ShieldCheck className="w-3 h-3 text-emerald-700" />
+                  Fitur Administrator
+                </span>
+                {isExecuting ? (
+                  <span className="text-[9px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-300 animate-pulse flex items-center gap-1">
+                    <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                    Sedang Berjalan...
+                  </span>
+                ) : lastBackup ? (
+                  <span className="text-[9px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200">
+                    Terakhir: {formatBackupTimestamp(lastBackup.timestamp)}
+                  </span>
+                ) : null}
+              </div>
+              <p className="text-[11px] sm:text-xs text-slate-500 font-medium mt-0.5">
+                Cadangkan berkas master Google Sheet & foto bukti transaksi ke Google Drive cadangan secara aman.
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="hidden sm:inline-block text-xs font-semibold text-emerald-700 group-hover:text-emerald-900 transition-colors">
-            Buka Form Backup
-          </span>
-          <div className="w-8 h-8 rounded-xl bg-emerald-100/80 text-emerald-700 flex items-center justify-center shrink-0 group-hover:translate-x-1 group-hover:bg-emerald-600 group-hover:text-white transition-all font-bold text-xs">
-            &rarr;
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="hidden sm:inline-block text-xs font-semibold text-emerald-700 group-hover:text-emerald-900 transition-colors">
+              Buka Form Backup
+            </span>
+            <div className="w-8 h-8 rounded-xl bg-emerald-100/80 text-emerald-700 flex items-center justify-center shrink-0 group-hover:translate-x-1 group-hover:bg-emerald-600 group-hover:text-white transition-all font-bold text-xs">
+              &rarr;
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Modal Detail Backup Database */}
       {isModalOpen && createPortal(
@@ -253,7 +297,7 @@ export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
           className="fixed inset-0 z-[100000] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-fade-in"
           onClick={(e) => {
             if (e.target === e.currentTarget && !isExecuting) {
-              setIsModalOpen(false);
+              handleClose();
             }
           }}
         >
@@ -286,15 +330,7 @@ export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
 
               <button
                 type="button"
-                onClick={() => {
-                  if (!isExecuting) {
-                    setIsModalOpen(false);
-                  } else {
-                    if (confirm('Proses pencadangan sedang berjalan. Tutup tampilan form modal? (Pencadangan akan tetap berjalan sampai selesai di latar belakang)')) {
-                      setIsModalOpen(false);
-                    }
-                  }
-                }}
+                onClick={handleClose}
                 className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer shrink-0"
                 title="Tutup Form Modal"
               >
@@ -439,11 +475,38 @@ export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-            <div className="bg-white p-2.5 rounded-lg border border-slate-200/60">
+            <div className="bg-white p-2.5 rounded-lg border border-slate-200/60 relative overflow-hidden">
               <span className="text-[10px] text-slate-400 block uppercase font-bold">Google Sheet:</span>
               <span className="text-xs font-bold text-slate-800 truncate block mt-0.5">
                 {scanResult.spreadsheetName || 'Operasional Perusahaan DB'}
               </span>
+
+              {isExecuting ? (
+                <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex flex-col gap-0.5 animate-fade-in">
+                  <div className="flex items-center gap-1.5">
+                    <span className="relative flex h-2 w-2 shrink-0">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-tight">
+                      {progress?.step === 'UPDATE_LINKS' ? 'Penyelarasan Link:' : 'Menyalin Foto:'}
+                    </span>
+                  </div>
+                  <span
+                    className="text-[10px] font-semibold text-slate-700 font-mono truncate block bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200"
+                    title={getActivePhotoName(progress?.detail) || progress?.detail || 'Memproses berkas...'}
+                  >
+                    {getActivePhotoName(progress?.detail) || (progress?.step === 'UPDATE_LINKS' ? 'Menyelaraskan link...' : 'Memproses berkas...')}
+                  </span>
+                </div>
+              ) : (
+                <div className="mt-1.5 pt-1 border-t border-slate-100 flex items-center gap-1.5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                  <span className="text-[10px] text-slate-500 font-medium truncate block">
+                    Status: Siap Diselaraskan
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="bg-white p-2.5 rounded-lg border border-slate-200/60">

@@ -297,9 +297,6 @@ export const AdminPushTestCard: React.FC<AdminPushTestCardProps> = ({
               <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-sky-600 transition-colors">
                 Kartu Blast Notifikasi
               </h3>
-              <span className="text-[9px] font-bold bg-sky-100 text-sky-800 px-2 py-0.5 rounded-full border border-sky-300/60 uppercase">
-                Fitur Administrator
-              </span>
               <span className="text-[9px] font-medium bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full border border-emerald-200 flex items-center gap-1">
                 <Smartphone className="w-3 h-3 text-emerald-600" />
                 {activeSubsUsersCount} dari {profiles.length} Akun Terhubung

@@ -6,7 +6,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, SiteInfo, UserProfile } from '../types';
-import { parseNumericValue } from '../lib/googleApi';
+import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
 import { saveOfflineBbmRefill } from '../lib/offlineReportStorage';
 import { Fuel, Calendar, MapPin, Coins, FileText, Camera, RefreshCw, CheckCircle2, AlertCircle, X, ExternalLink, UploadCloud } from 'lucide-react';
 
@@ -18,6 +18,7 @@ interface BbmRefillModalProps {
   userProfile?: UserProfile;
   onSubmit: (req: BudgetRequest, reportItem: UsageReportItem, onProgress?: (msg: string) => void) => Promise<void>;
   onClose: () => void;
+  requests?: BudgetRequest[];
 }
 
 // Utility to compress image to max 1024px with 0.72 quality (~100-180KB, perfect for mobile & Vercel)
@@ -77,7 +78,8 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
   sites = [],
   userProfile,
   onSubmit,
-  onClose
+  onClose,
+  requests = []
 }) => {
   const isMobileUser = userProfile?.mobile === true ||
     String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
@@ -304,11 +306,9 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     }
   };
 
-  // Generate BBMDS UID
+  // Generate collision-resistant unique BBMDS UID
   const generateBbmUid = () => {
-    const todayStr = tanggal.replace(/-/g, '');
-    const randomHex = Math.floor(1000 + Math.random() * 9000);
-    return `BBMDS-${todayStr}-${randomHex}`;
+    return generateUniqueUID('BBMDS', tanggal, requests);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

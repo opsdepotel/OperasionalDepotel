@@ -56,7 +56,7 @@ interface ReviewReportModalProps {
   requesterName?: string;
   items: UsageReportItem[];
   role: Role; // MANAGER or FINANCE
-  onSubmitReview: (
+  onSubmitReview?: (
     updatedItems: { itemId: string; status: ItemStatus; comment: string }[],
     nextRequestStatus: RequestStatus
   ) => Promise<void>;
@@ -66,6 +66,7 @@ interface ReviewReportModalProps {
   profiles?: UserProfile[];
   requests?: BudgetRequest[];
   histories?: ItemReviewHistory[];
+  isReviewOnly?: boolean;
 }
 
 export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
@@ -79,7 +80,8 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   activities = [],
   profiles = [],
   requests = [],
-  histories = []
+  histories = [],
+  isReviewOnly = false
 }) => {
   // Filter items for this request
   const currentItems = items.filter(item => item.requestId === request.id);
@@ -240,7 +242,9 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
     setIsSuccess(false);
     setSubmitStep('Menyimpan status review ke database...');
     try {
-      await onSubmitReview(payload, nextRequestStatus);
+      if (onSubmitReview) {
+        await onSubmitReview(payload, nextRequestStatus);
+      }
       setSubmitStep('Hasil review berhasil disimpan!');
       setIsSuccess(true);
       await new Promise(r => setTimeout(r, 600));
@@ -264,8 +268,12 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       {/* Header */}
       <div className="flex items-center justify-between pb-2 border-b border-slate-100">
         <div>
-          <h2 className="font-display font-bold text-slate-800 text-sm">Review Laporan Penggunaan</h2>
-          <p className="text-[10px] text-indigo-600 font-semibold">Tingkat Review: {role === Role.MANAGER ? supervisorTitle : 'Finance'}</p>
+          <h2 className="font-display font-bold text-slate-800 text-sm">
+            {isReviewOnly ? 'Tinjau Item Laporan' : 'Review Laporan Penggunaan'}
+          </h2>
+          <p className="text-[10px] text-indigo-600 font-semibold">
+            {isReviewOnly ? 'Mode Review Item Laporan (Tanpa Fungsi Approval)' : `Tingkat Review: ${role === Role.MANAGER ? supervisorTitle : 'Finance'}`}
+          </p>
         </div>
         <button
           onClick={onClose}
@@ -392,33 +400,35 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
 
               {/* Reviewer Action selectors */}
               <div className="space-y-2 pt-2 border-t border-slate-50">
-                {request.status === RequestStatus.CLOSED ? (
+                {isReviewOnly || request.status === RequestStatus.CLOSED ? (
                   <div>
-                    <span className="block text-[10px] font-bold text-slate-400 uppercase">Keputusan Finance (Selesai/Closed)</span>
+                    <span className="block text-[10px] font-bold text-slate-400 uppercase">
+                      {isReviewOnly ? 'Status Item Laporan' : 'Keputusan Finance (Selesai/Closed)'}
+                    </span>
                     <div className="mt-1 flex flex-col gap-1">
                       <div className={`text-xs font-bold px-3 py-1.5 rounded-lg border w-fit flex items-center gap-1.5 ${
-                        item.statusAdmin === ItemStatus.APPROVED 
+                        item.statusAdmin === ItemStatus.APPROVED || item.statusManager === ItemStatus.APPROVED
                           ? 'text-emerald-600 bg-emerald-50/50 border-emerald-100' 
-                          : item.statusAdmin === ItemStatus.REJECTED 
+                          : item.statusAdmin === ItemStatus.REJECTED || item.statusManager === ItemStatus.REJECTED
                             ? 'text-red-600 bg-red-50/50 border-red-100'
                             : 'text-slate-600 bg-slate-50/50 border-slate-100'
                       }`}>
-                        {item.statusAdmin === ItemStatus.APPROVED ? (
+                        {item.statusAdmin === ItemStatus.APPROVED || item.statusManager === ItemStatus.APPROVED ? (
                           <>
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
                             <span>Disetujui</span>
                           </>
-                        ) : item.statusAdmin === ItemStatus.REJECTED ? (
+                        ) : item.statusAdmin === ItemStatus.REJECTED || item.statusManager === ItemStatus.REJECTED ? (
                           <>
                             <X className="w-3.5 h-3.5 text-red-500" />
                             <span>Revisi</span>
                           </>
                         ) : (
-                          <span>Belum Ditentukan</span>
+                          <span>Menunggu Review Laporan</span>
                         )}
                       </div>
-                      {item.adminComment && (
-                        <p className="text-[10px] text-slate-500 italic mt-0.5">"{item.adminComment}"</p>
+                      {(item.adminComment || item.managerComment) && (
+                        <p className="text-[10px] text-slate-500 italic mt-0.5">"{item.adminComment || item.managerComment}"</p>
                       )}
                     </div>
                   </div>
@@ -600,7 +610,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
       })()}
 
       {/* Submit Decision Button / Closing UID option */}
-      {request.status !== RequestStatus.CLOSED && (
+      {!isReviewOnly && request.status !== RequestStatus.CLOSED && (
         <div className="space-y-2">
           {role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED) && (
             <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-2.5 text-xs text-emerald-900 shadow-xs">
@@ -646,6 +656,18 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                 <span>{isSubmitting ? 'Menyimpan Keputusan...' : 'Simpan Keputusan Review'}</span>
               </>
             )}
+          </button>
+        </div>
+      )}
+
+      {isReviewOnly && (
+        <div className="pt-2 border-t border-slate-100 flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer text-center"
+          >
+            Tutup
           </button>
         </div>
       )}
