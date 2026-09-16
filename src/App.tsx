@@ -1916,6 +1916,57 @@ export default function App() {
     }
   };
 
+  // Workflow Action 1.6: Submit Transfer Pengisian BBM Duren Sawit (TFDS-)
+  const handleTransferBbmDSSubmit = async (
+    transferReq: BudgetRequest,
+    photoFile: File | null
+  ) => {
+    const currentToken = token || 'mock_demo_token';
+    const currentSheetId = spreadsheetId || 'mock_sheet_id';
+
+    let proofUrl = '';
+    let proofFileId = '';
+
+    if (photoFile) {
+      if (currentToken !== 'mock_demo_token' && driveFolderId) {
+        try {
+          const uploadRes = await uploadReceiptFile(currentToken, driveFolderId, photoFile);
+          proofUrl = uploadRes.viewUrl;
+          proofFileId = uploadRes.fileId;
+        } catch (uploadErr) {
+          console.warn('Gagal unggah foto bukti transfer ke Google Drive, menggunakan URL data fallback:', uploadErr);
+          proofUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(photoFile);
+          });
+        }
+      } else {
+        proofUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(photoFile);
+        });
+      }
+    }
+
+    const finalReq: BudgetRequest = {
+      ...transferReq,
+      buktiTransferUrl: proofUrl || undefined,
+      buktiTransferFileId: proofFileId || undefined
+    };
+
+    await runGoogleAction(
+      async () => {
+        await createBudgetRequest(currentToken, currentSheetId, finalReq, { skipLock: true });
+        return true;
+      },
+      'Gagal menyimpan data Transfer Pengisian BBM Duren Sawit.'
+    );
+
+    setRequests(prev => [finalReq, ...prev.filter(r => r.id !== finalReq.id)]);
+  };
+
   // Workflow Action 2: Review Budget Request (Manager/Direktur/Finance Action)
   const handleReviewBudget = async (approvedAmount: number, comment: string) => {
     if (!token || !spreadsheetId || !reviewBudgetReq) return;
@@ -5036,6 +5087,8 @@ export default function App() {
         activities={activities}
         role={activeRole}
         userEmail={userProfile?.email}
+        userProfile={userProfile}
+        onSubmitTransferBbmDS={handleTransferBbmDSSubmit}
         onUpdateActivity={handleUpdateActivity}
         onOpenBbmRefillModal={(() => {
           const activeEmail = (userProfile?.email || '').trim().toLowerCase();

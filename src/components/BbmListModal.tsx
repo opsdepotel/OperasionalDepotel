@@ -7,8 +7,8 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, RequestStatus } from '../types';
-import { parseNumericValue } from '../lib/googleApi';
-import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
+import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles, ShieldCheck, AlertTriangle, Send, Coins, Lock, AlertCircle, UploadCloud } from 'lucide-react';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture } from '../lib/aiRecapture';
 import { AiBbmReceiptModal } from './AiBbmReceiptModal';
@@ -24,9 +24,11 @@ interface BbmListModalProps {
   activities?: UserActivity[];
   role?: Role;
   userEmail?: string;
+  userProfile?: UserProfile | null;
   onUpdateActivity?: (act: UserActivity) => Promise<void> | void;
   onOpenBbmRefillModal?: () => void;
   onPreviewDocument?: (url: string) => void;
+  onSubmitTransferBbmDS?: (transferReq: BudgetRequest, photoFile: File | null) => Promise<void>;
 }
 
 // Helper to parse coordinate string and calculate distance
@@ -101,9 +103,11 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   activities = [],
   role,
   userEmail,
+  userProfile,
   onUpdateActivity,
   onOpenBbmRefillModal,
-  onPreviewDocument
+  onPreviewDocument,
+  onSubmitTransferBbmDS
 }) => {
   // Format local date string YYYY-MM-DD
   const getTodayDateStr = () => {
@@ -167,6 +171,29 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   const [selectedBbmPhotoFileId, setSelectedBbmPhotoFileId] = useState<string | null>(null);
   const [isAiBbmAnalyzing, setIsAiBbmAnalyzing] = useState(false);
   const [aiBbmAnalysisError, setAiBbmAnalysisError] = useState<string | null>(null);
+
+  // Transfer Pengisian BBM Duren Sawit State
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [transferNominalInput, setTransferNominalInput] = useState<string>('');
+  const [transferKeterangan, setTransferKeterangan] = useState('');
+  const [transferPhotoFile, setTransferPhotoFile] = useState<File | null>(null);
+  const [transferPhotoPreview, setTransferPhotoPreview] = useState<string | null>(null);
+  const [isSubmittingTransfer, setIsSubmittingTransfer] = useState(false);
+  const [transferError, setTransferError] = useState<string | null>(null);
+
+  // Helper date DD/MMM/YYYY display e.g. "16/Sep/2026"
+  const formatDdMmmYyyy = (dateStr: string) => {
+    if (!dateStr) return '';
+    const clean = dateStr.split('T')[0].trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+      const [y, m, d] = clean.split('-');
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+      const monthIdx = parseInt(m, 10) - 1;
+      const monthName = months[monthIdx] || m;
+      return `${d}/${monthName}/${y}`;
+    }
+    return clean;
+  };
 
   // Helper to extract AI Screen Recapture result from database fields or in-memory state
   const getAiRecaptureResult = (act: UserActivity): AiRecaptureResult | null => {
@@ -475,6 +502,76 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   const totalCount = filteredRequests.length;
   const totalNominal = filteredRequests.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
 
+  // Check role access for Transfer feature
+  const isFinanceOrAdmin = role === Role.FINANCE || role === Role.DIREKTUR || role === Role.ADMINISTRATOR || role === Role.MANAGER || userProfile?.role === Role.FINANCE;
+
+  // Find existing TFDS- transfer request for selected date
+  const existingTfds = requests.find(r => {
+    const isTfdsReq = r.id.startsWith('TFDS-') || (r.siteId && r.siteId.toLowerCase().includes('transfer pengisian bbm duren sawit'));
+    if (!isTfdsReq) return false;
+    if (r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED) return false;
+    const reqDate = getNormalizedYmd(r.tanggalPemakaian) || getNormalizedYmd(r.createdAt);
+    return reqDate === selectedDate || r.tanggalPemakaian === selectedDate;
+  });
+
+  const handleExecuteTransferBbm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transferPhotoFile) {
+      setTransferError('Harap unggah / ambil foto bukti transfer.');
+      return;
+    }
+
+    const finalNominal = parseNumericValue(transferNominalInput);
+    if (isNaN(finalNominal) || finalNominal <= 0) {
+      setTransferError('Harap masukkan nominal transfer yang valid (lebih dari Rp 0).');
+      return;
+    }
+
+    setIsSubmittingTransfer(true);
+    setTransferError(null);
+
+    try {
+      const activeEmail = userEmail || userProfile?.email || '';
+      const activeManagerEmail = userProfile?.managerEmail || activeEmail;
+      const uid = generateUniqueUID('TFDS', selectedDate, requests);
+      const formattedSiteId = `Transfer Pengisian BBM Duren Sawit Tanggal ${formatDdMmmYyyy(selectedDate)}`;
+      const nowTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+
+      const newTransferReq: BudgetRequest = {
+        id: uid,
+        userEmail: activeEmail,
+        managerEmail: activeManagerEmail,
+        tanggalPemakaian: selectedDate,
+        siteId: formattedSiteId,
+        jumlahPengajuan: finalNominal,
+        managerActionAmount: finalNominal,
+        adminActionAmount: finalNominal,
+        status: RequestStatus.CLOSED,
+        keterangan: transferKeterangan.trim() || `Transfer pengisian BBM Duren Sawit tanggal ${formatDateDisplay(selectedDate)}`,
+        managerComment: 'Disetujui otomatis oleh Finance',
+        adminComment: 'Disetujui otomatis oleh Finance',
+        createdAt: nowTime,
+        timestamp: nowTime
+      };
+
+      if (onSubmitTransferBbmDS) {
+        await onSubmitTransferBbmDS(newTransferReq, transferPhotoFile);
+      }
+
+      setIsTransferModalOpen(false);
+      setTransferPhotoFile(null);
+      setTransferPhotoPreview(null);
+      setTransferKeterangan('');
+      setTransferNominalInput('');
+      alert(`Transfer Pengisian BBM Duren Sawit sebesar ${formatIDR(finalNominal)} berhasil disimpan & diset ke CLOSED! (UID: ${uid})`);
+    } catch (err: any) {
+      console.error('Gagal memproses Transfer BBM Duren Sawit:', err);
+      setTransferError(err.message || 'Gagal menyimpan transaksi Transfer BBM Duren Sawit.');
+    } finally {
+      setIsSubmittingTransfer(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   return createPortal(
@@ -781,6 +878,117 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
           )}
         </div>
 
+        {/* Container Badge TRANSFER-BBM Duren Sawit (Role Finance / Management) */}
+        {isFinanceOrAdmin && (
+          <div className="mx-4 sm:mx-5 my-3 bg-gradient-to-r from-amber-500/10 via-amber-50 to-orange-50/80 border-2 border-amber-300/80 rounded-2xl p-3.5 shadow-xs space-y-2.5 shrink-0">
+            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-amber-200/60 pb-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold shadow-xs">
+                  <Send className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-amber-950 flex items-center gap-1.5">
+                    <span>TRANSFER - BBM Duren Sawit</span>
+                  </h4>
+                  <p className="text-[10px] text-amber-800 font-medium">
+                    Rekapitulasi Transfer Harian Pengisian BBM Duren Sawit
+                  </p>
+                </div>
+              </div>
+
+              {existingTfds ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-[11px] font-bold shadow-2xs">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>SUDAH DITRANSFER</span>
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-[11px] font-bold shadow-2xs">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>BELUM DITRANSFER</span>
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs items-center">
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                  Tanggal Transfer
+                </span>
+                <span className="font-mono font-bold text-slate-800 mt-0.5 block">
+                  {selectedDate ? formatDateDisplay(selectedDate) : '-'}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                  Nominal Transfer
+                </span>
+                <span className="font-display font-extrabold text-amber-700 text-xs sm:text-sm mt-0.5 block">
+                  {formatIDR(existingTfds ? (existingTfds.adminActionAmount || existingTfds.jumlahPengajuan) : totalNominal)}
+                </span>
+              </div>
+
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">
+                  Bukti Transfer
+                </span>
+                {existingTfds && existingTfds.buktiTransferUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onPreviewDocument) {
+                        onPreviewDocument(existingTfds.buktiTransferUrl);
+                      } else {
+                        setSelectedPhotoUrl(getImageSrc(existingTfds.buktiTransferUrl, existingTfds.buktiTransferFileId));
+                      }
+                    }}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 underline flex items-center gap-1 mt-0.5 cursor-pointer"
+                  >
+                    <ImageIcon className="w-3.5 h-3.5 text-indigo-500" />
+                    <span>Lihat Bukti</span>
+                  </button>
+                ) : (
+                  <span className="text-slate-400 font-medium mt-0.5 block">-</span>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end col-span-2 sm:col-span-1">
+                {existingTfds ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="w-full sm:w-auto px-3.5 py-1.5 bg-emerald-600/15 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-default opacity-90"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Sudah Ditransfer</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!selectedDate || totalNominal <= 0}
+                    onClick={() => {
+                      setTransferNominalInput(totalNominal > 0 ? totalNominal.toString() : '');
+                      setTransferKeterangan(`Transfer pengisian BBM Duren Sawit tanggal ${formatDateDisplay(selectedDate)}`);
+                      setTransferPhotoFile(null);
+                      setTransferPhotoPreview(null);
+                      setTransferError(null);
+                      setIsTransferModalOpen(true);
+                    }}
+                    className={`w-full sm:w-auto px-4 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md active:scale-95 ${
+                      !selectedDate || totalNominal <= 0
+                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300 shadow-none'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white border border-emerald-700 cursor-pointer shadow-emerald-200'
+                    }`}
+                  >
+                    <Send className="w-3.5 h-3.5 text-white" />
+                    <span>Transfer</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Modal Footer */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between shrink-0">
           <p className="text-[11px] text-slate-500 font-medium">
@@ -1065,6 +1273,203 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
           }
         }}
       />
+
+      {/* Modal Form Transfer Pengisian BBM Duren Sawit */}
+      {isTransferModalOpen && (
+        <div className="fixed inset-0 z-[100010] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-fade-in overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-lg w-full overflow-hidden my-auto animate-scale-up">
+            
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-amber-600 via-amber-500 to-orange-500 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-white/15 backdrop-blur-md flex items-center justify-center border border-white/20">
+                  <Send className="w-5 h-5 text-amber-100" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold tracking-tight">Form Transfer BBM Duren Sawit</h3>
+                  <p className="text-xs text-amber-100/90 font-medium">Rekapitulasi Pengisian BBM Duren Sawit Harian</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsTransferModalOpen(false)}
+                className="w-8 h-8 rounded-full bg-black/10 hover:bg-black/20 flex items-center justify-center text-white transition-all cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteTransferBbm} className="p-5 space-y-4">
+              {transferError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs font-semibold text-rose-700 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{transferError}</span>
+                </div>
+              )}
+
+              {/* Tanggal Transfer (Locked) */}
+              <div>
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1">
+                  <span>Tanggal Transfer (Sesuai Tanggal Pengisian)</span>
+                  <Lock className="w-3 h-3 text-amber-600" />
+                </label>
+                <div className="p-3 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 flex items-center justify-between">
+                  <span>{formatDateDisplay(selectedDate)}</span>
+                  <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-md font-extrabold uppercase">Terkunci</span>
+                </div>
+              </div>
+
+              {/* Nominal Transfer (Editable) */}
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1 text-slate-800">
+                    <span>Nominal Transfer (Rp)</span>
+                    <strong className="text-rose-500">*</strong>
+                  </span>
+                  <span className="text-[10px] text-amber-700 font-semibold">Dapat Disesuaikan</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold text-slate-400 text-xs">Rp</span>
+                  <input
+                    type="number"
+                    value={transferNominalInput}
+                    onChange={(e) => setTransferNominalInput(e.target.value)}
+                    placeholder="0"
+                    className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-xl text-sm font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                  />
+                </div>
+                {totalNominal > 0 && (
+                  <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500">
+                    <span>Total Pengisian Hari Ini: <strong>{formatIDR(totalNominal)}</strong></span>
+                    {parseNumericValue(transferNominalInput) !== totalNominal && (
+                      <button
+                        type="button"
+                        onClick={() => setTransferNominalInput(totalNominal.toString())}
+                        className="text-amber-700 font-bold underline hover:text-amber-800 cursor-pointer"
+                      >
+                        Reset ke Total Hari Ini
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Site ID Info */}
+              <div>
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">
+                  Site ID / Keterangan Sistem
+                </label>
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 font-mono">
+                  Transfer Pengisian BBM Duren Sawit Tanggal {formatDdMmmYyyy(selectedDate)}
+                </div>
+              </div>
+
+              {/* Keterangan (Optional) */}
+              <div>
+                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">
+                  Keterangan (Opsional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={transferKeterangan}
+                  onChange={(e) => setTransferKeterangan(e.target.value)}
+                  placeholder="Catatan tambahan transfer..."
+                  className="w-full p-3 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Foto Bukti Transfer (Wajib) */}
+              <div>
+                <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1 flex items-center justify-between">
+                  <span className="flex items-center gap-1 text-slate-800">
+                    <span>Foto Bukti Transfer</span>
+                    <strong className="text-rose-500">*</strong>
+                  </span>
+                  <span className="text-[10px] text-amber-700 font-normal">Kamera HP / Galeri</span>
+                </label>
+
+                {transferPhotoPreview ? (
+                  <div className="relative rounded-2xl overflow-hidden border-2 border-amber-300 shadow-sm bg-slate-900 group">
+                    <img
+                      src={transferPhotoPreview}
+                      alt="Bukti Transfer Preview"
+                      className="w-full h-44 object-contain"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTransferPhotoFile(null);
+                        setTransferPhotoPreview(null);
+                      }}
+                      className="absolute top-2 right-2 p-1.5 bg-rose-600/90 text-white rounded-xl text-xs font-bold shadow-md hover:bg-rose-700 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="border-2 border-dashed border-amber-300 hover:border-amber-500 bg-amber-50/50 hover:bg-amber-50 rounded-2xl p-4 flex flex-col items-center justify-center cursor-pointer transition-all text-center">
+                    <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center mb-1.5 shadow-2xs">
+                      <Camera className="w-5 h-5" />
+                    </div>
+                    <span className="text-xs font-bold text-amber-900">Ambil / Unggah Foto Bukti Transfer</span>
+                    <span className="text-[10px] text-amber-700 mt-0.5">Format JPG / PNG / WEBP</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setTransferPhotoFile(file);
+                          const reader = new FileReader();
+                          reader.onloadend = () => {
+                            setTransferPhotoPreview(reader.result as string);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsTransferModalOpen(false)}
+                  disabled={isSubmittingTransfer}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingTransfer || !transferPhotoFile}
+                  className={`px-5 py-2.5 rounded-xl text-xs font-extrabold text-white transition-all flex items-center gap-2 shadow-md ${
+                    isSubmittingTransfer || !transferPhotoFile
+                      ? 'bg-amber-300 cursor-not-allowed shadow-none'
+                      : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 cursor-pointer shadow-amber-200 active:scale-95'
+                  }`}
+                >
+                  {isSubmittingTransfer ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Menyimpan Transfer...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      <span>Simpan & Proses Transfer</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>,
     document.body
   );
