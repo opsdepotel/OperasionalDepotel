@@ -199,15 +199,15 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   ).sort();
 
   // Helper check for BBMDS & Talangan requests
-  const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.siteId === 'OPT-DUREN SAWIT';
-  const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+  const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+  const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
   const isTalanganRequestAdmin = (r: BudgetRequest) => (r.id.startsWith('OPT-') || r.siteId?.startsWith('OPT-') || (r.keterangan || '').toUpperCase().includes('TALANGAN')) && !isBbmRequestAdmin(r);
 
   // 1. FILTERED TRANSFER DATA
   const filteredTransfers = useMemo(() => {
     return requests.filter(r => {
-      if (isBbmRequestAdmin(r)) return false;
+      if (isBbmRequestAdmin(r) && !r.id.startsWith('TFDS')) return false;
       if (excludeTalangan && isTalanganRequestAdmin(r)) return false;
 
       // Must be a transfer made by Finance (adminActionAmount > 0)
@@ -239,7 +239,16 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
       if (transferEndDate && (!reqDate || reqDate > transferEndDate)) return false;
 
       return true;
-    }).sort((a, b) => b.id.localeCompare(a.id));
+    }).sort((a, b) => {
+      const dateA = getTransferRecordDate(a);
+      const dateB = getTransferRecordDate(b);
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
+      const timeA = a.adminActionTime || a.createdAt || a.timestamp || a.id;
+      const timeB = b.adminActionTime || b.createdAt || b.timestamp || b.id;
+      return timeB.localeCompare(timeA);
+    });
   }, [requests, uniqueProfiles, transferUserName, transferDivisi, transferStartDate, transferEndDate, excludeTalangan]);
 
   const totalTransferAmount = useMemo(() => {

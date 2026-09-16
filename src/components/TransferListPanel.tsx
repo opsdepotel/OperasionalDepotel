@@ -112,8 +112,8 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
     }).format(val);
   };
 
-  const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
-  const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+  const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS');
+  const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
   // Parse Site ID and match database for multi-site vertical list
   const parseSiteList = (rawSiteId: string, sitesList: SiteInfo[] = []) => {
@@ -251,7 +251,7 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
   // Filter transferred requests (only UID requests with adminActionAmount > 0)
   const transferredRequests = useMemo(() => {
     return requests.filter(r => {
-      if (isBbmRequest(r) || r.status === RequestStatus.CANCELLED) return false;
+      if ((isBbmRequest(r) && !r.id.startsWith('TFDS')) || r.status === RequestStatus.CANCELLED) return false;
       if (activeRole === Role.USER || userProfile?.role === Role.USER) {
         if (userProfile?.email && r.userEmail.toLowerCase() !== userProfile.email.toLowerCase()) {
           return false;
@@ -270,7 +270,7 @@ export const TransferListPanel: React.FC<TransferListPanelProps> = ({
       };
       return getTimestamp(b) - getTimestamp(a);
     });
-  }, [requests]);
+  }, [requests, activeRole, userProfile]);
 
   // Filter by date & search query (referensi utama AdminActionTime)
   const filteredRequests = useMemo(() => {

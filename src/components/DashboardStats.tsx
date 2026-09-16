@@ -475,8 +475,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   };
 
   const handleExportPDF = () => {
-    const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
-    const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+    const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+    const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
     const myUserReqs = requests.filter(r => 
       r.userEmail.toLowerCase() === email.toLowerCase() && 
@@ -937,8 +937,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const isRequesterManagerOrFinance = requesterProfile ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE) : (role === Role.MANAGER || role === Role.FINANCE);
     const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
 
-    const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
-    const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+    const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+    const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
     const totalRequested = myReqs.filter(r => r.siteId !== 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.jumlahPengajuan, 0);
     const totalTransferred = myReqs.filter(r => r.siteId !== 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.adminActionAmount, 0);
@@ -1773,8 +1773,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     ).length;
     const myTaskRejected = myPersonalReqs.filter(r => r.status === RequestStatus.REJECTED).length;
     const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
-    const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
-    const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+    const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+    const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
     const closedCount = requests.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequestAdmin(r)).length;
 
@@ -3192,7 +3192,7 @@ User Agent: ${navigator.userAgent}`;
   // Compute stats for DIREKTUR role
   if (role === Role.DIREKTUR) {
     const activeReqs = requests.filter(r => r.status !== RequestStatus.CANCELLED);
-    const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit');
+    const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
 
     // Direct reports approval & reconciliation tasks for Direktur (where managerEmail matches Direktur email or hierarchy)
     const direkturEmails = new Set<string>([
@@ -3289,7 +3289,7 @@ User Agent: ${navigator.userAgent}`;
     const closedCount = monitoringReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
 
     // Financial totals for executive summary (Monitoring) - aligned with Role Finance formulas
-    const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+    const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
     const totalPengajuan = activeReqs.reduce((sum, r) => sum + (r.jumlahPengajuan || 0), 0);
     const totalTransferred = requests

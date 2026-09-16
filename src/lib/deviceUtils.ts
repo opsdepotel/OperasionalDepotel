@@ -350,7 +350,9 @@ export function getBrowserAgnosticHardwareSignature(): string {
   if (typeof window === 'undefined') return 'HW-UNKNOWN';
 
   const screen = window.screen;
-  const screenPart = `${screen.width || 0}x${screen.height || 0}x${screen.colorDepth || 24}`;
+  const minW = Math.min(screen.width || 0, screen.height || 0);
+  const maxH = Math.max(screen.width || 0, screen.height || 0);
+  const screenPart = `${minW}x${maxH}x${screen.colorDepth || 24}`;
   const dpr = (window.devicePixelRatio || 1).toFixed(2);
   const cpuCores = navigator.hardwareConcurrency || 4;
   const tzOffset = new Date().getTimezoneOffset();
@@ -383,7 +385,9 @@ export function generateHardwareFingerprint(userEmail?: string): string {
   if (typeof window === 'undefined') return 'DEV-MOB-0x0-UNKNOWN';
 
   const screen = window.screen;
-  const screenPart = `${screen.width || 0}x${screen.height || 0}`;
+  const minW = Math.min(screen.width || 0, screen.height || 0);
+  const maxH = Math.max(screen.width || 0, screen.height || 0);
+  const screenPart = `${minW}x${maxH}`;
   const hwSig = getBrowserAgnosticHardwareSignature();
 
   let seedInput = hwSig;
@@ -742,33 +746,56 @@ export async function validateDeviceAccessAndBind(
   const idbSavedBoundDevId = await getUserBoundDeviceIdFromIndexedDB(user.email);
   const idbGeneralDeviceId = await getDeviceIdFromIndexedDB();
 
+  // Helper: detect if this physical phone or its storage is already bound to another Mobile user
+  const findBoundOtherUser = () => {
+    if (!allProfiles || allProfiles.length === 0) return undefined;
+    return allProfiles.find((p) => {
+      const otherIsMobile =
+        p.mobile === true ||
+        String(p.mobile).trim().toUpperCase() === 'TRUE' ||
+        String(p.mobile).trim().toUpperCase() === 'YA' ||
+        String(p.mobile).trim() === '1';
+
+      if (!otherIsMobile || !p.deviceId || !p.deviceId.trim()) return false;
+
+      const isDifferentUser = p.userId
+        ? p.userId.toLowerCase() !== user.userId?.toLowerCase()
+        : p.email.toLowerCase() !== user.email?.toLowerCase();
+      if (!isDifferentUser) return false;
+
+      const pDevId = p.deviceId.trim().toLowerCase();
+
+      // Check A: Does this phone's physical hardware signature for user p match p.deviceId?
+      if (p.email && generateHardwareFingerprint(p.email).toLowerCase() === pDevId) {
+        return true;
+      }
+
+      // Check B: Does this phone's multi-vault storage have p.deviceId?
+      if (currentDeviceId && currentDeviceId.trim().toLowerCase() === pDevId) {
+        return true;
+      }
+      if (localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === pDevId) {
+        return true;
+      }
+      if (idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === pDevId) {
+        return true;
+      }
+
+      return false;
+    });
+  };
+
   // Check if DB already has a deviceId for this user
   if (!user.deviceId || !user.deviceId.trim()) {
     // Device ID in database is empty:
-    // Check if stableHardwareDevId is already bound/registered to another user profile that has Mobile = TRUE
-    if (allProfiles && allProfiles.length > 0) {
-      const boundOtherUser = allProfiles.find((p) => {
-        const otherIsMobile =
-          p.mobile === true ||
-          String(p.mobile).trim().toUpperCase() === 'TRUE' ||
-          String(p.mobile).trim().toUpperCase() === 'YA' ||
-          String(p.mobile).trim() === '1';
-
-        return (
-          otherIsMobile &&
-          p.deviceId &&
-          p.deviceId.trim().toLowerCase() === stableHardwareDevId.trim().toLowerCase() &&
-          (p.userId ? p.userId.toLowerCase() !== user.userId?.toLowerCase() : p.email.toLowerCase() !== user.email?.toLowerCase())
-        );
-      });
-
-      if (boundOtherUser) {
-        const otherName = boundOtherUser.nama || boundOtherUser.userId || boundOtherUser.email;
-        return {
-          success: false,
-          errorMessage: `Akses Ditolak: Perangkat mobile ini (${stableHardwareDevId}) sudah terdaftar/terikat dengan akun User lain (${otherName}).`
-        };
-      }
+    // Verify this device is NOT bound/registered to another user profile that has Mobile = TRUE
+    const boundOtherUser = findBoundOtherUser();
+    if (boundOtherUser) {
+      const otherName = boundOtherUser.nama || boundOtherUser.userId || boundOtherUser.email;
+      return {
+        success: false,
+        errorMessage: `Akses Ditolak: Perangkat mobile ini sudah terdaftar/terikat dengan akun User lain (${otherName}). Satu perangkat tidak dapat digunakan bergantian untuk akun Mobile lain.`
+      };
     }
 
     // First time mobile access for this mobile user => Bind stableHardwareDevId!
@@ -796,26 +823,28 @@ export async function validateDeviceAccessAndBind(
     const dbDeviceId = user.deviceId.trim();
     const currentDevId = currentDeviceId.trim();
 
-    // Check 1: Direct match with currentDeviceId or stableHardwareDevId
-    const isDirectMatch =
-      dbDeviceId.toLowerCase() === currentDevId.toLowerCase() ||
-      dbDeviceId.toLowerCase() === stableHardwareDevId.toLowerCase();
-
-    if (isDirectMatch) {
-      syncDeviceIdToAllStores(dbDeviceId, user.email);
+    // Check if this device is already bound to another user
+    const boundOtherUser = findBoundOtherUser();
+    if (boundOtherUser) {
+      const otherName = boundOtherUser.nama || boundOtherUser.userId || boundOtherUser.email;
       return {
-        success: true,
-        updatedUser: user
+        success: false,
+        errorMessage: `Akses Ditolak: Perangkat mobile ini sudah terdaftar/terikat dengan akun User lain (${otherName}). Satu perangkat tidak dapat digunakan bergantian untuk akun Mobile lain.`
       };
     }
 
-    // Check 2: Multi-Layer Auto-Recovery for Safari/iOS
+    // Check 1: Direct hardware signature match (Physical phone match across all browsers on this phone)
+    const isHardwareMatch = dbDeviceId.toLowerCase() === stableHardwareDevId.toLowerCase();
+
+    // Check 2: Multi-Layer Auto-Recovery for Safari/iOS or legacy IDs
     const matchLocal = localSavedBoundDevId && localSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase();
     const matchIdbUser = idbSavedBoundDevId && idbSavedBoundDevId.trim().toLowerCase() === dbDeviceId.toLowerCase();
     const matchIdbGeneral = idbGeneralDeviceId && idbGeneralDeviceId.trim().toLowerCase() === dbDeviceId.toLowerCase();
+    const matchLegacyStorage = !dbDeviceId.startsWith('DEV-MOB-') && currentDevId.toLowerCase() === dbDeviceId.toLowerCase();
 
-    if (matchLocal || matchIdbUser || matchIdbGeneral) {
-      console.log(`[DeviceUtils] Auto-Recovery berhasil me-restore Device ID (${dbDeviceId}) untuk ${user.email}`);
+    const isStorageMatch = matchLocal || matchIdbUser || matchIdbGeneral || matchLegacyStorage;
+
+    if (isHardwareMatch || isStorageMatch) {
       syncDeviceIdToAllStores(dbDeviceId, user.email);
       return {
         success: true,
@@ -823,29 +852,12 @@ export async function validateDeviceAccessAndBind(
       };
     }
 
-    // Check 3: Multi-browser switching on same physical HP (Option A Hardware Signature Auto-Match)
-    // If user opens Browser B (Samsung Internet, Edge, etc.) on the SAME physical HP:
-    const conflictUser = allProfiles?.find(p =>
-      (p.userId ? p.userId.toLowerCase() !== user.userId?.toLowerCase() : p.email.toLowerCase() !== user.email?.toLowerCase()) &&
-      p.deviceId?.trim().toLowerCase() === stableHardwareDevId.toLowerCase()
-    );
-
-    if (!conflictUser) {
-      // User is on their physical phone switching browsers or migrating!
-      // Restore DB's registered deviceId into this browser's multi-vault storage
-      console.log(`[DeviceUtils] Multi-Browser Hardware Match! Registering Device ID (${dbDeviceId}) in this browser for ${user.email}`);
-      syncDeviceIdToAllStores(dbDeviceId, user.email);
-      return {
-        success: true,
-        updatedUser: user
-      };
-    } else {
-      const otherName = conflictUser.nama || conflictUser.userId || conflictUser.email;
-      return {
-        success: false,
-        errorMessage: `Akses Ditolak: Perangkat ini sudah terikat dengan akun ${otherName}.`
-      };
-    }
+    // Device does NOT match! Access is strictly denied.
+    console.warn(`[DeviceUtils] Access rejected for ${user.email}. DB Device ID: ${dbDeviceId}, Current Hardware ID: ${stableHardwareDevId}`);
+    return {
+      success: false,
+      errorMessage: `Akses Ditolak: Akun Anda telah terikat pada perangkat fisik lain (ID: ${dbDeviceId}). Silakan hubungi Administrator untuk melakukan Reset Device ID jika Anda berganti perangkat fisik.`
+    };
   }
 }
 

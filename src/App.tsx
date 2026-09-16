@@ -58,7 +58,7 @@ import {
   fetchGlobalConfig
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
-import { validateDeviceAccessAndBind, requestPersistentStorage } from './lib/deviceUtils';
+import { validateDeviceAccessAndBind, requestPersistentStorage, isMobileDevice, generateHardwareFingerprint } from './lib/deviceUtils';
 import { safeSetItem, safeSetJson } from './lib/storage';
 
 // Components
@@ -103,13 +103,14 @@ import {
 } from 'lucide-react';
 
 export const isOpBiasaRequest = (req: BudgetRequest) => {
-  return req.id.startsWith('OP') && !req.id.startsWith('OPT-') && !req.id.startsWith('BBM') && !req.id.startsWith('ADJ-');
+  return req.id.startsWith('OP') && !req.id.startsWith('OPT-') && !req.id.startsWith('BBM') && !req.id.startsWith('ADJ-') && !req.id.startsWith('TFDS');
 };
 
 export const isBbmDurenSawitRequest = (req?: BudgetRequest | null) => {
   if (!req) return false;
   return Boolean(
     req.id?.startsWith('BBMDS') ||
+    req.id?.startsWith('TFDS') ||
     req.siteId === 'OPT-DUREN SAWIT' ||
     req.siteId === 'BBM DUREN SAWIT' ||
     (req as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
@@ -378,7 +379,30 @@ export default function App() {
         const matched = candidateProfiles.find(
           p => (p.userId || '').trim().toLowerCase() === cleanSavedId || (p.email || '').trim().toLowerCase() === cleanSavedId
         );
-        if (matched) return matched;
+        if (matched) {
+          const isMobileUser =
+            matched.mobile === true ||
+            String(matched.mobile).trim().toUpperCase() === 'TRUE' ||
+            String(matched.mobile).trim().toUpperCase() === 'YA' ||
+            String(matched.mobile).trim() === '1';
+
+          if (isMobileUser) {
+            if (!isMobileDevice()) {
+              localStorage.removeItem('op_app_logged_in_user_id');
+              sessionStorage.removeItem('op_app_logged_in_user_id');
+              return null;
+            }
+            if (matched.deviceId && matched.deviceId.trim()) {
+              const currentHwId = generateHardwareFingerprint(matched.email);
+              if (matched.deviceId.trim().toLowerCase() !== currentHwId.toLowerCase()) {
+                localStorage.removeItem('op_app_logged_in_user_id');
+                sessionStorage.removeItem('op_app_logged_in_user_id');
+                return null;
+              }
+            }
+          }
+          return matched;
+        }
       }
     } catch (e) {
       console.warn('Gagal memuat sesi user profile dari localStorage:', e);
@@ -844,6 +868,28 @@ export default function App() {
           if (savedUserId) {
             const matchedUser = activeProfs.find((u: any) => u.userId?.toLowerCase() === savedUserId.toLowerCase() || u.email?.toLowerCase() === savedUserId.toLowerCase());
             if (matchedUser) {
+              const isMobileUser =
+                matchedUser.mobile === true ||
+                String(matchedUser.mobile).trim().toUpperCase() === 'TRUE' ||
+                String(matchedUser.mobile).trim().toUpperCase() === 'YA' ||
+                String(matchedUser.mobile).trim() === '1';
+
+              if (isMobileUser) {
+                if (!isMobileDevice()) {
+                  localStorage.removeItem('op_app_logged_in_user_id');
+                  sessionStorage.removeItem('op_app_logged_in_user_id');
+                  return;
+                }
+                if (matchedUser.deviceId && matchedUser.deviceId.trim()) {
+                  const currentHwId = generateHardwareFingerprint(matchedUser.email);
+                  if (matchedUser.deviceId.trim().toLowerCase() !== currentHwId.toLowerCase()) {
+                    localStorage.removeItem('op_app_logged_in_user_id');
+                    sessionStorage.removeItem('op_app_logged_in_user_id');
+                    return;
+                  }
+                }
+              }
+
               setUserProfile(matchedUser);
               setActiveRole(matchedUser.role);
             }
@@ -936,6 +982,30 @@ export default function App() {
             (targetEmail && p.email && p.email.trim().toLowerCase() === targetEmail) ||
             (targetUid && p.userId && p.userId.trim().toLowerCase() === targetUid)
           ) || target;
+
+          const isMobileUser =
+            updatedProfile.mobile === true ||
+            String(updatedProfile.mobile).trim().toUpperCase() === 'TRUE' ||
+            String(updatedProfile.mobile).trim().toUpperCase() === 'YA' ||
+            String(updatedProfile.mobile).trim() === '1';
+
+          if (isMobileUser) {
+            if (!isMobileDevice()) {
+              localStorage.removeItem('op_app_logged_in_user_id');
+              sessionStorage.removeItem('op_app_logged_in_user_id');
+              setLoginRejectError('Akses Ditolak: Akun Anda dikonfigurasi wajib menggunakan perangkat mobile.');
+              return null;
+            }
+            if (updatedProfile.deviceId && updatedProfile.deviceId.trim()) {
+              const currentHwId = generateHardwareFingerprint(updatedProfile.email);
+              if (updatedProfile.deviceId.trim().toLowerCase() !== currentHwId.toLowerCase()) {
+                localStorage.removeItem('op_app_logged_in_user_id');
+                sessionStorage.removeItem('op_app_logged_in_user_id');
+                setLoginRejectError(`Akses Ditolak: Akun Anda telah terikat pada perangkat lain (ID: ${updatedProfile.deviceId}).`);
+                return null;
+              }
+            }
+          }
 
           setActiveRole(updatedProfile.role);
           return updatedProfile;

@@ -168,8 +168,8 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
     }
   };
 
-  const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.siteId === 'OPT-DUREN SAWIT';
-  const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit');
+  const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+  const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
   const isTalanganReq = (r: BudgetRequest) => (r.id.startsWith('OPT-') || r.siteId?.startsWith('OPT-') || (r.keterangan || '').toUpperCase().includes('TALANGAN')) && !isBbmReq(r);
 
