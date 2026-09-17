@@ -1217,6 +1217,14 @@ export default function App() {
     }
 
     // 2. Sync Offline Usage Items
+    const reopenedRequestsMap = new Map<string, {
+      req: BudgetRequest;
+      itemsCount: number;
+      totalNominal: number;
+      applicantEmail: string;
+      latestItem: UsageReportItem;
+    }>();
+
     for (const uItem of pendingUsage) {
       try {
         const photoFile = dataURLtoFile(uItem.photoDataUrl, uItem.photoFileName, uItem.photoBlob);
@@ -1250,7 +1258,7 @@ export default function App() {
           timestamp: nowTime,
           actorRole: Role.USER,
           actorEmail: uItem.userEmail,
-          actorNama: uItem.userEmail,
+          actorNama: getUserDisplayName(uItem.userEmail) || uItem.userEmail,
           actionType: 'ITEM_CREATED',
           status: 'PENDING',
           catatan: 'Item Laporan Pemakaian Offline disinkronkan otomatis',
@@ -1261,8 +1269,86 @@ export default function App() {
           buktiUrl: uploadResult.viewUrl
         };
 
+        // Check target request for Auto-Reopen & amount update
+        let targetReq = requests.find(r => r.id === uItem.requestId);
+        if (!targetReq) {
+          try {
+            const cached = localStorage.getItem('op_app_cached_requests');
+            if (cached) {
+              const parsed: BudgetRequest[] = JSON.parse(cached);
+              targetReq = parsed.find(r => r.id === uItem.requestId);
+            }
+          } catch {}
+        }
+
+        const isTalangan = targetReq && (
+          targetReq.id.startsWith('OPT-') ||
+          targetReq.id.startsWith('BBMDS') ||
+          targetReq.id.startsWith('BBM_DurenSawit') ||
+          targetReq.tipePengajuan === 'DANA_TALANGAN' ||
+          targetReq.keterangan.startsWith('[DANA TALANGAN]')
+        );
+
+        const shouldReopen = Boolean(targetReq && targetReq.status === RequestStatus.CLOSED);
+        let updatedReq: BudgetRequest | null = null;
+
+        if (targetReq) {
+          if (isTalangan) {
+            const existingTotal = usageItems
+              .filter(i => i.requestId === targetReq!.id && i.id !== finalReportItem.id)
+              .reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+            const newTotalNominal = existingTotal + Number(finalReportItem.nominal || 0);
+
+            updatedReq = {
+              ...targetReq,
+              jumlahPengajuan: newTotalNominal,
+              status: shouldReopen ? RequestStatus.REPORTING : targetReq.status
+            };
+          } else if (shouldReopen) {
+            updatedReq = {
+              ...targetReq,
+              status: RequestStatus.REPORTING
+            };
+          }
+        }
+
         await createUsageItem(currentToken, currentSheetId, finalReportItem);
         await createItemReviewHistory(currentToken, currentSheetId, historyLog);
+
+        if (updatedReq) {
+          await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
+          setRequests(prev => prev.map(r => r.id === updatedReq!.id ? updatedReq! : r));
+          if (selectedRequest?.id === updatedReq.id) {
+            setSelectedRequest(updatedReq);
+          }
+          try {
+            const cached = localStorage.getItem('op_app_cached_requests');
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              const updatedCached = parsed.map((r: any) => r.id === updatedReq!.id ? updatedReq! : r);
+              localStorage.setItem('op_app_cached_requests', JSON.stringify(updatedCached));
+            }
+          } catch {}
+        }
+
+        if (shouldReopen && targetReq) {
+          const reqToTrack = updatedReq || targetReq;
+          const existing = reopenedRequestsMap.get(targetReq.id);
+          if (existing) {
+            existing.itemsCount += 1;
+            existing.totalNominal += Number(finalReportItem.nominal || 0);
+            existing.latestItem = finalReportItem;
+            existing.req = reqToTrack;
+          } else {
+            reopenedRequestsMap.set(targetReq.id, {
+              req: reqToTrack,
+              itemsCount: 1,
+              totalNominal: Number(finalReportItem.nominal || 0),
+              applicantEmail: uItem.userEmail,
+              latestItem: finalReportItem
+            });
+          }
+        }
 
         await removeOfflineUsageItem(uItem.id);
         syncedCount++;
@@ -1296,13 +1382,65 @@ export default function App() {
       }
     }
 
+    // Process Auto-Reopen notifications & audit logs for Finance
+    if (reopenedRequestsMap.size > 0) {
+      for (const [reqId, reopenInfo] of reopenedRequestsMap.entries()) {
+        try {
+          const nowTime = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+          const applicantName = getUserDisplayName(reopenInfo.applicantEmail) || reopenInfo.applicantEmail;
+          const siteLabel = getSiteLabel(reopenInfo.req.siteId);
+          const totalFormatted = formatIDRValue(reopenInfo.totalNominal);
+
+          // 1. Audit Log in ItemReviewHistory
+          const reopenAuditLog: ItemReviewHistory = {
+            id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
+            itemUid: reopenInfo.latestItem.id,
+            requestUid: reqId,
+            timestamp: nowTime,
+            actorRole: Role.USER,
+            actorEmail: reopenInfo.applicantEmail,
+            actorNama: applicantName,
+            actionType: 'UID_REOPENED',
+            status: 'REPORTING',
+            catatan: `Sistem Otomatis: Status UID dibuka kembali (Auto-Reopen) ke REPORTING karena ada ${reopenInfo.itemsCount} nota offline susulan sebesar ${totalFormatted} yang baru disinkronkan.`,
+            tanggalPenggunaan: reopenInfo.latestItem.tanggalPenggunaan,
+            nominal: reopenInfo.totalNominal,
+            keterangan: `Auto-Reopen: ${reopenInfo.itemsCount} nota offline disinkronkan`,
+            buktiFileId: reopenInfo.latestItem.buktiFileId,
+            buktiUrl: reopenInfo.latestItem.buktiUrl
+          };
+          await createItemReviewHistory(currentToken, currentSheetId, reopenAuditLog);
+
+          // 2. Web Push Notification to Finance
+          await sendPushToRole(
+            Role.FINANCE,
+            `Auto-Reopen UID ${reqId}: Nota Offline Susulan`,
+            `Perhatian Finance: Terdapat ${reopenInfo.itemsCount} nota offline susulan (${applicantName} - ${siteLabel}) total ${totalFormatted} yang baru disinkronkan. Status UID telah otomatis dibuka kembali (REPORTING) untuk rekonsiliasi ulang.`,
+            reopenInfo.req,
+            {
+              type: 'AUTO_REOPEN',
+              requestId: reqId,
+              totalAmount: reopenInfo.totalNominal,
+              itemsCount: reopenInfo.itemsCount
+            }
+          );
+        } catch (e) {
+          console.warn('Gagal memproses notifikasi auto-reopen untuk', reqId, e);
+        }
+      }
+    }
+
     await refreshOfflineQueues();
     setIsSyncingOfflineReports(false);
 
     if (syncedCount > 0) {
-      setOfflineReportNotice(`${syncedCount} Laporan disinkronkan.`);
+      if (reopenedRequestsMap.size > 0) {
+        setOfflineReportNotice(`${syncedCount} Laporan disinkronkan. ${reopenedRequestsMap.size} UID otomatis dibuka kembali (REPORTING) & Finance telah dinotifikasi.`);
+      } else {
+        setOfflineReportNotice(`${syncedCount} Laporan disinkronkan.`);
+      }
       await handleManualRefresh();
-      setTimeout(() => setOfflineReportNotice(null), 4000);
+      setTimeout(() => setOfflineReportNotice(null), 5000);
     } else {
       setOfflineReportNotice(null);
     }
@@ -1313,10 +1451,32 @@ export default function App() {
       syncOfflineReports();
     };
     window.addEventListener('online', handleOnline);
+
+    const handleFocus = () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine && (offlineTalanganList.length > 0 || offlineUsageList.length > 0 || offlineBbmList.length > 0)) {
+        syncOfflineReports();
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    const interval = setInterval(() => {
+      if (typeof navigator !== 'undefined' && navigator.onLine && token && spreadsheetId && (offlineTalanganList.length > 0 || offlineUsageList.length > 0 || offlineBbmList.length > 0)) {
+        syncOfflineReports();
+      }
+    }, 30000);
+
+    if (typeof navigator !== 'undefined' && navigator.onLine && token && spreadsheetId && (offlineTalanganList.length > 0 || offlineUsageList.length > 0 || offlineBbmList.length > 0)) {
+      syncOfflineReports();
+    }
+
     return () => {
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+      clearInterval(interval);
     };
-  }, [token, spreadsheetId, driveFolderId]);
+  }, [token, spreadsheetId, driveFolderId, offlineTalanganList.length, offlineUsageList.length, offlineBbmList.length]);
 
   const runGoogleAction = async <T,>(
     action: () => Promise<T>,
@@ -3705,21 +3865,38 @@ export default function App() {
 
         {/* Offline Reports Sync Banner */}
         {(offlineTalanganList.length > 0 || offlineUsageList.length > 0 || offlineBbmList.length > 0) && userProfile && (
-          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-2xl p-3 shadow-xs flex items-center justify-between text-xs animate-slide-up">
-            <div className="flex items-center gap-2 text-amber-900">
-              <RefreshCw className={`w-4 h-4 text-amber-600 shrink-0 ${isSyncingOfflineReports ? 'animate-spin' : ''}`} />
-              <div>
-                <p className="font-bold">Laporan Belum Disinkronkan ({offlineTalanganList.length + offlineUsageList.length + offlineBbmList.length})</p>
-                <p className="text-[10px] text-amber-700">Tersimpan di memori HP (IndexedDB). Akan dikirim otomatis saat internet tersedia.</p>
+          <div className="mb-4 bg-amber-50/95 border border-amber-300 rounded-2xl p-3.5 shadow-xs flex items-center justify-between gap-3 text-xs animate-slide-up">
+            <div className="flex items-start gap-2.5 text-amber-950 min-w-0">
+              <RefreshCw className={`w-4 h-4 text-amber-600 shrink-0 mt-0.5 ${isSyncingOfflineReports ? 'animate-spin' : ''}`} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-bold text-amber-900">
+                    Laporan Belum Disinkronkan ({offlineTalanganList.length + offlineUsageList.length + offlineBbmList.length})
+                  </p>
+                  <span className={`inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                    typeof navigator !== 'undefined' && navigator.onLine
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                      : 'bg-amber-200/80 text-amber-900 border border-amber-300'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${typeof navigator !== 'undefined' && navigator.onLine ? 'bg-emerald-500' : 'bg-amber-600'}`} />
+                    {typeof navigator !== 'undefined' && navigator.onLine ? 'Koneksi Tersedia' : 'Menunggu Jaringan'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                  {typeof navigator !== 'undefined' && navigator.onLine
+                    ? 'Koneksi internet terdeteksi. Sistem akan menyinkronkan otomatis atau klik tombol untuk sinkronkan manual sekarang.'
+                    : 'Tersimpan aman di perangkat (BELUM DISINKRONKAN). Sambungkan ke jaringan internet untuk sinkronisasi otomatis.'}
+                </p>
               </div>
             </div>
             <button
               type="button"
               onClick={syncOfflineReports}
               disabled={isSyncingOfflineReports}
-              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all shadow-xs disabled:opacity-50 cursor-pointer shrink-0"
+              className="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all shadow-xs disabled:opacity-50 cursor-pointer shrink-0 flex items-center gap-1.5"
             >
-              {isSyncingOfflineReports ? 'Menyinkronkan...' : 'Sinkronkan Sekarang'}
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingOfflineReports ? 'animate-spin' : ''}`} />
+              <span>{isSyncingOfflineReports ? 'Menyinkronkan...' : 'Sinkronkan Sekarang'}</span>
             </button>
           </div>
         )}
@@ -3806,6 +3983,8 @@ export default function App() {
             userProfile={userProfile}
             offlineUsageItems={offlineUsageList}
             onRefreshOfflineQueues={refreshOfflineQueues}
+            onSyncOffline={syncOfflineReports}
+            isSyncingOffline={isSyncingOfflineReports}
           />
         ) : activeView === 'adjustment' && userProfile ? (
           <AdjustmentPanel

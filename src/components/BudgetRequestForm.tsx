@@ -6,7 +6,6 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus, formatTimestamp, Role } from '../types';
 import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
-import { saveOfflineTalanganRequest } from '../lib/offlineReportStorage';
 import { FormProgressOverlay } from './FormProgressOverlay';
 import {
   Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles,
@@ -260,6 +259,16 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       finalAmount = initialRequest ? parseNumericValue(jumlahPengajuan) : talanganAmount;
     }
 
+    // Online-only enforcement for Budget Requests & Dana Talangan (Menjamin data selalu sinkron & bebas risiko multi-transfer)
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setError(
+        isTalangan
+          ? 'Koneksi internet tidak tersedia. Pengajuan Laporan Dana Talangan wajib online untuk menjamin data langsung tersinkronisasi dan mencegah risiko multi-transfer.'
+          : 'Koneksi internet tidak tersedia. Pengajuan Anggaran wajib terhubung ke internet.'
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     setIsSuccess(false);
     setSubmitStep(selectedFile ? 'Mengunggah nota ke Google Drive...' : 'Menyimpan data ke database...');
@@ -301,59 +310,13 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         };
       }
 
-      // Direct offline check for Dana Talangan
-      if (isTalangan && !initialRequest && selectedFile && !navigator.onLine) {
-        await saveOfflineTalanganRequest(
-          {
-            userEmail: userEmail || userProfile?.email || '',
-            managerEmail,
-            tanggalPemakaian: todayStr,
-            siteId,
-            jumlahPengajuan: itemNominal,
-            keterangan,
-            itemTanggal: itemTanggal || todayStr,
-            itemNominal,
-            itemKeterangan
-          },
-          selectedFile
-        );
-        alert('Laporan Dana Talangan telah disimpan di HP (BELUM DISINKRONKAN).\nLaporan akan otomatis dikirimkan ke server saat HP terhubung internet.');
-        if (onRefreshOfflineQueues) onRefreshOfflineQueues();
-        onClose();
-        return;
-      }
-
       setSubmitStep(firstItem ? 'Menyimpan pengajuan & nota...' : 'Menyimpan pengajuan ke database...');
       await onSubmit(newRequest, firstItem, selectedFile);
       setSubmitStep('Data berhasil disimpan!');
       setIsSuccess(true);
       await new Promise(r => setTimeout(r, 600));
     } catch (err: any) {
-      if (isTalangan && !initialRequest && selectedFile) {
-        try {
-          await saveOfflineTalanganRequest(
-            {
-              userEmail: userEmail || userProfile?.email || '',
-              managerEmail,
-              tanggalPemakaian: todayStr,
-              siteId,
-              jumlahPengajuan: itemNominal,
-              keterangan,
-              itemTanggal: itemTanggal || todayStr,
-              itemNominal,
-              itemKeterangan
-            },
-            selectedFile
-          );
-          alert('Laporan Dana Talangan telah disimpan di HP (BELUM DISINKRONKAN).\nLaporan akan otomatis dikirimkan ke server saat HP terhubung internet.');
-          if (onRefreshOfflineQueues) onRefreshOfflineQueues();
-          onClose();
-          return;
-        } catch (offErr) {
-          console.error('Gagal menyimpan laporan offline talangan:', offErr);
-        }
-      }
-      setError(err.message || 'Gagal mengirimkan pengajuan anggaran.');
+      setError(err.message || 'Gagal mengirimkan pengajuan anggaran. Harap periksa koneksi internet Anda.');
       setIsSubmitting(false);
     }
   };

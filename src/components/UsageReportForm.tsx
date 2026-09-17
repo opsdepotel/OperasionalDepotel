@@ -11,11 +11,11 @@ import { ItemHistoryModal } from './ItemHistoryModal';
 import { ZoomableImage } from './ZoomableImage';
 import { FormProgressOverlay } from './FormProgressOverlay';
 import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
-import { saveOfflineUsageItem, OfflineUsageItem } from '../lib/offlineReportStorage';
+import { OfflineUsageItem } from '../lib/offlineReportStorage';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
   XCircle, ExternalLink, Send, Trash2, Edit2, Info, Loader2, Camera, X, Eye, Video,
-  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel, Check, ShieldCheck, History, Paperclip
+  MessageSquare, MapPin, Compass, ClipboardList, AlertTriangle, Clock, Fuel, Check, ShieldCheck, History, Paperclip, RefreshCw
 } from 'lucide-react';
 
 // Helper to parse coordinate string and calculate Haversine distance
@@ -78,6 +78,8 @@ interface UsageReportFormProps {
   userProfile?: UserProfile;
   offlineUsageItems?: OfflineUsageItem[];
   onRefreshOfflineQueues?: () => void;
+  onSyncOffline?: () => Promise<void>;
+  isSyncingOffline?: boolean;
 }
 
 export const UsageReportForm: React.FC<UsageReportFormProps> = ({
@@ -101,7 +103,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   onPreviewDocument,
   userProfile,
   offlineUsageItems = [],
-  onRefreshOfflineQueues
+  onRefreshOfflineQueues,
+  onSyncOffline,
+  isSyncingOffline = false
 }) => {
   // Extract and match site IDs from request.siteId. Format is "XXXNNN" (3 letters, 3 digits)
   const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
@@ -440,36 +444,16 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       return;
     }
 
+    // Online-only enforcement for Budget Reports & Dana Talangan receipts
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setActionError('Koneksi internet tidak tersedia. Penginputan rincian nota Laporan Anggaran & Dana Talangan wajib online untuk menjamin data langsung tersinkronisasi ke server.');
+      return;
+    }
+
     setUploading(true);
     setIsSuccess(false);
     setSavingStep(selectedFile ? 'Mengunggah nota ke Google Drive...' : 'Menyimpan item ke database...');
     try {
-      // Direct offline check if user has selected a file and is currently offline
-      if (selectedFile && !navigator.onLine) {
-        await saveOfflineUsageItem(
-          {
-            requestId: request.id,
-            tanggalPenggunaan: tanggal,
-            nominal: amount,
-            keterangan: keterangan.trim(),
-            userEmail: userProfile?.email || request.userEmail || ''
-          },
-          selectedFile
-        );
-        setSavingStep('Disimpan di HP (BELUM DISINKRONKAN)');
-        setIsSuccess(true);
-        await new Promise(r => setTimeout(r, 800));
-        setNominal('');
-        setKeterangan('');
-        setSelectedFile(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-        if (cameraInputRef.current) cameraInputRef.current.value = '';
-        setIsFormOpen(false);
-        stopCameraStream();
-        if (onRefreshOfflineQueues) onRefreshOfflineQueues();
-        return;
-      }
-
       let finalBuktiUrl = editingItem?.buktiUrl || '';
       let finalBuktiFileId = editingItem?.buktiFileId || '';
 
@@ -538,35 +522,6 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       setIsFormOpen(false);
       stopCameraStream();
     } catch (err: any) {
-      if (selectedFile && !editingItem) {
-        try {
-          await saveOfflineUsageItem(
-            {
-              requestId: request.id,
-              tanggalPenggunaan: tanggal,
-              nominal: amount,
-              keterangan: keterangan.trim(),
-              userEmail: userProfile?.email || request.userEmail || ''
-            },
-            selectedFile
-          );
-          setSavingStep('Disimpan di HP (BELUM DISINKRONKAN)');
-          setIsSuccess(true);
-          await new Promise(r => setTimeout(r, 800));
-          setNominal('');
-          setKeterangan('');
-          setSelectedFile(null);
-          if (fileInputRef.current) fileInputRef.current.value = '';
-          if (cameraInputRef.current) cameraInputRef.current.value = '';
-          setIsFormOpen(false);
-          stopCameraStream();
-          if (onRefreshOfflineQueues) onRefreshOfflineQueues();
-          return;
-        } catch (offErr) {
-          console.error('Gagal menyimpan item offline pemakaian:', offErr);
-        }
-      }
-
       const isAuthError = err.message && (
         err.message.includes('401') ||
         err.message.toLowerCase().includes('authentication credentials') ||
@@ -577,7 +532,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       if (isAuthError && onAuthError) {
         onAuthError();
       } else {
-        setActionError(err.message || 'Gagal menyimpan item penggunaan.');
+        setActionError(err.message || 'Gagal menyimpan item penggunaan. Harap periksa koneksi internet Anda.');
       }
     } finally {
       setUploading(false);
@@ -830,6 +785,39 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             </span>
           )}
         </div>
+
+        {/* Unsynced Offline Items Alert Banner */}
+        {offlineMapped.length > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-900 flex items-center justify-between shadow-xs animate-slide-up">
+            <div className="flex items-center gap-2.5">
+              <RefreshCw className={`w-4 h-4 text-amber-600 shrink-0 ${isSyncingOffline ? 'animate-spin' : ''}`} />
+              <div>
+                <p className="font-bold">Terdapat {offlineMapped.length} Nota Belum Disinkronkan</p>
+                <p className="text-[10px] text-amber-700">Tersimpan aman di perangkat (BELUM DISINKRONKAN). Segera sinkronkan agar saldo operasional terupdate.</p>
+              </div>
+            </div>
+            {onSyncOffline && (
+              <button
+                type="button"
+                onClick={onSyncOffline}
+                disabled={isSyncingOffline}
+                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl text-xs transition-all shadow-xs disabled:opacity-50 cursor-pointer shrink-0 flex items-center gap-1.5"
+              >
+                {isSyncingOffline ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Menyinkronkan...</span>
+                  </>
+                ) : (
+                  <>
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Sinkronkan</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        )}
 
         {currentItems.length === 0 ? (
           <div className="bg-white border border-dashed border-slate-200 text-center py-8 px-4 rounded-2xl text-slate-400 text-xs font-medium">
@@ -1280,11 +1268,18 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             </div>
           )}
 
+          {offlineMapped.length > 0 && role === Role.FINANCE && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl p-3 text-xs flex items-start gap-2 animate-slide-up">
+              <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+              <span>Perhatian: Masih terdapat {offlineMapped.length} item laporan yang belum disinkronkan pada perangkat ini. Harap sinkronkan semua item terlebih dahulu sebelum menyelesaikan review/closing.</span>
+            </div>
+          )}
+
           <button
             onClick={handleSubmitReview}
-            disabled={isSubmittingReview || !hasAtLeastOneDecision}
+            disabled={isSubmittingReview || !hasAtLeastOneDecision || (role === Role.FINANCE && offlineMapped.length > 0)}
             className={`w-full py-3 text-white font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-md transition-all ${
-              !hasAtLeastOneDecision
+              !hasAtLeastOneDecision || (role === Role.FINANCE && offlineMapped.length > 0)
                 ? 'bg-slate-300 text-slate-500 cursor-not-allowed shadow-none'
                 : role === Role.FINANCE && currentItems.length > 0 && currentItems.every(i => (decisions[i.id]?.status || i.statusAdmin) === ItemStatus.APPROVED)
                 ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200 cursor-pointer'

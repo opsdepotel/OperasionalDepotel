@@ -136,7 +136,7 @@ export interface ItemReviewHistory {
   actorRole: Role | string;
   actorEmail: string;
   actorNama: string;
-  actionType: 'APPROVAL_MANAGER' | 'APPROVAL_DIREKTUR' | 'REVISI_MANAGER' | 'REVISI_DIREKTUR' | 'APPROVAL_FINANCE' | 'REVISI_FINANCE' | 'PERBAIKAN_USER' | 'ITEM_CREATED' | 'PENGAJUAN_CREATED' | 'PENGAJUAN_REVISED';
+  actionType: 'APPROVAL_MANAGER' | 'APPROVAL_DIREKTUR' | 'REVISI_MANAGER' | 'REVISI_DIREKTUR' | 'APPROVAL_FINANCE' | 'REVISI_FINANCE' | 'PERBAIKAN_USER' | 'ITEM_CREATED' | 'PENGAJUAN_CREATED' | 'PENGAJUAN_REVISED' | 'UID_REOPENED';
   status: string; // 'DISETUJUI' | 'REVISI' | 'SUBMITTED' | 'PERBAIKAN SUBMITTED'
   catatan: string;
   tanggalPenggunaan: string;
