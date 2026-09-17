@@ -51,7 +51,6 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [activeSubView, setActiveSubView] = useState<'main' | 'history'>('main');
   const [historySearchQuery, setHistorySearchQuery] = useState('');
-  const [unclosedTalanganAlertUser, setUnclosedTalanganAlertUser] = useState<UserProfile | null>(null);
   const [financialReportsUserEmail, setFinancialReportsUserEmail] = useState<string | null>(null);
   const [talanganReportUserEmail, setTalanganReportUserEmail] = useState<string | null>(null);
   const [adjustmentType, setAdjustmentType] = useState('');
@@ -110,17 +109,6 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       r.keterangan?.toUpperCase().includes('DANA TALANGAN') ||
       r.keterangan?.toUpperCase().includes('TALANGAN') ||
       r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-    );
-  };
-
-  // Helper to get unclosed Dana Talangan requests for a user
-  const getUnclosedTalanganRequests = (userEmail: string) => {
-    return requests.filter(r => 
-      r.userEmail.toLowerCase() === userEmail.toLowerCase() &&
-      isTalanganRequest(r) &&
-      r.status !== RequestStatus.CLOSED &&
-      r.status !== RequestStatus.REJECTED &&
-      r.status !== RequestStatus.CANCELLED
     );
   };
 
@@ -427,7 +415,6 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     const selectedTalanganSummary = getTalanganSummary(selectedUser.email);
     const balance = selectedSummary.balance;
     const isPositiveBalance = selectedSummary.isPositive;
-    const selectedUnclosedTalangan = getUnclosedTalanganRequests(selectedUser.email);
 
     const isDeduction = adjustmentType 
       ? (adjustmentType === 'Pemotongan Gaji' || adjustmentType === 'Pengembalian Cash dari User')
@@ -1097,7 +1084,6 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
             const talanganSummary = getTalanganSummary(user.email);
             const isGlobalPositive = userGlobalBalance > 0;
             const isGlobalNegative = userGlobalBalance < 0;
-            const unclosedTalanganList = getUnclosedTalanganRequests(user.email);
 
             return (
               <div

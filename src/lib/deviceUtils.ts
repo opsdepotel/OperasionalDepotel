@@ -1,6 +1,10 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
+ * 
+ * [STRICTLY LOCKED - DEVICE ID & DEVICE BINDING LOGIC]
+ * Flow dan logic DeviceID dan DeviceBinding dalam file ini telah DIKUNCI.
+ * Dilarang melakukan perubahan atau modifikasi tanpa konfirmasi dan persetujuan eksplisit dari pengguna.
  */
 
 import { UserProfile } from '../types';

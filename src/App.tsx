@@ -1849,25 +1849,6 @@ export default function App() {
   ) => {
     if (!token || !spreadsheetId) return;
 
-    // Check if target user has any unclosed Dana Talangan transactions
-    const unclosedTalangan = requests.filter(r => 
-      r.userEmail.toLowerCase() === targetUserEmail.toLowerCase() &&
-      (
-        r.id.startsWith('OPT-') ||
-        r.keterangan?.toUpperCase().includes('[DANA TALANGAN]') ||
-        r.keterangan?.toUpperCase().includes('DANA TALANGAN') ||
-        r.keterangan?.toUpperCase().includes('TALANGAN') ||
-        r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-      ) &&
-      r.status !== RequestStatus.CLOSED &&
-      r.status !== RequestStatus.REJECTED &&
-      r.status !== RequestStatus.CANCELLED
-    );
-
-    if (unclosedTalangan.length > 0) {
-      throw new Error(`Adjustment tidak dapat dilakukan karena user ${targetUserEmail} masih memiliki ${unclosedTalangan.length} transaksi Dana Talangan yang belum CLOSED.`);
-    }
-
     const success = await runGoogleAction(
       async () => {
         let finalBuktiUrl = '';

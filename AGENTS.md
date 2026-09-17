@@ -66,8 +66,9 @@
     - Tombol aksi: `<< Kembali` untuk kembali ke Bagian 1 dan `Simpan Laporan Dana Talangan` untuk menyimpan pengajuan ke database.
     - Penyimpanan hanya dapat dilakukan setelah item pertama diisi lengkap (nominal > 0, keterangan, dan foto bukti nota).
 
-## Device ID Logic & Persistence Flow (UUID + 4-Layer Vault & Seamless Auto-Transition) - [LOCKED]
-- **Status: STRICTLY LOCKED**: Alur, logika, dan arsitektur persistensi Device ID berbasis Token Acak Kriptografis Unik (UUID) dengan mekanisme penyimpanan redundan 4 Lapis dan strategi transisi otomatis (seamless auto-upgrade) telah dikunci secara ketat. Tidak boleh ada perubahan tanpa konfirmasi dan persetujuan eksplisit dari pengguna.
+## Device ID & Device Binding Flow & Logic - [STRICTLY LOCKED]
+- **Status: STRICTLY LOCKED**: Alur (flow), logika (logic), arsitektur persistensi DeviceID, dan validasi Device Binding (Token UUID + Multi-Vault 4-Layer Storage, Seamless Auto-Transition, pencegahan multi-user, dan pembatasan login mobile) telah **DIKUNCI SECARA PERMANEN**.
+- **Larangan Keras**: DILARANG KERAS melakukan perubahan, modifikasi, refactoring, penyesuaian alur, atau penghapusan kode pada logic DeviceID dan DeviceBinding tanpa konfirmasi dan persetujuan eksplisit dari pengguna.
 - **Rules & Specifications**:
   - **Generation (Cryptographic UUID Token)**: Format Device ID menggunakan token acak kriptografis unik berentropi tinggi (`DEV-UUID-${uuid}` via `crypto.randomUUID()` dengan fallback RFC4122). Setiap perangkat fisik mobile yang diikat memiliki token unik 100% independen sehingga sepenuhnya menghilangkan celah collision pada 2 HP dengan model hardware yang sama persis.
   - **Multi-Vault 4-Layer Storage**: Device ID disimpan secara redundan dan sinkron pada:
