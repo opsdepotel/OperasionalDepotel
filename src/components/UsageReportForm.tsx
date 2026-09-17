@@ -1102,18 +1102,33 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
                      {/* Show delete or edit options if the item has not been approved by either Manager or Admin (isLocked) and current user is submitter */}
                     {isSubmitter && !isLocked && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
                         {isRejected && (
-                          <button
-                            onClick={() => handleEditClick(item)}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg font-semibold flex items-center gap-1 transition-all"
-                            title="Perbaiki / Ajukan Kembali"
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                            <span>Perbaiki</span>
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleEditClick(item)}
+                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg font-semibold flex items-center gap-1 transition-all cursor-pointer text-xs"
+                              title="Perbaiki / Ajukan Kembali"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span>Perbaiki</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteError(null);
+                                setItemPendingDelete(item);
+                              }}
+                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
+                              title="Hapus Item Laporan yang Perlu Revisi"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
                         )}
-                        {!hasRejectedItems && (
+                        {!isRejected && !hasRejectedItems && (
                           <button
                             type="button"
                             onClick={(e) => {
@@ -1161,7 +1176,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
             <div className="space-y-0.5">
               <p className="font-bold">Perbaikan Laporan Diperlukan</p>
               <p className="text-[11px] text-amber-700 leading-relaxed">
-                Terdapat item laporan yang ditolak (REJECTED). Anda hanya diperbolehkan melakukan perbaikan pada item tersebut dan tidak dapat menambah atau menghapus item lainnya.
+                Terdapat item laporan yang ditolak / butuh revisi. Anda dapat memperbaiki atau menghapus item yang bersangkutan tanpa perlu memperbaikinya.
               </p>
             </div>
           </div>

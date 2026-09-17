@@ -1118,28 +1118,53 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                 </div>
 
                 {/* Detailed Financial Breakdown & Required Adjustment Nominal (Operasional Biasa) */}
-                <div className="bg-slate-50/90 rounded-xl p-2.5 border border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-2 text-left">
-                  <div>
-                    <span className="block text-[8px] font-bold text-slate-400 uppercase">Total Transfer</span>
-                    <span className="text-[10px] font-bold font-mono text-slate-700">{formatIDR(summary.totalTransferred)}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] font-bold text-slate-400 uppercase">Laporan Disetujui</span>
-                    <span className="text-[10px] font-bold font-mono text-emerald-600">{formatIDR(summary.totalReportedApproved)}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[8px] font-bold text-slate-400 uppercase">Adjustment Lalu</span>
-                    <span className="text-[10px] font-bold font-mono text-slate-600">{formatIDR(summary.totalAdjustments)}</span>
-                  </div>
-                  <div 
-                    onClick={() => setFinancialReportsUserEmail(user.email)}
-                    title="Klik untuk membuka Laporan Transaksi Saldo Operasional user terkait (Mengecualikan UID OPT-)"
-                    className="bg-indigo-50/90 hover:bg-indigo-100/90 p-2 rounded-xl border border-indigo-200 col-span-2 sm:col-span-1 cursor-pointer transition-all hover:scale-[1.02] active:scale-95 group/badge relative overflow-hidden shadow-2xs flex flex-col justify-between"
-                  >
+                <div className="bg-slate-50/90 rounded-xl p-2.5 border border-slate-100 space-y-2.5 text-left">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <div>
-                      <span className="block text-[8px] font-extrabold text-indigo-600 uppercase">Jumlah Nominal Adjustment</span>
-                      <span className="text-[11px] font-extrabold font-mono text-indigo-700 block mt-0.5">{formatIDR(summary.requiredNominal)}</span>
+                      <span className="block text-[8px] font-bold text-slate-400 uppercase">Total Transfer</span>
+                      <span className="text-[10px] font-bold font-mono text-slate-700">{formatIDR(summary.totalTransferred)}</span>
                     </div>
+                    <div>
+                      <span className="block text-[8px] font-bold text-slate-400 uppercase">Laporan Disetujui</span>
+                      <span className="text-[10px] font-bold font-mono text-emerald-600">{formatIDR(summary.totalReportedApproved)}</span>
+                    </div>
+                    <div>
+                      <span className="block text-[8px] font-bold text-slate-400 uppercase">Adjustment Lalu</span>
+                      <span className="text-[10px] font-bold font-mono text-slate-600">{formatIDR(summary.totalAdjustments)}</span>
+                    </div>
+                    <div 
+                      onClick={() => setFinancialReportsUserEmail(user.email)}
+                      title="Klik untuk membuka Laporan Transaksi Saldo Operasional user terkait (Mengecualikan UID OPT-)"
+                      className="bg-indigo-50/90 hover:bg-indigo-100/90 p-2 rounded-xl border border-indigo-200 col-span-2 sm:col-span-1 cursor-pointer transition-all hover:scale-[1.02] active:scale-95 group/badge relative overflow-hidden shadow-2xs flex flex-col justify-between"
+                    >
+                      <div>
+                        <span className="block text-[8px] font-extrabold text-indigo-600 uppercase">Jumlah Nominal Adjustment</span>
+                        <span className="text-[11px] font-extrabold font-mono text-indigo-700 block mt-0.5">{formatIDR(summary.requiredNominal)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tombol Proses Adjustment di Dalam Kontainer, Rata Kiri di Bawah TOTAL TRANSFER */}
+                  <div className="flex items-center justify-start pt-1 border-t border-slate-200/60">
+                    <button
+                      type="button"
+                      disabled={summary.requiredNominal === 0}
+                      onClick={() => {
+                        if (summary.requiredNominal !== 0) {
+                          setSelectedUser(user);
+                          setError(null);
+                        }
+                      }}
+                      className={`px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-2xs ${
+                        summary.requiredNominal !== 0
+                          ? 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer active:scale-95'
+                          : 'bg-slate-200/80 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none'
+                      }`}
+                      title={summary.requiredNominal === 0 ? 'Jumlah nominal adjustment Rp 0 (Saldo Balance)' : 'Proses transaksi penyesuaian saldo'}
+                    >
+                      <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                      <span>Proses Adjustment</span>
+                    </button>
                   </div>
                 </div>
 
@@ -1185,21 +1210,6 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                     </div>
                   </div>
                 )}
-
-                {/* Tombol Proses Adjustment di Bagian Kanan Bawah Kartu */}
-                <div className="flex items-center justify-end pt-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedUser(user);
-                      setError(null);
-                    }}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-100 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-white shrink-0" />
-                    <span>Proses Adjustment</span>
-                  </button>
-                </div>
               </div>
             );
           })}
