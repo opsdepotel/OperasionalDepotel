@@ -191,37 +191,6 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
         </div>
       )}
 
-      {/* In-App Browser Warning (WhatsApp / IG / etc.) */}
-      {inAppInfo?.isInApp && (
-        <div className="bg-amber-50 border border-amber-300 text-amber-900 rounded-2xl p-3.5 text-xs space-y-1.5 shadow-xs animate-fade-in" id="in-app-browser-banner">
-          <div className="font-bold flex items-center gap-1.5 text-amber-900">
-            <Globe className="w-4 h-4 text-amber-700 shrink-0" />
-            <span>Terdeteksi Membuka Lewat {inAppInfo.name}</span>
-          </div>
-          <p className="text-[11px] text-amber-800 leading-relaxed">
-            In-App browser memiliki penyimpanan sementara yang dapat mereset Device ID saat aplikasi ditutup.
-            {inAppInfo.isIos ? (
-              <span> Disarankan ketuk ikon bagikan (Share) di pojok bawah lalu pilih <strong>Buka di Safari (Open in Safari)</strong> atau <strong>Tambahkan ke Layar Utama</strong>.</span>
-            ) : (
-              <span> Disarankan ketuk menu titik tiga lalu pilih <strong>Buka di Browser (Chrome)</strong>.</span>
-            )}
-          </p>
-        </div>
-      )}
-
-      {/* Safari Private Browsing Warning */}
-      {isPrivateMode && (
-        <div className="bg-rose-50 border border-rose-300 text-rose-900 rounded-2xl p-3.5 text-xs space-y-1.5 shadow-xs animate-fade-in" id="private-browsing-banner">
-          <div className="font-bold flex items-center gap-1.5 text-rose-900">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-            <span>Peringatan: Tab Pribadi (Private Browsing)</span>
-          </div>
-          <p className="text-[11px] text-rose-800 leading-relaxed">
-            Browser Anda sedang dalam mode Tab Pribadi. Penyimpanan lokal akan dihapus saat tab ditutup sehingga Device ID akan berubah dan akun Anda dapat terkunci. Silakan buka aplikasi pada <strong>Tab Biasa</strong>.
-          </p>
-        </div>
-      )}
-
       <form onSubmit={handleLogin} className="space-y-4">
         {error && (
           <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2.5">

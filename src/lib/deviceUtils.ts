@@ -409,13 +409,14 @@ export function generateHardwareFingerprint(userEmail?: string): string {
  * Provides 100% mathematical uniqueness to prevent any collision between identical hardware units.
  */
 export function generateRandomUUID(): string {
+  const hwSig = getBrowserAgnosticHardwareSignature();
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `DEV-UUID-${crypto.randomUUID()}`;
+    return `DEV-UUID-${hwSig}-${crypto.randomUUID()}`;
   }
   // Fallback for older WebViews / browsers without crypto.randomUUID
   const s4 = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).substring(1);
   const uuid = `${s4()}${s4()}-${s4()}-4${s4().substring(0, 3)}-${s4()}-${s4()}${s4()}${s4()}`;
-  return `DEV-UUID-${uuid}`;
+  return `DEV-UUID-${hwSig}-${uuid}`;
 }
 
 /**
@@ -438,13 +439,25 @@ export function isCurrentDeviceValidForUserSync(user: UserProfile): boolean {
 
   // 1. If DB device ID is UUID format (DEV-UUID-...)
   if (dbDevId.startsWith('dev-uuid-')) {
-    return (
+    const isStorageMatch = (
       cur1 === dbDevId ||
       cur2 === dbDevId ||
       cur3 === dbDevId ||
       cur4 === dbDevId ||
       cur5 === dbDevId
     );
+    if (isStorageMatch) return true;
+
+    // Hardware signature fallback for wiped storage / in-app browser context
+    const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
+    const parts = dbDevId.split('-');
+    if (parts.length >= 4 && parts[2].length === 8 && parts[2] === currentHwSig) {
+      return true;
+    }
+    const curHwId = generateHardwareFingerprint(user.email).toLowerCase();
+    if (dbDevId === curHwId) return true;
+
+    return false;
   }
 
   // 2. If DB device ID is legacy format (DEV-MOB-... or older string)
@@ -930,6 +943,43 @@ export async function validateDeviceAccessAndBind(
 
       if (matchCurrent || matchLocal || matchIdbUser || matchIdbGeneral || matchBackup || matchCookie) {
         // Legitimate device: re-sync across all 4 layers to ensure self-healing persistence
+        syncDeviceIdToAllStores(dbDeviceId, user.email);
+
+        // Check if existing UUID needs auto-upgrade to embed current hardware signature
+        const parts = dbDevIdLower.split('-');
+        const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
+        const hasEmbeddedHwSig = parts.length >= 4 && parts[2].length === 8 && parts[2] === currentHwSig;
+
+        if (!hasEmbeddedHwSig && saveProfileFn) {
+          const upgradedUUID = `DEV-UUID-${currentHwSig.toUpperCase()}-${generateRandomUUID().replace(/^DEV-UUID-[^-]+-/, '')}`;
+          syncDeviceIdToAllStores(upgradedUUID, user.email);
+          const updatedUser: UserProfile = { ...user, deviceId: upgradedUUID };
+          saveProfileFn(updatedUser).catch((e) => console.warn('Auto-embed hwSig save error:', e));
+          return { success: true, updatedUser };
+        }
+
+        return {
+          success: true,
+          updatedUser: user
+        };
+      }
+
+      // SELF-HEALING RECOVERY (If storage was wiped/cleared or opened in In-App Browser on the SAME physical phone):
+      // Check if current physical phone's hardware signature matches the hardware signature embedded in the UUID or legacy fingerprint
+      const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
+      const parts = dbDevIdLower.split('-');
+
+      let embeddedHwSig: string | null = null;
+      if (parts.length >= 4 && parts[2].length === 8) {
+        embeddedHwSig = parts[2].toLowerCase();
+      }
+
+      const isHardwareSigMatch = Boolean(embeddedHwSig && embeddedHwSig === currentHwSig);
+      const isLegacyHwMatch = dbDevIdLower === stableHardwareDevId.toLowerCase();
+
+      if (isHardwareSigMatch || isLegacyHwMatch) {
+        console.log(`[DeviceUtils] Self-healing device recovery activated for ${user.email}. Storage was wiped or in-app browser used, but physical hardware signature matches (${currentHwSig}).`);
+        // Re-sync authorized dbDeviceId to all local storage layers so future logins hit high-speed storage!
         syncDeviceIdToAllStores(dbDeviceId, user.email);
         return {
           success: true,
