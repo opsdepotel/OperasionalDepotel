@@ -29,6 +29,7 @@ interface DashboardStatsProps {
   onManageUsers?: () => void;
   onOpenUserDashboardPreview?: () => void;
   onOpenPushTest?: () => void;
+  onOpenSharedReceipt?: () => void;
   onOpenAdjustment?: () => void;
   onOpenTransferList?: () => void;
   onOpenReportsModal?: () => void;
@@ -61,6 +62,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onManageUsers,
   onOpenUserDashboardPreview,
   onOpenPushTest,
+  onOpenSharedReceipt,
   onOpenAdjustment,
   onOpenTransferList,
   onOpenReportsModal,
@@ -2314,6 +2316,52 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
             <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
               &rarr;
+            </div>
+          </div>
+        )}
+
+        {/* Administrator Kartu Pintasan: Penerima Sharing Nota BRImo */}
+        {onOpenSharedReceipt && (
+          <div
+            id="admin-brimo-shared-receipt-card"
+            onClick={onOpenSharedReceipt}
+            className="p-5 rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50/90 via-white to-indigo-50/60 shadow-md hover:shadow-lg hover:border-blue-400 transition-all cursor-pointer group flex items-center justify-between gap-4 select-none"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpenSharedReceipt();
+              }
+            }}
+            title="Klik untuk membuka Form Penerima Sharing Nota BRImo"
+          >
+            <div className="flex items-center gap-3.5">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 text-white flex items-center justify-center shrink-0 shadow-md shadow-blue-200 group-hover:scale-105 transition-transform">
+                <Share2 className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-blue-600 transition-colors">
+                    Penerima Sharing Nota BRImo
+                  </h3>
+                  <span className="text-[9px] font-bold bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full border border-blue-200">
+                    BRImo Share Target
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 font-medium mt-1">
+                  Buka form penerima dan pencocokan bukti transfer / resi yang dibagikan dari aplikasi BRImo ke pengajuan atau adjustment.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="hidden sm:inline-block text-xs font-semibold text-blue-700 group-hover:text-blue-900 transition-colors">
+                Buka Form
+              </span>
+              <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+                &rarr;
+              </div>
             </div>
           </div>
         )}

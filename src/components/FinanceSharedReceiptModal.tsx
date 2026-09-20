@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { BudgetRequest, RequestStatus, Role, UserProfile, ItemReviewHistory, UsageReportItem, ItemStatus } from '../types';
 import { SharedReceiptRecord, deleteSharedReceipt, clearAllSharedReceipts } from '../lib/sharedReceiptStorage';
 import { ZoomableImage } from './ZoomableImage';
-import { formatDivisiSubDivisi } from '../lib/googleApi';
+import { formatDivisiSubDivisi, generateUniqueUID } from '../lib/googleApi';
 import { getTransferBertahap, isPendingTransferRequest, getFinanceApprovedAmount, isFinanceApprovedOpRequest } from '../App';
 import {
   Share2,
@@ -16,7 +16,14 @@ import {
   UploadCloud,
   Coins,
   ShieldCheck,
-  TrendingDown
+  TrendingDown,
+  Fuel,
+  Calendar,
+  Send,
+  CheckCircle2,
+  RefreshCw,
+  MapPin,
+  ImageIcon
 } from 'lucide-react';
 
 interface FinanceSharedReceiptModalProps {
@@ -26,6 +33,9 @@ interface FinanceSharedReceiptModalProps {
   histories?: ItemReviewHistory[];
   usageItems?: UsageReportItem[];
   profiles?: UserProfile[];
+  userEmail?: string;
+  userProfile?: UserProfile | null;
+  onSubmitTransferBbmDS?: (transferReq: BudgetRequest, photoFile: File | null) => Promise<void>;
   onSelectCandidate: (candidate: BudgetRequest, file: File) => void;
   onSelectAdjustmentUser?: (user: UserProfile, file: File) => void;
   onSwitchToFinanceRole?: () => void;
@@ -39,19 +49,35 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
   histories = [],
   usageItems = [],
   profiles = [],
+  userEmail,
+  userProfile,
+  onSubmitTransferBbmDS,
   onSelectCandidate,
   onSelectAdjustmentUser,
   onSwitchToFinanceRole,
   onClose,
 }) => {
   const isFinance = activeRole === Role.FINANCE;
+  const isAuthorized = activeRole === Role.FINANCE || activeRole === Role.ADMINISTRATOR;
 
-  const [activeTab, setActiveTab] = useState<'TRANSFER' | 'ADJUSTMENT'>('TRANSFER');
+  const [activeTab, setActiveTab] = useState<'TRANSFER' | 'ADJUSTMENT' | 'BBM_DS'>('TRANSFER');
   const [currentBlob, setCurrentBlob] = useState<Blob | null>(sharedRecord?.blob || null);
   const [currentFileName, setCurrentFileName] = useState<string>(sharedRecord?.fileName || 'bukti_transfer.jpg');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [imageUrl, setImageUrl] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // BBM Duren Sawit state
+  const getTodayDateStr = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  const todayStr = getTodayDateStr();
+  const [selectedBbmDate, setSelectedBbmDate] = useState<string>(todayStr);
+  const [isTransferringBbm, setIsTransferringBbm] = useState(false);
 
   useEffect(() => {
     if (sharedRecord?.blob) {
@@ -232,27 +258,202 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
   });
 
   const handleSelect = (req: BudgetRequest) => {
-    const blobToUse = currentBlob || sharedRecord.blob;
-    const fileNameToUse = currentFileName || sharedRecord.fileName;
+    const blobToUse = currentBlob || sharedRecord?.blob;
+    const fileNameToUse = currentFileName || sharedRecord?.fileName || 'bukti_transfer.jpg';
+    if (!blobToUse || blobToUse.size === 0) {
+      alert('Harap pilih atau upload file bukti transfer BRImo terlebih dahulu.');
+      fileInputRef.current?.click();
+      return;
+    }
     const file = new File([blobToUse], fileNameToUse, {
-      type: blobToUse.type || sharedRecord.mimeType || 'image/jpeg',
+      type: blobToUse.type || sharedRecord?.mimeType || 'image/jpeg',
     });
     onSelectCandidate(req, file);
   };
 
   const handleSelectAdjustment = (user: UserProfile) => {
-    const blobToUse = currentBlob || sharedRecord.blob;
-    const fileNameToUse = currentFileName || sharedRecord.fileName;
+    const blobToUse = currentBlob || sharedRecord?.blob;
+    const fileNameToUse = currentFileName || sharedRecord?.fileName || 'bukti_transfer.jpg';
+    if (!blobToUse || blobToUse.size === 0) {
+      alert('Harap pilih atau upload file bukti transfer BRImo terlebih dahulu.');
+      fileInputRef.current?.click();
+      return;
+    }
     const file = new File([blobToUse], fileNameToUse, {
-      type: blobToUse.type || sharedRecord.mimeType || 'image/jpeg',
+      type: blobToUse.type || sharedRecord?.mimeType || 'image/jpeg',
     });
     if (onSelectAdjustmentUser) {
       onSelectAdjustmentUser(user, file);
     }
   };
 
+  // BBM Duren Sawit calculations & logic
+  const allBbmRefillRequests = useMemo(() => {
+    return requests.filter(r => {
+      const isRefill = (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) && !r.id.startsWith('TFDS');
+      if (!isRefill) return false;
+      if (r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED) return false;
+      return true;
+    });
+  }, [requests]);
+
+  const existingTfdsForSelectedDate = useMemo(() => {
+    if (!selectedBbmDate) return null;
+    return requests.find(r => {
+      const isTf = r.id.startsWith('TFDS');
+      if (!isTf) return false;
+      if (r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED) return false;
+      const isSameDate = r.tanggalPemakaian === selectedBbmDate || (r.createdAt && r.createdAt.substring(0, 10) === selectedBbmDate);
+      return isSameDate;
+    });
+  }, [requests, selectedBbmDate]);
+
+  const bbmRequestsForSelectedDate = useMemo(() => {
+    if (!selectedBbmDate) return allBbmRefillRequests;
+    return allBbmRefillRequests.filter(r => {
+      const isSameDate = r.tanggalPemakaian === selectedBbmDate || (r.createdAt && r.createdAt.substring(0, 10) === selectedBbmDate);
+      return isSameDate;
+    });
+  }, [allBbmRefillRequests, selectedBbmDate]);
+
+  const filteredBbmRequests = useMemo(() => {
+    if (!searchQuery.trim()) return bbmRequestsForSelectedDate;
+    const q = searchQuery.toLowerCase();
+    return bbmRequestsForSelectedDate.filter(r => {
+      const user = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
+      const userName = (user?.nama || (user as any)?.name || r.userEmail).toLowerCase();
+      return (
+        r.id.toLowerCase().includes(q) ||
+        r.siteId.toLowerCase().includes(q) ||
+        r.userEmail.toLowerCase().includes(q) ||
+        userName.includes(q) ||
+        (r.keterangan || '').toLowerCase().includes(q)
+      );
+    });
+  }, [bbmRequestsForSelectedDate, searchQuery, profiles]);
+
+  const totalBbmNominalForSelectedDate = useMemo(() => {
+    return bbmRequestsForSelectedDate.reduce((sum, r) => {
+      const item = usageItems.find(it => it.requestId === r.id || it.id.startsWith(r.id) || (it.requestId && r.id.includes(it.requestId)));
+      const nominal = item && item.nominal > 0 ? item.nominal : (r.managerActionAmount || r.totalBudget || 0);
+      return sum + nominal;
+    }, 0);
+  }, [bbmRequestsForSelectedDate, usageItems]);
+
+  const pendingBbmDaysCount = useMemo(() => {
+    const datesWithRefills = new Set<string>();
+    allBbmRefillRequests.forEach(r => {
+      const d = r.tanggalPemakaian || (r.createdAt ? r.createdAt.substring(0, 10) : '');
+      if (d) datesWithRefills.add(d);
+    });
+
+    let pendingDays = 0;
+    datesWithRefills.forEach(d => {
+      const tfExists = requests.some(r => {
+        const isTf = r.id.startsWith('TFDS');
+        if (!isTf) return false;
+        if (r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED) return false;
+        return r.tanggalPemakaian === d || (r.createdAt && r.createdAt.substring(0, 10) === d);
+      });
+      if (!tfExists) {
+        pendingDays++;
+      }
+    });
+    return pendingDays;
+  }, [allBbmRefillRequests, requests]);
+
+  const handleExecuteTransferBbm = async () => {
+    if (!selectedBbmDate) {
+      alert('Pilih tanggal BBM Duren Sawit yang akan ditransfer terlebih dahulu.');
+      return;
+    }
+    if (existingTfdsForSelectedDate) {
+      alert(`BBM Duren Sawit untuk tanggal ${selectedBbmDate} sudah pernah ditransfer (${existingTfdsForSelectedDate.id}).`);
+      return;
+    }
+    if (totalBbmNominalForSelectedDate <= 0) {
+      alert(`Tidak ada nominal BBM Duren Sawit yang perlu ditransfer untuk tanggal ${selectedBbmDate}.`);
+      return;
+    }
+
+    const blobToUse = currentBlob || sharedRecord?.blob;
+    const fileNameToUse = currentFileName || sharedRecord?.fileName || 'bukti_transfer_bbm.jpg';
+    if (!blobToUse || blobToUse.size === 0) {
+      alert('Harap upload atau pilih foto bukti transfer BRImo terlebih dahulu.');
+      fileInputRef.current?.click();
+      return;
+    }
+
+    const file = new File([blobToUse], fileNameToUse, {
+      type: blobToUse.type || sharedRecord?.mimeType || 'image/jpeg',
+    });
+
+    if (!onSubmitTransferBbmDS) {
+      alert('Fungsi submit transfer BBM tidak tersedia.');
+      return;
+    }
+
+    const confirmMsg = `Konfirmasi Transfer BBM Duren Sawit:\n` +
+      `- Tanggal: ${selectedBbmDate}\n` +
+      `- Total Transaksi: ${bbmRequestsForSelectedDate.length} pengisian\n` +
+      `- Total Nominal: ${formatIDR(totalBbmNominalForSelectedDate)}\n` +
+      `- File Bukti: ${file.name}\n\n` +
+      `Apakah Anda yakin ingin memproses transfer BBM ini?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      setIsTransferringBbm(true);
+
+      const dClean = selectedBbmDate.replace(/-/g, '');
+      const uniqueSuffix = Date.now().toString().slice(-4);
+      const customId = `TFDS-${dClean}-${uniqueSuffix}`;
+
+      const formatDisplayDate = (dStr: string) => {
+        if (!dStr) return '';
+        try {
+          const parts = dStr.split('-');
+          if (parts.length === 3) {
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+            return `${parts[2]} ${months[parseInt(parts[1], 10) - 1]} ${parts[0]}`;
+          }
+          return dStr;
+        } catch {
+          return dStr;
+        }
+      };
+
+      const newTransferReq: BudgetRequest = {
+        id: customId,
+        userEmail: userEmail || userProfile?.email || 'finance@system.local',
+        managerEmail: userProfile?.managerEmail || userEmail || 'finance@system.local',
+        tanggalPemakaian: selectedBbmDate,
+        siteId: `Transfer Pengisian BBM Duren Sawit Tanggal ${formatDisplayDate(selectedBbmDate)}`,
+        jumlahPengajuan: totalBbmNominalForSelectedDate,
+        managerActionAmount: totalBbmNominalForSelectedDate,
+        adminActionAmount: totalBbmNominalForSelectedDate,
+        status: RequestStatus.CLOSED,
+        keterangan: `Transfer pengisian BBM Duren Sawit tanggal ${formatDisplayDate(selectedBbmDate)} (${bbmRequestsForSelectedDate.length} pengisian)`,
+        managerComment: 'Disetujui otomatis oleh Finance / Admin via Nota BRImo',
+        adminComment: `Ditransfer via Penerima Sharing Nota BRImo pada ${new Date().toLocaleDateString('id-ID')}`,
+        createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+        timestamp: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
+      };
+
+      await onSubmitTransferBbmDS(newTransferReq, file);
+      await handleDiscard();
+    } catch (err: any) {
+      console.error('Error submitting BBM transfer:', err);
+      alert(`Gagal memproses transfer BBM Duren Sawit: ${err?.message || 'Terjadi kesalahan sistem'}`);
+    } finally {
+      setIsTransferringBbm(false);
+    }
+  };
+
   const handleDiscard = async () => {
-    await deleteSharedReceipt(sharedRecord.id);
+    if (sharedRecord?.id) {
+      await deleteSharedReceipt(sharedRecord.id);
+    }
     await clearAllSharedReceipts();
     onClose();
   };
@@ -268,7 +469,7 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
             </div>
             <div className="min-w-0">
               <h3 className="font-display font-bold text-xs sm:text-sm md:text-base text-white whitespace-nowrap truncate">
-                Bukti Transfer Diterima (Share)
+                Penerima Sharing Nota BRImo
               </h3>
             </div>
           </div>
@@ -282,14 +483,14 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
 
         {/* Content Body */}
         <div className="p-4 sm:p-5 overflow-y-auto space-y-4 flex-1">
-          {!isFinance ? (
+          {!isAuthorized ? (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-amber-900 space-y-3">
               <div className="flex items-start gap-3">
                 <ShieldAlert className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <h4 className="font-bold text-sm text-amber-900">Akses Terbatas untuk Role Finance</h4>
+                  <h4 className="font-bold text-sm text-amber-900">Akses Terbatas untuk Role Finance &amp; Administrator</h4>
                   <p className="text-xs text-amber-800 mt-1 leading-relaxed">
-                    Bukti transfer dari aplikasi perbankan baru saja diterima. Namun, fitur pencocokan dan konfirmasi transfer ini khusus diperuntukkan bagi <strong>Role Finance</strong>.
+                    Bukti transfer dari aplikasi perbankan diterima. Fitur pencocokan dan konfirmasi transfer ini khusus diperuntukkan bagi <strong>Role Finance</strong> dan <strong>Administrator</strong>.
                   </p>
                 </div>
               </div>
@@ -323,11 +524,17 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                       className="max-h-48 sm:max-h-56 object-contain rounded-md"
                     />
                   ) : (
-                    <span className="text-xs text-slate-400">Gambar tidak tersedia</span>
+                    <div className="py-7 px-4 flex flex-col items-center justify-center text-slate-400 gap-1.5">
+                      <Share2 className="w-8 h-8 text-slate-500 opacity-60" />
+                      <span className="text-xs font-medium text-slate-300">Belum ada file nota BRImo yang dipilih</span>
+                      <span className="text-[10px] text-slate-400">Pilih file gambar atau PDF bukti transfer untuk pencocokan</span>
+                    </div>
                   )}
-                  <span className="text-[10px] text-slate-300 font-mono mt-2 bg-black/40 px-2.5 py-0.5 rounded-md truncate max-w-full">
-                    {currentFileName}
-                  </span>
+                  {currentFileName && currentBlob && currentBlob.size > 0 && (
+                    <span className="text-[10px] text-slate-300 font-mono mt-2 bg-black/40 px-2.5 py-0.5 rounded-md truncate max-w-full">
+                      {currentFileName}
+                    </span>
+                  )}
                   
                   {/* File Upload Selector for PC Simulation */}
                   <input
@@ -343,36 +550,42 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                     className="mt-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-3.5 py-1.5 rounded-lg flex items-center justify-center gap-1.5 transition-all shadow-xs cursor-pointer"
                   >
                     <UploadCloud className="w-3.5 h-3.5" />
-                    <span>Ganti / Upload File PC</span>
+                    <span>{imageUrl ? 'Ganti / Upload File Nota' : 'Pilih File Nota BRImo'}</span>
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleDiscard}
-                  className="text-xs text-red-600 hover:text-red-800 font-bold hover:underline cursor-pointer"
-                >
-                  Hapus File Share Ini
-                </button>
+                {currentBlob && currentBlob.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleDiscard}
+                    className="text-xs text-red-600 hover:text-red-800 font-bold hover:underline cursor-pointer"
+                  >
+                    Hapus File Share Ini
+                  </button>
+                )}
               </div>
 
-              {/* Tab Navigation: Menunggu Transfer vs Perlu Adjusment */}
-              <div className="flex border-b border-slate-200 bg-slate-50/80 rounded-xl p-1 gap-1">
+              {/* Tab Navigation: Menunggu Transfer vs Perlu Adjusment vs BBM Duren Sawit */}
+              <div className="grid grid-cols-3 border-b border-slate-200 bg-slate-50/80 rounded-xl p-1 gap-1 w-full">
                 <button
                   type="button"
                   onClick={() => {
                     setActiveTab('TRANSFER');
                     setSearchQuery('');
                   }}
-                  className={`flex-1 py-2 px-3 text-xs font-bold rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  className={`py-1.5 sm:py-2 px-1 sm:px-2 rounded-lg flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 transition-all cursor-pointer text-center min-w-0 ${
                     activeTab === 'TRANSFER'
                       ? 'bg-white text-indigo-700 shadow-xs border border-slate-200/80'
                       : 'text-slate-500 hover:text-slate-800 hover:bg-white/50'
                   }`}
                 >
-                  <FileCheck className="w-4 h-4 text-indigo-600 shrink-0" />
-                  <span>Menunggu Transfer</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                  <div className="flex items-center justify-center gap-1 min-w-0">
+                    <FileCheck className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                    <span className="text-[11px] sm:text-xs font-bold truncate">
+                      Transfer
+                    </span>
+                  </div>
+                  <span className={`text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
                     activeTab === 'TRANSFER' ? 'bg-indigo-100 text-indigo-800' : 'bg-slate-200 text-slate-600'
                   }`}>
                     {pendingTransferRequests.length}
@@ -385,18 +598,47 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                     setActiveTab('ADJUSTMENT');
                     setSearchQuery('');
                   }}
-                  className={`flex-1 py-2 px-3 text-xs font-bold rounded-lg flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                  className={`py-1.5 sm:py-2 px-1 sm:px-2 rounded-lg flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 transition-all cursor-pointer text-center min-w-0 ${
                     activeTab === 'ADJUSTMENT'
                       ? 'bg-white text-rose-700 shadow-xs border border-slate-200/80'
                       : 'text-slate-500 hover:text-slate-800 hover:bg-white/50'
                   }`}
                 >
-                  <Coins className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>Perlu Adjusment</span>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold ${
+                  <div className="flex items-center justify-center gap-1 min-w-0">
+                    <Coins className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                    <span className="text-[11px] sm:text-xs font-bold truncate">
+                      Adjustment
+                    </span>
+                  </div>
+                  <span className={`text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
                     activeTab === 'ADJUSTMENT' ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-600'
                   }`}>
                     {minusBalanceUsers.length}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('BBM_DS');
+                    setSearchQuery('');
+                  }}
+                  className={`py-1.5 sm:py-2 px-1 sm:px-2 rounded-lg flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-1.5 transition-all cursor-pointer text-center min-w-0 ${
+                    activeTab === 'BBM_DS'
+                      ? 'bg-white text-amber-700 shadow-xs border border-slate-200/80'
+                      : 'text-slate-500 hover:text-slate-800 hover:bg-white/50'
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-1 min-w-0">
+                    <Fuel className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span className="text-[11px] sm:text-xs font-bold truncate">
+                      BBM Sawit
+                    </span>
+                  </div>
+                  <span className={`text-[9px] sm:text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold shrink-0 ${
+                    activeTab === 'BBM_DS' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    {pendingBbmDaysCount}
                   </span>
                 </button>
               </div>
@@ -552,7 +794,7 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                     </div>
                   )}
                 </div>
-              ) : (
+              ) : activeTab === 'ADJUSTMENT' ? (
                 /* Tab 2: Perlu Adjusment */
                 <div className="space-y-3 pt-1">
                   <div className="space-y-2">
@@ -658,6 +900,189 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                                 <ArrowRight className="w-3.5 h-3.5" />
                               </button>
                             </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                /* Tab 3: Transfer BBM Duren Sawit */
+                <div className="space-y-3 pt-1">
+                  {/* Filter Tanggal & Search BBM */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 sm:p-4 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <Fuel className="w-4 h-4 text-amber-600" />
+                        <span className="font-bold text-xs sm:text-sm text-slate-800">
+                          Transfer Pengisian BBM Duren Sawit
+                        </span>
+                      </div>
+                      {selectedBbmDate !== todayStr && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedBbmDate(todayStr)}
+                          className="text-[11px] font-bold text-amber-600 hover:text-amber-800 underline cursor-pointer"
+                        >
+                          Kembali ke Hari Ini ({todayStr})
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {/* Date Picker */}
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1">
+                          <Calendar className="w-3 h-3 text-amber-600" />
+                          <span>Pilih Tanggal Pengisian</span>
+                        </label>
+                        <input
+                          type="date"
+                          value={selectedBbmDate}
+                          onChange={(e) => setSelectedBbmDate(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all cursor-pointer"
+                        />
+                      </div>
+
+                      {/* Search */}
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-1">
+                          <Search className="w-3 h-3 text-slate-400" />
+                          <span>Cari Transaksi BBM</span>
+                        </label>
+                        <div className="relative">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                          <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder="Cari user, site, ID BBM..."
+                            className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 outline-none transition-all"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Summary Ringkasan BBM Tanggal Terpilih */}
+                    <div className="p-3 bg-amber-50/80 border border-amber-200/80 rounded-xl flex items-center justify-between flex-wrap gap-2">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                          <span className="text-xs font-bold text-amber-900">
+                            Tanggal: {selectedBbmDate || 'Semua Tanggal'}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600">
+                          Total: <strong className="text-slate-800">{bbmRequestsForSelectedDate.length}</strong> pengisian • Total Nominal:{' '}
+                          <strong className="text-amber-700 font-extrabold">{formatIDR(totalBbmNominalForSelectedDate)}</strong>
+                        </p>
+                      </div>
+
+                      <div>
+                        {existingTfdsForSelectedDate ? (
+                          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                            <span>Sudah Ditransfer ({existingTfdsForSelectedDate.id})</span>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={isTransferringBbm || totalBbmNominalForSelectedDate <= 0 || !selectedBbmDate}
+                            onClick={handleExecuteTransferBbm}
+                            className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer ${
+                              isTransferringBbm || totalBbmNominalForSelectedDate <= 0 || !selectedBbmDate
+                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
+                                : 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200 active:scale-95'
+                            }`}
+                          >
+                            <Send className="w-3.5 h-3.5" />
+                            <span>{isTransferringBbm ? 'Memproses Transfer...' : 'Transfer BBM Tanggal Ini'}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* List Pengisian BBM */}
+                  {filteredBbmRequests.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                      <Fuel className="w-8 h-8 text-slate-300 mx-auto" />
+                      <p className="text-xs font-bold text-slate-600">
+                        Tidak Ada Transaksi BBM Duren Sawit
+                      </p>
+                      <p className="text-[11px] text-slate-400 max-w-sm mx-auto">
+                        {selectedBbmDate
+                          ? `Belum ada pengisian BBM Duren Sawit tercatat pada tanggal ${selectedBbmDate}.`
+                          : 'Tidak ada pengisian BBM yang sesuai dengan pencarian.'}
+                      </p>
+                      {selectedBbmDate && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedBbmDate('')}
+                          className="mt-2 inline-flex items-center gap-1 text-xs text-amber-600 font-bold hover:underline cursor-pointer"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Lihat Semua Tanggal</span>
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5 max-h-[48vh] overflow-y-auto pr-1">
+                      {filteredBbmRequests.map((req) => {
+                        const user = profiles.find(p => p.email.toLowerCase() === req.userEmail.toLowerCase());
+                        const userName = user?.nama || (user as any)?.name || req.userEmail;
+                        const usageItem = usageItems.find(it => it.requestId === req.id || it.id.startsWith(req.id) || (it.requestId && req.id.includes(it.requestId)));
+                        const itemNominal = usageItem && usageItem.nominal > 0 ? usageItem.nominal : (req.managerActionAmount || req.totalBudget || 0);
+
+                        return (
+                          <div
+                            key={req.id}
+                            className="p-3.5 rounded-xl border transition-all flex flex-col gap-2 bg-white border-slate-200 hover:border-amber-300 hover:bg-amber-50/20 shadow-xs w-full"
+                          >
+                            {/* Baris 1: ID & Status */}
+                            <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2 w-full">
+                              <span className="font-mono font-bold text-xs text-amber-900 bg-amber-50 px-2.5 py-0.5 rounded-md border border-amber-200 shrink-0">
+                                {req.id}
+                              </span>
+                              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border shrink-0 bg-amber-50 text-amber-700 border-amber-200">
+                                BBM Duren Sawit
+                              </span>
+                            </div>
+
+                            {/* Baris 2: Pemohon & Divisi */}
+                            <div className="flex items-center justify-between gap-2 text-xs w-full">
+                              <div className="text-slate-700 truncate min-w-0">
+                                <span className="text-[10px] text-slate-400 mr-1.5 font-semibold">Pengisi / Driver:</span>
+                                <span className="font-bold text-slate-900">{userName}</span>
+                              </div>
+                              <div className="text-slate-700 text-right shrink-0">
+                                <span className="text-[10px] text-slate-400 mr-1.5 font-semibold">Tanggal:</span>
+                                <span className="font-semibold text-slate-800">{req.tanggalPemakaian || '-'}</span>
+                              </div>
+                            </div>
+
+                            {/* Baris 3: Lokasi & Nominal */}
+                            <div className="flex items-center justify-between gap-2 text-xs w-full">
+                              <div className="text-slate-600 flex items-center gap-1">
+                                <MapPin className="w-3 h-3 text-indigo-500 shrink-0" />
+                                <span className="text-[11px] font-bold text-slate-800">{req.siteId || 'OPT-DUREN SAWIT'}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-[10px] text-slate-400 mr-1.5 font-semibold">Nominal:</span>
+                                <span className="font-extrabold text-amber-700 text-sm">
+                                  {formatIDR(itemNominal)}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Baris 4: Keterangan jika ada */}
+                            {req.keterangan && (
+                              <div className="w-full pt-0.5">
+                                <p className="w-full text-[11px] text-slate-600 italic bg-slate-50 p-2 rounded-lg border border-slate-200 leading-relaxed">
+                                  "{req.keterangan}"
+                                </p>
+                              </div>
+                            )}
                           </div>
                         );
                       })}

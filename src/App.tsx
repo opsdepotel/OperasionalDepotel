@@ -569,17 +569,17 @@ export default function App() {
 
         if (record) {
           if (userProfile) {
-            // User IS ALREADY LOGGED IN: Check if userID has Role Finance
-            if (userProfile.role === Role.FINANCE) {
+            // User IS ALREADY LOGGED IN: Check if userID has Role Finance or Administrator
+            if (userProfile.role === Role.FINANCE || userProfile.role === Role.ADMINISTRATOR) {
               setPendingSharedRecord(record);
-              if (activeRole !== Role.FINANCE) {
+              if (userProfile.role === Role.FINANCE && activeRole !== Role.FINANCE) {
                 setActiveRole(Role.FINANCE);
               }
               setDashboardTab('APPROVAL');
               setStatusFilter('APPROVED');
               setActiveView('dashboard');
             } else {
-              // User IS LOGGED IN, BUT DOES NOT HAVE ROLE FINANCE -> Cancel process & show notification
+              // User IS LOGGED IN, BUT DOES NOT HAVE ROLE FINANCE OR ADMINISTRATOR -> Cancel process & show notification
               setPendingSharedRecord(null);
               await deleteSharedReceipt(record.id);
               setShareAccessDeniedModal({
@@ -1781,6 +1781,33 @@ export default function App() {
       return result;
     }
     return null;
+  };
+
+  // Open Shared Receipt Form (Brimo) for Administrator / Finance
+  const handleOpenSharedReceiptForm = async () => {
+    try {
+      const latest = await getLatestSharedReceipt();
+      if (latest) {
+        setPendingSharedRecord(latest);
+      } else {
+        setPendingSharedRecord({
+          id: 'admin_preview_' + Date.now(),
+          blob: new Blob([], { type: 'image/jpeg' }),
+          fileName: 'nota_brimo.jpg',
+          mimeType: 'image/jpeg',
+          timestamp: Date.now(),
+        });
+      }
+    } catch (err) {
+      console.error('Error opening shared receipt form:', err);
+      setPendingSharedRecord({
+        id: 'admin_preview_' + Date.now(),
+        blob: new Blob([], { type: 'image/jpeg' }),
+        fileName: 'nota_brimo.jpg',
+        mimeType: 'image/jpeg',
+        timestamp: Date.now(),
+      });
+    }
   };
 
   // Profile Update Password
@@ -4133,6 +4160,7 @@ export default function App() {
                   onManageUsers={() => setActiveView('setup-profile')}
                   onOpenUserDashboardPreview={() => setIsUserDashboardPreviewModalOpen(true)}
                   onOpenPushTest={() => setActiveView('push-test')}
+                  onOpenSharedReceipt={handleOpenSharedReceiptForm}
                   onOpenAdjustment={() => setActiveView('adjustment')}
                   onOpenTransferList={() => setActiveView('transfer-list')}
                   onOpenReportsModal={() => setIsFinancialReportsModalOpen(true)}
@@ -5475,6 +5503,9 @@ export default function App() {
           histories={itemReviewHistories}
           usageItems={usageItems}
           profiles={profiles}
+          userEmail={userProfile?.email}
+          userProfile={userProfile}
+          onSubmitTransferBbmDS={handleTransferBbmDSSubmit}
           onSwitchToFinanceRole={() => {
             setActiveRole(Role.FINANCE);
             setDashboardTab('APPROVAL');
@@ -5494,7 +5525,7 @@ export default function App() {
             setPendingSharedRecord(null);
           }}
           onClose={async () => {
-            if (pendingSharedRecord?.id) {
+            if (pendingSharedRecord?.id && !pendingSharedRecord.id.startsWith('admin_preview_')) {
               await deleteSharedReceipt(pendingSharedRecord.id);
             }
             await clearAllSharedReceipts();
