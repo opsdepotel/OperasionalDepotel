@@ -894,14 +894,24 @@ export async function validateDeviceAccessAndBind(
       };
     }
 
-    // First time mobile access for this mobile user => Bind fresh cryptographic UUID!
-    const newUUID = generateRandomUUID();
+    // First time mobile access or after Admin Reset => Bind cryptographic UUID
+    // Check if the current device already holds a valid DEV-UUID with matching physical hardware signature
+    const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
+    const parts = (currentDeviceId || '').toLowerCase().split('-');
+    const hasValidExistingDevId =
+      currentDeviceId &&
+      currentDeviceId.toUpperCase().startsWith('DEV-UUID-') &&
+      parts.length >= 4 &&
+      parts[2].length === 8 &&
+      parts[2] === currentHwSig;
+
+    const deviceIdToBind = hasValidExistingDevId ? currentDeviceId : generateRandomUUID();
     const updatedUser: UserProfile = {
       ...user,
-      deviceId: newUUID
+      deviceId: deviceIdToBind
     };
 
-    syncDeviceIdToAllStores(newUUID, user.email);
+    syncDeviceIdToAllStores(deviceIdToBind, user.email);
 
     if (saveProfileFn) {
       try {

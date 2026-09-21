@@ -58,7 +58,7 @@ import {
   fetchGlobalConfig
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
-import { validateDeviceAccessAndBind, requestPersistentStorage, isMobileDevice, generateHardwareFingerprint, isCurrentDeviceValidForUserSync } from './lib/deviceUtils';
+import { validateDeviceAccessAndBind, requestPersistentStorage, isMobileDevice, generateHardwareFingerprint, isCurrentDeviceValidForUserSync, getBrowserAgnosticHardwareSignature } from './lib/deviceUtils';
 import { safeSetItem, safeSetJson } from './lib/storage';
 
 // Components
@@ -967,6 +967,8 @@ export default function App() {
       const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
       const cleanSavedId = (savedUserId || '').trim().toLowerCase();
 
+      let activeLoggedInProfile: UserProfile | null = null;
+
       setUserProfile(prev => {
         const target = prev || (cleanSavedId ? mergedProfs.find(p => 
           (p.userId && p.userId.trim().toLowerCase() === cleanSavedId) || 
@@ -1005,31 +1007,49 @@ export default function App() {
           }
 
           setActiveRole(updatedProfile.role);
+          activeLoggedInProfile = updatedProfile;
           return updatedProfile;
         }
 
         return null;
       });
 
-      // Auto-upgrade legacy DEV-MOB deviceId to cryptographically secure UUID for active mobile session
-      if (userProfile && (userProfile.mobile === true || String(userProfile.mobile).trim().toUpperCase() === 'TRUE')) {
-        if (userProfile.deviceId && !userProfile.deviceId.toLowerCase().startsWith('dev-uuid-') && isCurrentDeviceValidForUserSync(userProfile)) {
-          validateDeviceAccessAndBind(
-            userProfile,
-            async (upgraded) => {
-              try {
-                await saveUserProfile(accessToken, sheetId, upgraded);
-              } catch (e) {
-                console.warn('Auto-upgrade deviceId background sync error:', e);
+      // Seamless Background Auto-Bind and Auto-Upgrade for active mobile session
+      const profToBind = activeLoggedInProfile || userProfile;
+      if (profToBind) {
+        const isMobileUser =
+          profToBind.mobile === true ||
+          String(profToBind.mobile).trim().toUpperCase() === 'TRUE' ||
+          String(profToBind.mobile).trim().toUpperCase() === 'YA' ||
+          String(profToBind.mobile).trim() === '1';
+
+        if (isMobileUser && isMobileDevice()) {
+          const currentDevId = (profToBind.deviceId || '').trim();
+          const isDevIdEmpty = !currentDevId;
+          const isLegacyFormat = currentDevId && !currentDevId.toLowerCase().startsWith('dev-uuid-');
+          const parts = currentDevId.toLowerCase().split('-');
+          const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
+          const needsHwSigUpgrade = currentDevId.toLowerCase().startsWith('dev-uuid-') && (parts.length < 4 || parts[2].length !== 8 || parts[2] !== currentHwSig);
+
+          // Trigger Seamless Background Auto-Bind when DeviceID in DB is empty OR needs format/signature upgrade
+          if (isDevIdEmpty || ((isLegacyFormat || needsHwSigUpgrade) && isCurrentDeviceValidForUserSync(profToBind))) {
+            validateDeviceAccessAndBind(
+              profToBind,
+              async (boundProfile) => {
+                try {
+                  await saveUserProfile(accessToken, sheetId, boundProfile);
+                } catch (e) {
+                  console.warn('Seamless Auto-bind/Upgrade deviceId background sync error:', e);
+                }
+              },
+              allProfs
+            ).then((res) => {
+              if (res.success && res.updatedUser) {
+                setUserProfile(res.updatedUser);
+                setProfiles(prev => prev.map(p => p.email.toLowerCase() === res.updatedUser!.email.toLowerCase() ? res.updatedUser! : p));
               }
-            },
-            allProfs
-          ).then((res) => {
-            if (res.success && res.updatedUser) {
-              setUserProfile(res.updatedUser);
-              setProfiles(prev => prev.map(p => p.email.toLowerCase() === res.updatedUser!.email.toLowerCase() ? res.updatedUser! : p));
-            }
-          }).catch(console.warn);
+            }).catch(console.warn);
+          }
         }
       }
 
@@ -2931,6 +2951,34 @@ export default function App() {
       safeSetJson('op_app_cached_activities', allActs, 30);
     } catch (fetchErr) {
       setActivities(prev => [newActivity, ...prev]);
+    }
+
+    // Seamless Background Auto-Bind check on activity submission
+    if (userProfile) {
+      const isMobileUser =
+        userProfile.mobile === true ||
+        String(userProfile.mobile).trim().toUpperCase() === 'TRUE' ||
+        String(userProfile.mobile).trim().toUpperCase() === 'YA' ||
+        String(userProfile.mobile).trim() === '1';
+
+      if (isMobileUser && isMobileDevice() && !userProfile.deviceId) {
+        validateDeviceAccessAndBind(
+          userProfile,
+          async (boundProfile) => {
+            try {
+              await saveUserProfile(activeToken, spreadsheetId, boundProfile);
+            } catch (e) {
+              console.warn('Auto-bind on activity submission error:', e);
+            }
+          },
+          profiles
+        ).then((res) => {
+          if (res.success && res.updatedUser) {
+            setUserProfile(res.updatedUser);
+            setProfiles(prev => prev.map(p => p.email.toLowerCase() === res.updatedUser!.email.toLowerCase() ? res.updatedUser! : p));
+          }
+        }).catch(console.warn);
+      }
     }
   };
 

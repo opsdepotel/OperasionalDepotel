@@ -1991,12 +1991,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             }`}
           >
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">REVIEW PENGAJUAN</p>
-            <div className="flex items-end justify-between mt-2">
-              <div>
-                <span className="text-3xl font-display font-bold text-slate-900">{pendingFinanceBudgetReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <p className="text-xs font-bold text-indigo-700 mt-1">{formatIDR(pendingFinanceBudgetReviewAmount)}</p>
-              </div>
-              <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">REVIEW</span>
+            <div className="mt-2">
+              <span className="text-3xl font-display font-bold text-slate-900">{pendingFinanceBudgetReview} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <p className="text-xs font-bold text-indigo-700 mt-1">{formatIDR(pendingFinanceBudgetReviewAmount)}</p>
             </div>
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Pengajuan Anggaran yang perlu persetujuan</p>
           </div>
@@ -2008,12 +2005,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             }`}
           >
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">BELUM DITRANSFER</p>
-            <div className="flex items-end justify-between mt-2">
-              <div>
-                <span className="text-3xl font-display font-bold text-slate-900">{pendingTransfer} <span className="text-xs text-slate-400 font-normal">UID</span></span>
-                <p className="text-xs font-bold text-amber-700 mt-1">{formatIDR(pendingTransferAmount)}</p>
-              </div>
-              <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md uppercase tracking-wider">Pencairan</span>
+            <div className="mt-2">
+              <span className="text-3xl font-display font-bold text-slate-900">{pendingTransfer} <span className="text-xs text-slate-400 font-normal">UID</span></span>
+              <p className="text-xs font-bold text-amber-700 mt-1">{formatIDR(pendingTransferAmount)}</p>
             </div>
             <p className="text-[9px] text-slate-400 mt-2 font-medium">Pengajuan siap diproses transfer dana</p>
           </div>
