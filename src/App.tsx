@@ -5054,6 +5054,30 @@ export default function App() {
                                           Rincian Laporan
                                         </button>
                                       )}
+
+                                      {req.status === RequestStatus.REJECTED && (dashboardTab === 'SUBMISSION' || req.userEmail.toLowerCase() === (userProfile?.email || '').toLowerCase()) && (
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setEditingRequest(req);
+                                              setActiveView('new-request');
+                                            }}
+                                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
+                                          >
+                                            <Edit2 className="w-3.5 h-3.5" />
+                                            <span>Revisi</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setCancelConfirmReq(req)}
+                                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                          >
+                                            <XCircle className="w-3.5 h-3.5" />
+                                            <span>Batalkan</span>
+                                          </button>
+                                        </div>
+                                      )}
                                     </>
                                   )}
 
@@ -5273,6 +5297,30 @@ export default function App() {
                                             >
                                               Rincian Laporan
                                             </button>
+                                          )}
+
+                                          {req.status === RequestStatus.REJECTED && (dashboardTab === 'SUBMISSION' || req.userEmail.toLowerCase() === (userProfile?.email || '').toLowerCase()) && (
+                                            <div className="flex items-center gap-1.5">
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setEditingRequest(req);
+                                                  setActiveView('new-request');
+                                                }}
+                                                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
+                                              >
+                                                <Edit2 className="w-3.5 h-3.5" />
+                                                <span>Revisi</span>
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => setCancelConfirmReq(req)}
+                                                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                              >
+                                                <XCircle className="w-3.5 h-3.5" />
+                                                <span>Batalkan</span>
+                                              </button>
+                                            </div>
                                           )}
                                         </>
                                       )}
