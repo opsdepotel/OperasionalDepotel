@@ -199,10 +199,17 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   ).sort();
 
   // Helper check for BBMDS & Talangan requests
-  const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+  const isBbmRequestAdmin = (r: BudgetRequest) => 
+    r.id.startsWith('BBMDS') || 
+    r.id.startsWith('BBM_DurenSawit') || 
+    r.id.startsWith('TFDS') || 
+    r.siteId === 'OPT-DUREN SAWIT' ||
+    r.siteId === 'BBM DUREN SAWIT' ||
+    (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
+    r.keterangan?.toUpperCase().includes('DUREN SAWIT');
   const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
-  const isTalanganRequestAdmin = (r: BudgetRequest) => (r.id.startsWith('OPT-') || r.siteId?.startsWith('OPT-') || (r.keterangan || '').toUpperCase().includes('TALANGAN')) && !isBbmRequestAdmin(r);
+  const isTalanganRequestAdmin = (r: BudgetRequest) => r.id.startsWith('OPT-') && !isBbmRequestAdmin(r);
 
   // 1. FILTERED TRANSFER DATA
   const filteredTransfers = useMemo(() => {
