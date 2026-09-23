@@ -233,24 +233,91 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
     }
   }, [initialUserEmail, uniqueProfiles, profiles, initialFile, selectedUser]);
 
-  // Filter unbalanced users
-  const unbalancedUsers = uniqueProfiles.filter(user => {
-    // Exclude users with role ADMIN if they don't have transaction history, or keep them. Let's include all registered profiles with non-zero balance.
-    const balance = getUserBalance(user.email);
-    const matchSearch = 
-      user.nama?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.divisi?.toLowerCase().includes(searchQuery.toLowerCase());
-    return Math.abs(balance) > 0.01 && matchSearch;
-  });
+  type UserCategoryFilter = 'LEBIH' | 'KURANG' | 'BALANCED';
+  const [categoryFilter, setCategoryFilter] = useState<UserCategoryFilter>('LEBIH');
+
+  // User categorization based on balance (strictly OP-, OPT-, ADJ-, excluding BBM)
+  const categorizedUsers = useMemo(() => {
+    return uniqueProfiles.map(user => {
+      const email = (user.email || '').toLowerCase().trim();
+      const userReqs = requests.filter(r => 
+        (r.userEmail || '').toLowerCase().trim() === email && 
+        !isBbmRequest(r)
+      );
+      const userReqIds = userReqs.map(r => r.id);
+      const userUsage = usageItems.filter(item => 
+        (userReqIds.includes(item.requestId) || (item.userEmail && item.userEmail.toLowerCase().trim() === email)) && 
+        !isBbmUsageItem(item)
+      );
+      const hasTransactions = userReqs.length > 0 || userUsage.length > 0;
+
+      const balance = getUserBalance(user.email);
+      const isLebih = balance > 0.01;
+      const isKurang = balance < -0.01;
+      // Saldo Balanced (0) hanya untuk user yang pernah ada transaksi dan saldonya 0
+      const isBalanced = Math.abs(balance) <= 0.01 && hasTransactions;
+
+      return {
+        user,
+        balance,
+        hasTransactions,
+        isLebih,
+        isKurang,
+        isBalanced
+      };
+    });
+  }, [uniqueProfiles, requests, usageItems]);
+
+  const countLebih = useMemo(() => categorizedUsers.filter(u => u.isLebih).length, [categorizedUsers]);
+  const countKurang = useMemo(() => categorizedUsers.filter(u => u.isKurang).length, [categorizedUsers]);
+  const countUnbalanced = countLebih + countKurang;
+  const countBalanced = useMemo(() => categorizedUsers.filter(u => u.isBalanced).length, [categorizedUsers]);
+
+  // Nominal calculations for each category
+  const totalNominalLebih = useMemo(() => {
+    return categorizedUsers
+      .filter(u => u.isLebih)
+      .reduce((sum, u) => sum + Math.abs(u.balance), 0);
+  }, [categorizedUsers]);
+
+  const totalNominalKurang = useMemo(() => {
+    return categorizedUsers
+      .filter(u => u.isKurang)
+      .reduce((sum, u) => sum + Math.abs(u.balance), 0);
+  }, [categorizedUsers]);
+
+  const totalNominalUnbalanced = totalNominalLebih + totalNominalKurang;
+
+  // Filtered users for display based on selected category tab and search query
+  const displayedUsers = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    return categorizedUsers
+      .filter(({ user, isLebih, isKurang, isBalanced }) => {
+        // Category tab filter
+        if (categoryFilter === 'LEBIH' && !isLebih) return false;
+        if (categoryFilter === 'KURANG' && !isKurang) return false;
+        if (categoryFilter === 'BALANCED' && !isBalanced) return false;
+
+        // Search query filter
+        if (!q) return true;
+        return (
+          (user.nama || '').toLowerCase().includes(q) ||
+          (user.email || '').toLowerCase().includes(q) ||
+          (user.divisi || '').toLowerCase().includes(q)
+        );
+      })
+      .map(item => item.user);
+  }, [categorizedUsers, categoryFilter, searchQuery]);
+
+  // Filter unbalanced users (for fallback / backward compatibility)
+  const unbalancedUsers = useMemo(() => {
+    return categorizedUsers.filter(u => u.isLebih || u.isKurang).map(u => u.user);
+  }, [categorizedUsers]);
 
   // Calculate total required adjustment nominal for all unbalanced users
   const totalAdjustmentNominalAllUsers = useMemo(() => {
-    return unbalancedUsers.reduce((sum, user) => {
-      const summary = getUserSummary(user.email);
-      return sum + summary.requiredNominal;
-    }, 0);
-  }, [unbalancedUsers, requests, usageItems]);
+    return totalNominalUnbalanced;
+  }, [totalNominalUnbalanced]);
 
   // Adjustment transaction history
   const adjustmentHistoryRequests = useMemo(() => {
@@ -1045,20 +1112,110 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       </div>
 
       <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3">
-        <h3 className="font-display font-black text-slate-800 text-xs tracking-wide uppercase">Adjustment Saldo Operasional</h3>
-        <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
-          Daftar seluruh user dengan saldo operasional yang tidak balance (lebih atau kurang). Klik pada kartu user untuk memproses penyesuaian saldo ke <strong>Rp 0 (Balance)</strong>.
-        </p>
+        <div>
+          <h3 className="font-display font-black text-slate-800 text-xs tracking-wide uppercase">Adjustment Saldo Operasional</h3>
+          <p className="text-[11px] text-slate-500 leading-relaxed font-medium mt-0.5">
+            Daftar pengelompokan saldo operasional user berdasarkan kategori (Saldo Lebih, Saldo Kurang, dan Saldo Balanced).
+          </p>
+        </div>
 
-        {/* Ringkasan Total Nominal Adjustment */}
+        {/* Filter Kategori Tabs (3 Tab Filter: Saldo Lebih (+), Saldo Kurang (-), Saldo Balanced (0)) */}
+        <div className="grid grid-cols-3 gap-1 p-1 bg-slate-200/70 rounded-xl border border-slate-200/80 text-[10px] sm:text-xs font-bold">
+          <button
+            type="button"
+            onClick={() => setCategoryFilter('LEBIH')}
+            className={`px-1.5 py-2 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 min-w-0 cursor-pointer ${
+              categoryFilter === 'LEBIH'
+                ? 'bg-white text-blue-700 shadow-xs border border-slate-200/80 font-extrabold'
+                : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
+            }`}
+          >
+            <span className="truncate">Saldo Lebih (+)</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-mono leading-none shrink-0 ${
+              categoryFilter === 'LEBIH' ? 'bg-blue-100 text-blue-700 font-bold' : 'bg-slate-300/80 text-slate-700'
+            }`}>
+              {countLebih}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCategoryFilter('KURANG')}
+            className={`px-1.5 py-2 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 min-w-0 cursor-pointer ${
+              categoryFilter === 'KURANG'
+                ? 'bg-white text-rose-700 shadow-xs border border-slate-200/80 font-extrabold'
+                : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
+            }`}
+          >
+            <span className="truncate">Saldo Kurang (-)</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-mono leading-none shrink-0 ${
+              categoryFilter === 'KURANG' ? 'bg-rose-100 text-rose-700 font-bold' : 'bg-slate-300/80 text-slate-700'
+            }`}>
+              {countKurang}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCategoryFilter('BALANCED')}
+            className={`px-1.5 py-2 sm:py-1.5 rounded-lg transition-all flex items-center justify-center gap-1 min-w-0 cursor-pointer ${
+              categoryFilter === 'BALANCED'
+                ? 'bg-white text-emerald-700 shadow-xs border border-slate-200/80 font-extrabold'
+                : 'text-slate-600 hover:text-slate-800 hover:bg-white/60'
+            }`}
+          >
+            <span className="truncate">Saldo Balanced (0)</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-mono leading-none shrink-0 ${
+              categoryFilter === 'BALANCED' ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-300/80 text-slate-700'
+            }`}>
+              {countBalanced}
+            </span>
+          </button>
+        </div>
+
+        {/* Ringkasan Total Nominal Berdasarkan Filter */}
         <div className="grid grid-cols-2 gap-3 pt-1">
           <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm text-left">
-            <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">User Membutuhkan Adjustment</span>
-            <span className="text-sm font-black font-display text-slate-800">{unbalancedUsers.length} <span className="text-xs font-normal text-slate-500">User</span></span>
+            <span className="text-[9px] font-bold text-slate-400 block uppercase tracking-wider">
+              {categoryFilter === 'LEBIH' && 'User dengan Saldo Lebih (+)'}
+              {categoryFilter === 'KURANG' && 'User dengan Saldo Kurang (-)'}
+              {categoryFilter === 'BALANCED' && 'User Saldo Balanced (0)'}
+            </span>
+            <span className="text-sm font-black font-display text-slate-800">
+              {categoryFilter === 'LEBIH' && `${countLebih} User`}
+              {categoryFilter === 'KURANG' && `${countKurang} User`}
+              {categoryFilter === 'BALANCED' && `${countBalanced} User`}
+            </span>
           </div>
-          <div className="bg-indigo-50/80 p-3 rounded-xl border border-indigo-100 shadow-sm text-left">
-            <span className="text-[9px] font-bold text-indigo-500 block uppercase tracking-wider">Total Nominal Adjustment Saldo</span>
-            <span className="text-sm font-black font-mono font-display text-indigo-700 block">{formatIDR(totalAdjustmentNominalAllUsers)}</span>
+          <div className={`p-3 rounded-xl border shadow-sm text-left ${
+            categoryFilter === 'LEBIH'
+              ? 'bg-blue-50/80 border-blue-100'
+              : categoryFilter === 'KURANG'
+              ? 'bg-rose-50/80 border-rose-100'
+              : 'bg-emerald-50/80 border-emerald-100'
+          }`}>
+            <span className={`text-[9px] font-bold block uppercase tracking-wider ${
+              categoryFilter === 'LEBIH'
+                ? 'text-blue-500'
+                : categoryFilter === 'KURANG'
+                ? 'text-rose-500'
+                : 'text-emerald-600'
+            }`}>
+              {categoryFilter === 'LEBIH' && 'Total Sisa Lebih Dana Kantor'}
+              {categoryFilter === 'KURANG' && 'Total Kekurangan Dana User'}
+              {categoryFilter === 'BALANCED' && 'Status Rekonsiliasi'}
+            </span>
+            <span className={`text-sm font-black font-mono font-display block ${
+              categoryFilter === 'LEBIH'
+                ? 'text-blue-700'
+                : categoryFilter === 'KURANG'
+                ? 'text-rose-700'
+                : 'text-emerald-700'
+            }`}>
+              {categoryFilter === 'LEBIH' && `+${formatIDR(totalNominalLebih)}`}
+              {categoryFilter === 'KURANG' && `-${formatIDR(totalNominalKurang)}`}
+              {categoryFilter === 'BALANCED' && 'SEIMBANG (Rp 0)'}
+            </span>
           </div>
         </div>
 
@@ -1067,7 +1224,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Cari user berdasarkan nama atau email..."
+            placeholder="Cari user berdasarkan nama, email, atau divisi..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
@@ -1076,14 +1233,15 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
       </div>
 
       {/* Users List Grid */}
-      {unbalancedUsers.length > 0 ? (
+      {displayedUsers.length > 0 ? (
         <div className="grid grid-cols-1 gap-3.5">
-          {unbalancedUsers.map((user, idx) => {
+          {displayedUsers.map((user, idx) => {
             const userGlobalBalance = getUserBalance(user.email);
             const summary = getUserSummary(user.email);
             const talanganSummary = getTalanganSummary(user.email);
-            const isGlobalPositive = userGlobalBalance > 0;
-            const isGlobalNegative = userGlobalBalance < 0;
+            const isGlobalPositive = userGlobalBalance > 0.01;
+            const isGlobalNegative = userGlobalBalance < -0.01;
+            const isGlobalBalanced = Math.abs(userGlobalBalance) <= 0.01;
 
             return (
               <div
@@ -1092,7 +1250,13 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border bg-slate-50 text-slate-600 border-slate-100">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                      isGlobalBalanced 
+                        ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                        : isGlobalPositive
+                        ? 'bg-blue-50 text-blue-600 border-blue-100'
+                        : 'bg-rose-50 text-rose-600 border-rose-100'
+                    }`}>
                       <User className="w-5 h-5" />
                     </div>
                     <div>
@@ -1108,11 +1272,23 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
 
                   <div className="text-right">
                     <span className="text-[8px] font-bold text-slate-400 block uppercase tracking-wider">Saldo Operasional</span>
-                    <span className={`text-sm font-bold font-mono font-display mt-0.5 block ${isGlobalPositive ? 'text-blue-600' : isGlobalNegative ? 'text-rose-600' : 'text-slate-600'}`}>
-                      {isGlobalPositive ? `+${formatIDR(userGlobalBalance)}` : formatIDR(userGlobalBalance)}
+                    <span className={`text-sm font-bold font-mono font-display mt-0.5 block ${
+                      isGlobalPositive 
+                        ? 'text-blue-600' 
+                        : isGlobalNegative 
+                        ? 'text-rose-600' 
+                        : 'text-emerald-600'
+                    }`}>
+                      {isGlobalPositive ? `+${formatIDR(userGlobalBalance)}` : isGlobalNegative ? formatIDR(userGlobalBalance) : 'Rp 0'}
                     </span>
-                    <span className={`inline-block text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${isGlobalPositive ? 'bg-blue-50 text-blue-600 border border-blue-200' : isGlobalNegative ? 'bg-rose-50 text-rose-600 border border-rose-200' : 'bg-slate-50 text-slate-600 border border-slate-200'}`}>
-                      {isGlobalPositive ? 'Lebih Saldo' : isGlobalNegative ? 'Saldo Kurang' : 'Balance'}
+                    <span className={`inline-block text-[8px] font-bold mt-1 px-1.5 py-0.5 rounded-md ${
+                      isGlobalPositive 
+                        ? 'bg-blue-50 text-blue-600 border border-blue-200' 
+                        : isGlobalNegative 
+                        ? 'bg-rose-50 text-rose-600 border border-rose-200' 
+                        : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    }`}>
+                      {isGlobalPositive ? 'Lebih Saldo' : isGlobalNegative ? 'Saldo Kurang' : 'Balanced (Rp 0)'}
                     </span>
                   </div>
                 </div>
@@ -1144,27 +1320,47 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
                     </div>
                   </div>
 
-                  {/* Tombol Proses Adjustment di Dalam Kontainer, Rata Kiri di Bawah TOTAL TRANSFER */}
-                  <div className="flex items-center justify-start pt-1 border-t border-slate-200/60">
-                    <button
-                      type="button"
-                      disabled={summary.requiredNominal === 0}
-                      onClick={() => {
-                        if (summary.requiredNominal !== 0) {
-                          setSelectedUser(user);
-                          setError(null);
-                        }
-                      }}
-                      className={`px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-2xs ${
-                        summary.requiredNominal !== 0
-                          ? 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer active:scale-95'
-                          : 'bg-slate-200/80 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none'
-                      }`}
-                      title={summary.requiredNominal === 0 ? 'Jumlah nominal adjustment Rp 0 (Saldo Balance)' : 'Proses transaksi penyesuaian saldo'}
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                      <span>Proses Adjustment</span>
-                    </button>
+                  {/* Tombol Aksi di Bawah Rincian */}
+                  <div className="pt-1 border-t border-slate-200/60">
+                    {isGlobalBalanced ? (
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200/80 px-2.5 py-1 rounded-lg">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>Saldo Sudah Seimbang (Rp 0)</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFinancialReportsUserEmail(user.email)}
+                          className="px-3 py-1 rounded-lg text-[10px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-all flex items-center gap-1 cursor-pointer active:scale-95"
+                          title="Lihat riwayat rekonsiliasi dan transaksi operasional user"
+                        >
+                          <FileText className="w-3 h-3 text-indigo-600" />
+                          <span>Lihat Rekap Transaksi</span>
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-start">
+                        <button
+                          type="button"
+                          disabled={summary.requiredNominal === 0}
+                          onClick={() => {
+                            if (summary.requiredNominal !== 0) {
+                              setSelectedUser(user);
+                              setError(null);
+                            }
+                          }}
+                          className={`px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-2xs ${
+                            summary.requiredNominal !== 0
+                              ? 'bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer active:scale-95'
+                              : 'bg-slate-200/80 text-slate-400 border border-slate-200 cursor-not-allowed shadow-none'
+                          }`}
+                          title={summary.requiredNominal === 0 ? 'Jumlah nominal adjustment Rp 0 (Saldo Balance)' : 'Proses transaksi penyesuaian saldo'}
+                        >
+                          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                          <span>Proses Adjustment</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1215,12 +1411,40 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           })}
         </div>
       ) : (
-        <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-6 text-center space-y-2">
-          <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-          <h3 className="text-xs font-bold text-emerald-900 uppercase">Semua User Balance</h3>
-          <p className="text-[10px] text-emerald-700/90 max-w-sm mx-auto">
-            Luar biasa! Tidak ada user yang memiliki selisih saldo operasional (seluruh user dalam kondisi Balance Rp 0).
-          </p>
+        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-6 text-center space-y-2">
+          {categoryFilter === 'BALANCED' ? (
+            <>
+              <Coins className="w-8 h-8 text-slate-400 mx-auto" />
+              <h3 className="text-xs font-bold text-slate-700 uppercase">Tidak Ada Data Saldo Balanced</h3>
+              <p className="text-[10px] text-slate-500 max-w-sm mx-auto">
+                {searchQuery ? 'Tidak ada user dengan riwayat transaksi dan saldo balanced yang cocok dengan pencarian.' : 'Belum ada user yang memiliki riwayat transaksi dengan saldo operasional Rp 0.'}
+              </p>
+            </>
+          ) : categoryFilter === 'LEBIH' ? (
+            <>
+              <CheckCircle2 className="w-8 h-8 text-blue-500 mx-auto" />
+              <h3 className="text-xs font-bold text-blue-900 uppercase">Tidak Ada User dengan Saldo Lebih</h3>
+              <p className="text-[10px] text-blue-700 max-w-sm mx-auto">
+                {searchQuery ? 'Tidak ada user dengan saldo lebih yang cocok dengan pencarian.' : 'Tidak ada user yang memegang sisa dana operasional kantor.'}
+              </p>
+            </>
+          ) : categoryFilter === 'KURANG' ? (
+            <>
+              <CheckCircle2 className="w-8 h-8 text-rose-500 mx-auto" />
+              <h3 className="text-xs font-bold text-rose-900 uppercase">Tidak Ada User dengan Saldo Kurang</h3>
+              <p className="text-[10px] text-rose-700 max-w-sm mx-auto">
+                {searchQuery ? 'Tidak ada user dengan saldo kurang yang cocok dengan pencarian.' : 'Tidak ada user yang kekurangan dana operasional kantor.'}
+              </p>
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
+              <h3 className="text-xs font-bold text-emerald-900 uppercase">Semua User Balance</h3>
+              <p className="text-[10px] text-emerald-700/90 max-w-sm mx-auto">
+                {searchQuery ? 'Tidak ada user yang cocok dengan kata kunci pencarian.' : 'Luar biasa! Tidak ada user yang memiliki selisih saldo operasional (seluruh user dalam kondisi Balance Rp 0).'}
+              </p>
+            </>
+          )}
         </div>
       )}
 
