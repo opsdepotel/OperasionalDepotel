@@ -114,23 +114,29 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
   };
 
   // Helper checks for Operational Balance calculations
-  const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS');
-  const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
+  const isBbmRequest = (r: BudgetRequest) => 
+    r.id.startsWith('BBMDS') || 
+    r.id.startsWith('BBM_DurenSawit') || 
+    r.id.startsWith('TFDS') || 
+    r.siteId === 'OPT-DUREN SAWIT' ||
+    r.siteId === 'BBM DUREN SAWIT' ||
+    (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
+    r.keterangan?.toUpperCase().includes('DUREN SAWIT');
+  const isBbmUsageItem = (item: UsageReportItem) => 
+    item.requestId.startsWith('BBMDS') || 
+    item.requestId.startsWith('BBM_DurenSawit') || 
+    item.requestId.startsWith('TFDS');
 
+  // Helper to check if request is a Dana Talangan request (strictly OPT- prefix, excluding BBM Duren Sawit)
   const isTalanganRequest = (r: BudgetRequest) => {
-    return (
-      r.id.startsWith('OPT-') ||
-      r.keterangan?.toUpperCase().includes('[DANA TALANGAN]') ||
-      r.keterangan?.toUpperCase().includes('DANA TALANGAN') ||
-      r.keterangan?.toUpperCase().includes('TALANGAN') ||
-      r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-    );
+    return r.id.startsWith('OPT-') && !isBbmRequest(r);
   };
 
   // Global user operational balance (including OP-, OPT-, ADJ-, excluding BBM)
   const getUserBalance = (userEmail: string) => {
     const userReqs = requests.filter(r => 
       r.userEmail.toLowerCase() === userEmail.toLowerCase() && 
+      r.status !== RequestStatus.CANCELLED &&
       !isBbmRequest(r)
     );
     const userReqIds = userReqs.map(r => r.id);
@@ -149,6 +155,7 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
   const getUserOpSummary = (userEmail: string) => {
     const userReqs = requests.filter(r => 
       r.userEmail.toLowerCase() === userEmail.toLowerCase() && 
+      r.status !== RequestStatus.CANCELLED &&
       !isBbmRequest(r) && 
       !isTalanganRequest(r)
     );
@@ -873,7 +880,7 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                             </div>
 
                             {/* Baris 4: Financial Summary Breakdown */}
-                            <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100 text-[9px]">
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100 text-[9px]">
                               <div>
                                 <span className="block text-[8px] font-bold text-slate-400 uppercase">Transfer Diterima</span>
                                 <span className="text-[10px] font-bold font-mono text-slate-700">{formatIDR(summary.totalTransferred)}</span>
@@ -881,6 +888,10 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
                               <div>
                                 <span className="block text-[8px] font-bold text-slate-400 uppercase">Laporan Disetujui</span>
                                 <span className="text-[10px] font-bold font-mono text-emerald-600">{formatIDR(summary.totalReportedApproved)}</span>
+                              </div>
+                              <div>
+                                <span className="block text-[8px] font-bold text-slate-400 uppercase">Adjustment Lalu</span>
+                                <span className="text-[10px] font-bold font-mono text-slate-600">{formatIDR(summary.totalAdjustments)}</span>
                               </div>
                               <div>
                                 <span className="block text-[8px] font-bold text-indigo-600 uppercase">Butuh Adjustment</span>
