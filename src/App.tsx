@@ -25,6 +25,7 @@ import {
 import {
   findOrCreateDatabase,
   findOrCreateFolder,
+  fetchAllDatabaseTables,
   fetchBudgetRequests,
   fetchUsageItems,
   fetchProfiles,
@@ -465,7 +466,7 @@ export default function App() {
     try {
       const savedForRole = localStorage.getItem(`applet_last_dashboard_tab_${activeRole}`);
       if (savedForRole === 'APPROVAL' || savedForRole === 'SUBMISSION') {
-        setDashboardTab(savedForRole as 'APPROVAL' | 'SUBMISSION');
+        setDashboardTab(prev => prev === savedForRole ? prev : (savedForRole as 'APPROVAL' | 'SUBMISSION'));
       }
     } catch (e) {
       // ignore
@@ -514,6 +515,15 @@ export default function App() {
           // If previous was fully granted, and now revoked, immediately pop up modal!
           if (prev && prev.allGranted && !current.allGranted) {
             setIsPermissionsModalOpen(true);
+          }
+          if (
+            prev &&
+            prev.notification === current.notification &&
+            prev.geolocation === current.geolocation &&
+            prev.camera === current.camera &&
+            prev.allGranted === current.allGranted
+          ) {
+            return prev;
           }
           return current;
         });
@@ -571,16 +581,16 @@ export default function App() {
           if (userProfile) {
             // User IS ALREADY LOGGED IN: Check if userID has Role Finance or Administrator
             if (userProfile.role === Role.FINANCE || userProfile.role === Role.ADMINISTRATOR) {
-              setPendingSharedRecord(record);
+              setPendingSharedRecord(prev => prev?.id === record.id ? prev : record);
               if (userProfile.role === Role.FINANCE && activeRole !== Role.FINANCE) {
                 setActiveRole(Role.FINANCE);
               }
-              setDashboardTab('APPROVAL');
-              setStatusFilter('APPROVED');
-              setActiveView('dashboard');
+              setDashboardTab(prev => prev === 'APPROVAL' ? prev : 'APPROVAL');
+              setStatusFilter(prev => prev === 'APPROVED' ? prev : 'APPROVED');
+              setActiveView(prev => prev === 'dashboard' ? prev : 'dashboard');
             } else {
               // User IS LOGGED IN, BUT DOES NOT HAVE ROLE FINANCE OR ADMINISTRATOR -> Cancel process & show notification
-              setPendingSharedRecord(null);
+              setPendingSharedRecord(prev => prev === null ? prev : null);
               await deleteSharedReceipt(record.id);
               setShareAccessDeniedModal({
                 open: true,
@@ -590,10 +600,10 @@ export default function App() {
             }
           } else {
             // User IS NOT LOGGED IN YET: Keep record so AppLoginForm prompts to log in as Role Finance
-            setPendingSharedRecord(record);
+            setPendingSharedRecord(prev => prev?.id === record.id ? prev : record);
           }
         } else {
-          setPendingSharedRecord(null);
+          setPendingSharedRecord(prev => prev === null ? prev : null);
         }
       } catch (err) {
         console.error('Error checking IndexedDB for shared receipts:', err);
@@ -686,7 +696,7 @@ export default function App() {
   // If profile changes, align active role to default user profile role
   useEffect(() => {
     if (userProfile) {
-      setActiveRole(userProfile.role);
+      setActiveRole(prev => prev === userProfile.role ? prev : userProfile.role);
     }
   }, [userProfile]);
 
@@ -908,15 +918,15 @@ export default function App() {
 
   const syncAllData = async (accessToken: string, sheetId: string) => {
     try {
-      const [allReqs, allItems, allProfs, allSites, allActs, allResetLogs, allHistories] = await Promise.all([
-        fetchBudgetRequests(accessToken, sheetId),
-        fetchUsageItems(accessToken, sheetId),
-        fetchProfiles(accessToken, sheetId),
-        fetchSites(accessToken, sheetId),
-        fetchUserActivities(accessToken, sheetId),
-        fetchResetDeviceLogs(accessToken, sheetId),
-        fetchItemReviewHistories(accessToken, sheetId)
-      ]);
+      const {
+        requests: allReqs,
+        usageItems: allItems,
+        profiles: allProfs,
+        sites: allSites,
+        activities: allActs,
+        resetDeviceLogs: allResetLogs,
+        itemReviewHistories: allHistories
+      } = await fetchAllDatabaseTables(accessToken, sheetId);
 
       // Synchronize Dana Talangan requests' JumlahPengajuan with total nominal of their items
       const synchronizedReqs = allReqs.map(req => {
@@ -1070,7 +1080,8 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      throw new Error(`Gagal memuat tabel database: ${err.message}`);
+      console.error('syncAllData error:', err);
+      throw err;
     }
   };
 
@@ -1082,7 +1093,7 @@ export default function App() {
     try {
       await syncAllData(token, spreadsheetId);
     } catch (err: any) {
-      console.error(err);
+      console.error('handleManualRefresh error:', err);
       const isAuthError = err.message && (
         err.message.includes('401') ||
         err.message.toLowerCase().includes('authentication credentials') ||
@@ -1094,7 +1105,12 @@ export default function App() {
         console.warn('Google API returned 401 Unauthorized during refresh. Sesi token Google expired.');
         await handleGoogleAuthError();
       } else {
-        setError(err.message || 'Gagal memperbarui data.');
+        const cachedReqs = localStorage.getItem('op_app_cached_requests');
+        if (cachedReqs && err.message && err.message.toLowerCase().includes('timeout')) {
+          setError('Koneksi ke Google Sheets mengalami timeout. Aplikasi tetap berjalan menggunakan data lokal tersimpan. Anda dapat menekan "Coba Sinkron Ulang" saat koneksi lebih stabil.');
+        } else {
+          setError(err.message || 'Gagal memperbarui data dari database Google Sheets.');
+        }
       }
     } finally {
       setIsLoading(false);
@@ -3439,6 +3455,8 @@ export default function App() {
   };
 
   // Auto-cancel REJECTED requests older than 2 days (48 hours)
+  const processedAutoCancelIdsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     if (!token || !spreadsheetId || requests.length === 0) return;
 
@@ -3447,12 +3465,14 @@ export default function App() {
 
     const expiredReqs = requests.filter(r => {
       if (r.status !== RequestStatus.REJECTED) return false;
+      if (processedAutoCancelIdsRef.current.has(r.id)) return false;
       const cDate = getRequestCreatedDate(r);
       if (!cDate) return false;
       return (now - cDate.getTime()) >= TWO_DAYS_MS;
     });
 
     if (expiredReqs.length > 0) {
+      expiredReqs.forEach(r => processedAutoCancelIdsRef.current.add(r.id));
       const processAutoCancel = async () => {
         const expiredIds = new Set(expiredReqs.map(r => r.id));
         setRequests(prev => prev.map(r => expiredIds.has(r.id) ? { ...r, status: RequestStatus.CANCELLED } : r));

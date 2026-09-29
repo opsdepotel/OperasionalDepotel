@@ -84,14 +84,36 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
   // Sync initialPermissions when updated from outside
   React.useEffect(() => {
     if (initialPermissions) {
-      setPermissions(initialPermissions);
+      setPermissions(prev => {
+        if (
+          prev &&
+          prev.notification === initialPermissions.notification &&
+          prev.geolocation === initialPermissions.geolocation &&
+          prev.camera === initialPermissions.camera &&
+          prev.allGranted === initialPermissions.allGranted
+        ) {
+          return prev;
+        }
+        return initialPermissions;
+      });
     }
   }, [initialPermissions]);
 
   const refreshPermissions = React.useCallback(async () => {
     try {
       const current = await checkAllDevicePermissions();
-      setPermissions(current);
+      setPermissions(prev => {
+        if (
+          prev &&
+          prev.notification === current.notification &&
+          prev.geolocation === current.geolocation &&
+          prev.camera === current.camera &&
+          prev.allGranted === current.allGranted
+        ) {
+          return prev;
+        }
+        return current;
+      });
       if (onPermissionsUpdated) {
         onPermissionsUpdated(current);
       }

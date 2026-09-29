@@ -214,6 +214,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
   // 1. FILTERED TRANSFER DATA
   const filteredTransfers = useMemo(() => {
     return requests.filter(r => {
+      if (r.status === RequestStatus.CANCELLED) return false;
       if (isBbmRequestAdmin(r) && !r.id.startsWith('TFDS')) return false;
       if (excludeTalangan && isTalanganRequestAdmin(r)) return false;
 
@@ -345,6 +346,7 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
     }).map(user => {
       const userReqs = requests.filter(r => 
         r.userEmail.toLowerCase() === user.email.toLowerCase() && 
+        r.status !== RequestStatus.CANCELLED &&
         !isBbmRequestAdmin(r) &&
         (!excludeTalangan || !isTalanganRequestAdmin(r))
       );

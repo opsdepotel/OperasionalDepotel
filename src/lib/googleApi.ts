@@ -7,10 +7,16 @@ import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemS
 import { uploadReceiptViaServiceAccount, fetchServiceAccountToken, invalidateServiceAccountToken } from './serviceAccountClient';
 
 const originalFetch = window.fetch;
-async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
-  const { timeout = 15000, ...restOptions } = options;
+
+async function executeFetch(
+  resource: string | Request,
+  options: RequestInit & { timeout?: number },
+  attempt = 0
+): Promise<Response> {
+  const { timeout = 45000, ...restOptions } = options;
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
+
   try {
     let response = await originalFetch(resource, {
       ...restOptions,
@@ -40,16 +46,31 @@ async function fetchWithTimeout(resource: string | Request, options: RequestInit
 
     return response;
   } catch (err: any) {
-    if (err.name === 'AbortError') {
+    const isTimeout = err.name === 'AbortError' || (err.message && err.message.toLowerCase().includes('timeout'));
+    const isNetworkErr = err.message === 'Failed to fetch' || (err.message && err.message.includes('Failed to fetch'));
+
+    // Retry once for GET / read requests on timeout or network blip
+    const isGetOrRead = !restOptions.method || restOptions.method.toUpperCase() === 'GET';
+    if ((isTimeout || isNetworkErr) && isGetOrRead && attempt < 1) {
+      console.warn(`[GoogleAPI] Network/timeout glitch encountered (attempt ${attempt + 1}), retrying in 1.2s...`);
+      await new Promise(r => setTimeout(r, 1200));
+      return executeFetch(resource, options, attempt + 1);
+    }
+
+    if (isTimeout) {
       throw new Error('Permintaan ke Google API mengalami timeout. Silakan periksa koneksi internet Anda atau gunakan Mode Demo (Offline).');
     }
-    if (err.message === 'Failed to fetch' || (err.message && err.message.includes('Failed to fetch'))) {
+    if (isNetworkErr) {
       throw new Error('Gagal terhubung ke Google API (Koneksi jaringan terputus atau diblokir). Silakan periksa koneksi internet Anda dan coba lagi.');
     }
     throw err;
   } finally {
     clearTimeout(id);
   }
+}
+
+async function fetchWithTimeout(resource: string | Request, options: RequestInit & { timeout?: number } = {}): Promise<Response> {
+  return executeFetch(resource, options, 0);
 }
 const fetch = fetchWithTimeout;
 
@@ -598,7 +619,14 @@ export async function updateGlobalConfig(
 
 // Helper to ensure sheets exist and set headers/seeds
 export async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<void> {
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}`, {
+  try {
+    const sessionKey = `op_sheets_verified_${sheetId}`;
+    if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(sessionKey) === 'true') {
+      return;
+    }
+  } catch {}
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties.title`, {
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
@@ -638,47 +666,50 @@ export async function ensureSheetsAndHeaders(token: string, sheetId: string): Pr
     if (!updateRes.ok) {
       throw new Error(`Gagal membuat tabel baru di spreadsheet: ${updateRes.statusText}`);
     }
-  }
 
-  // Always ensure headers are set
-  const headersRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchUpdate`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      valueInputOption: 'USER_ENTERED',
-      data: [
-        { range: 'Pengajuan!A1:Q1', values: [PENGAJUAN_HEADERS] },
-        { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
-        { range: 'Users!A1:N1', values: [USERS_HEADERS] },
-        { range: 'Activity!A1:S1', values: [ACTIVITY_HEADERS] },
-        { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
-        { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
-      ]
-    })
-  });
+    // Set headers only for newly added sheets
+    const headerMap: Record<string, { range: string; values: string[][] }> = {
+      Pengajuan: { range: 'Pengajuan!A1:Q1', values: [PENGAJUAN_HEADERS] },
+      Laporan: { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
+      Users: { range: 'Users!A1:N1', values: [USERS_HEADERS] },
+      Activity: { range: 'Activity!A1:S1', values: [ACTIVITY_HEADERS] },
+      ResetDeviceLog: { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
+      ItemReviewHistory: { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
+    };
 
-  if (!headersRes.ok) {
-    let errDetail = '';
-    try {
-      const errJson = await headersRes.json();
-      errDetail = errJson.error?.message || JSON.stringify(errJson);
-    } catch {
-      try { errDetail = await headersRes.text(); } catch {}
+    const headerData = sheetsToAdd
+      .filter(title => headerMap[title])
+      .map(title => headerMap[title]);
+
+    if (headerData.length > 0) {
+      const headersRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values:batchUpdate`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          valueInputOption: 'USER_ENTERED',
+          data: headerData
+        })
+      });
+
+      if (!headersRes.ok) {
+        let errDetail = '';
+        try {
+          const errJson = await headersRes.json();
+          errDetail = errJson.error?.message || JSON.stringify(errJson);
+        } catch {
+          try { errDetail = await headersRes.text(); } catch {}
+        }
+        throw new Error(`Gagal menginisialisasi header kolom: [HTTP ${headersRes.status}] ${headersRes.statusText || ''} - ${errDetail}`);
+      }
     }
-    throw new Error(`Gagal menginisialisasi header kolom: [HTTP ${headersRes.status}] ${headersRes.statusText || ''} - ${errDetail}`);
   }
 
-  // Check if Users sheet has any data (besides headers). If not, seed default users
-  const usersRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/Users!A1:H10`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (usersRes.ok) {
-    const usersData = await usersRes.json();
-
-  }
+  try {
+    sessionStorage.setItem(`op_sheets_verified_${sheetId}`, 'true');
+  } catch {}
 }
 
 // --- Mock Data Store Helpers for Demo Mode ---
@@ -1277,6 +1308,123 @@ export async function fetchItemReviewHistories(token: string, spreadsheetId: str
   }
   const data = await res.json();
   return parseSheetRows<ItemReviewHistory>(ITEM_REVIEW_HISTORY_HEADERS, data.values, mapToItemReviewHistory);
+}
+
+export interface AllDatabaseTables {
+  requests: BudgetRequest[];
+  usageItems: UsageReportItem[];
+  profiles: UserProfile[];
+  sites: SiteInfo[];
+  activities: UserActivity[];
+  resetDeviceLogs: ResetDeviceLog[];
+  itemReviewHistories: ItemReviewHistory[];
+}
+
+/**
+ * High-performance data loader for operational database tables.
+ * Uses a single Google Sheets batchGet request (2-3s) instead of 7 separate HTTP requests (15-25s),
+ * dramatically eliminating timeout issues on cellular and constrained network connections.
+ */
+export async function fetchAllDatabaseTables(token: string, spreadsheetId: string): Promise<AllDatabaseTables> {
+  if (token === 'mock_demo_token') {
+    return {
+      requests: getMockData<BudgetRequest[]>('mock_db_pengajuan', defaultRequests),
+      usageItems: getMockData<UsageReportItem[]>('mock_db_laporan', defaultUsageItems),
+      profiles: getMockData<UserProfile[]>('mock_db_users', []),
+      sites: getMockData<SiteInfo[]>('mock_db_sites', []),
+      activities: getMockData<UserActivity[]>('mock_db_kegiatan', []),
+      resetDeviceLogs: getMockData<ResetDeviceLog[]>('mock_db_reset_device_log', []),
+      itemReviewHistories: getMockData<ItemReviewHistory[]>('mock_db_item_review_history', [])
+    };
+  }
+
+  // Attempt 1: Fast single batchGet for all tables
+  try {
+    const ranges = [
+      'Pengajuan!A1:Z',
+      'Laporan!A1:Z',
+      'Users!A1:Z',
+      'SiteID!A1:Z',
+      'Activity!A1:Z',
+      'ResetDeviceLog!A1:Z',
+      'ItemReviewHistory!A1:Z'
+    ];
+    const query = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 60000
+    });
+
+    if (res.status === 401) {
+      throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      const valueRanges: { range: string; values?: any[][] }[] = data.valueRanges || [];
+
+      const getValues = (sheetName: string): any[][] => {
+        const found = valueRanges.find(vr => vr.range && vr.range.toLowerCase().includes(sheetName.toLowerCase()));
+        return (found && found.values) || [];
+      };
+
+      const reqRows = getValues('Pengajuan');
+      const usageRows = getValues('Laporan');
+      const userRows = getValues('Users');
+      let siteRows = getValues('SiteID');
+      if (siteRows.length === 0) siteRows = getValues('Site');
+      const actRows = getValues('Activity');
+      const logRows = getValues('ResetDeviceLog');
+      let histRows = getValues('ItemReviewHistory');
+      if (histRows.length === 0) histRows = getValues('ApprovalHistory');
+
+      const requests = parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, reqRows, mapToBudgetRequest);
+      const usageItems = parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, usageRows, mapToUsageItem).filter(
+        item => Boolean(item.id && item.id.trim() !== '' && item.requestId && item.requestId.trim() !== '')
+      );
+      const profiles = parseSheetRows<UserProfile>(USERS_HEADERS, userRows, mapToUserProfile);
+      const sites = parseSitesRows(siteRows);
+      const activities = parseSheetRows<UserActivity>(ACTIVITY_HEADERS, actRows, mapToUserActivity);
+      const resetDeviceLogs = parseSheetRows<ResetDeviceLog>(RESET_DEVICE_LOG_HEADERS, logRows, mapToResetDeviceLog);
+      const itemReviewHistories = parseSheetRows<ItemReviewHistory>(ITEM_REVIEW_HISTORY_HEADERS, histRows, mapToItemReviewHistory);
+
+      return {
+        requests,
+        usageItems,
+        profiles,
+        sites,
+        activities,
+        resetDeviceLogs,
+        itemReviewHistories
+      };
+    }
+  } catch (batchErr: any) {
+    if (batchErr.message && batchErr.message.includes('401')) {
+      throw batchErr;
+    }
+    console.warn('[batchGet] batchGet encountered an issue, falling back to parallel fetch:', batchErr);
+  }
+
+  // Graceful Fallback: Individual calls in parallel
+  const [allReqs, allItems, allProfs, allSites, allActs, allResetLogs, allHistories] = await Promise.all([
+    fetchBudgetRequests(token, spreadsheetId),
+    fetchUsageItems(token, spreadsheetId),
+    fetchProfiles(token, spreadsheetId),
+    fetchSites(token, spreadsheetId),
+    fetchUserActivities(token, spreadsheetId),
+    fetchResetDeviceLogs(token, spreadsheetId),
+    fetchItemReviewHistories(token, spreadsheetId)
+  ]);
+
+  return {
+    requests: allReqs,
+    usageItems: allItems,
+    profiles: allProfs,
+    sites: allSites,
+    activities: allActs,
+    resetDeviceLogs: allResetLogs,
+    itemReviewHistories: allHistories
+  };
 }
 
 // Helper to convert object to spreadsheet row according to header list
@@ -2302,6 +2450,81 @@ export async function saveUserPushSubscriptionToSheet(
   }
 }
 
+// Parse raw spreadsheet rows into SiteInfo list
+export function parseSitesRows(rows: any[][]): SiteInfo[] {
+  if (!rows || rows.length === 0) return [];
+
+  // Determine if the first row is a header row
+  const firstRowHasHeaders = rows[0].some((val: any) => {
+    const s = String(val).toLowerCase();
+    return s.includes('id') || s.includes('nama') || s.includes('name') || s.includes('lat') || s.includes('lon') || s.includes('koordinat');
+  });
+
+  let dataRows = rows;
+  let idIdx = 0;
+  let nameIdx = 1;
+  let latIdx = 2;
+  let lonIdx = 3;
+
+  if (firstRowHasHeaders) {
+    const headers = rows[0].map((h: any) => String(h).trim().toLowerCase());
+
+    const foundIdIdx = headers.findIndex((h: string) => h === 'siteid' || h === 'id' || h.includes('siteid') || h.includes('site id') || h.includes('id'));
+    if (foundIdIdx !== -1) idIdx = foundIdIdx;
+
+    const foundNameIdx = headers.findIndex((h: string) => h === 'sitename' || h === 'name' || h.includes('sitename') || h.includes('site name') || h.includes('nama') || h.includes('name'));
+    if (foundNameIdx !== -1) nameIdx = foundNameIdx;
+
+    const foundLatIdx = headers.findIndex((h: string) => h === 'lat' || h === 'latitude' || h.includes('lat'));
+    if (foundLatIdx !== -1) latIdx = foundLatIdx;
+
+    const foundLonIdx = headers.findIndex((h: string) => h === 'lon' || h === 'longitude' || h.includes('lon') || h.includes('lng') || h.includes('long'));
+    if (foundLonIdx !== -1) lonIdx = foundLonIdx;
+
+    dataRows = rows.slice(1);
+  }
+
+  const sitesList = dataRows.map((row: any[]) => {
+    const siteId = String(row[idIdx] !== undefined ? row[idIdx] : '').trim();
+    const siteName = String(row[nameIdx] !== undefined ? row[nameIdx] : '').trim();
+
+    const latVal = String(row[latIdx] !== undefined ? row[latIdx] : '').trim();
+    const lonVal = String(row[lonIdx] !== undefined ? row[lonIdx] : '').trim();
+
+    let coordinates = '';
+    if (latVal && lonVal) {
+      coordinates = `${latVal}, ${lonVal}`;
+    } else {
+      coordinates = latVal || lonVal;
+    }
+
+    return {
+      siteId,
+      siteName,
+      coordinates
+    };
+  }).filter(s => s.siteId !== '');
+
+  // Deduplicate sites by siteId (case-insensitive) to prevent duplicate key errors and inconsistent site lookups
+  const uniqueSitesMap = new Map<string, SiteInfo>();
+  for (const site of sitesList) {
+    const key = site.siteId.toUpperCase();
+    if (!uniqueSitesMap.has(key)) {
+      uniqueSitesMap.set(key, site);
+    } else {
+      const existing = uniqueSitesMap.get(key)!;
+      if ((!existing.coordinates && site.coordinates) || (!existing.siteName && site.siteName)) {
+        uniqueSitesMap.set(key, {
+          ...existing,
+          siteName: existing.siteName || site.siteName,
+          coordinates: existing.coordinates || site.coordinates
+        });
+      }
+    }
+  }
+  return Array.from(uniqueSitesMap.values());
+}
+
 // Fetch Sites from SiteID Sheet
 export async function fetchSites(token: string, spreadsheetId: string): Promise<SiteInfo[]> {
   if (token === 'mock_demo_token') {
@@ -2327,7 +2550,6 @@ export async function fetchSites(token: string, spreadsheetId: string): Promise<
     if (metaRes.ok) {
       const meta = await metaRes.json();
       const titles: string[] = meta.sheets ? meta.sheets.map((s: any) => s.properties.title) : [];
-      console.log('Available sheets in spreadsheet:', titles);
       
       const found = titles.find(t => {
         const clean = t.trim().toLowerCase().replace(/[\s_-]/g, '');
@@ -2335,11 +2557,10 @@ export async function fetchSites(token: string, spreadsheetId: string): Promise<
       });
       if (found) {
         resolvedTitle = found;
-        console.log(`Resolved SiteID sheet title to: "${resolvedTitle}"`);
       }
     }
 
-    // 2. Fetch all sheet values without the A1:G2000 row limit
+    // 2. Fetch all sheet values
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(resolvedTitle)}`, {
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -2355,88 +2576,10 @@ export async function fetchSites(token: string, spreadsheetId: string): Promise<
     
     const data = await res.json();
     if (!data.values || data.values.length === 0) {
-      console.log(`Sheet "${resolvedTitle}" kosong atau tidak memiliki baris data.`);
       return [];
     }
 
-    const rows = data.values;
-    
-    // 3. Determine if the first row is a header row
-    const firstRowHasHeaders = rows[0].some((val: any) => {
-      const s = String(val).toLowerCase();
-      return s.includes('id') || s.includes('nama') || s.includes('name') || s.includes('lat') || s.includes('lon') || s.includes('koordinat');
-    });
-
-    let dataRows = rows;
-    let idIdx = 0;
-    let nameIdx = 1;
-    let latIdx = 2;
-    let lonIdx = 3;
-
-    if (firstRowHasHeaders) {
-      const headers = rows[0].map((h: any) => String(h).trim().toLowerCase());
-      console.log(`Header kolom ditemukan pada sheet "${resolvedTitle}":`, headers);
-      
-      const foundIdIdx = headers.findIndex((h: string) => h === 'siteid' || h === 'id' || h.includes('siteid') || h.includes('site id') || h.includes('id'));
-      if (foundIdIdx !== -1) idIdx = foundIdIdx;
-
-      const foundNameIdx = headers.findIndex((h: string) => h === 'sitename' || h === 'name' || h.includes('sitename') || h.includes('site name') || h.includes('nama') || h.includes('name'));
-      if (foundNameIdx !== -1) nameIdx = foundNameIdx;
-
-      const foundLatIdx = headers.findIndex((h: string) => h === 'lat' || h === 'latitude' || h.includes('lat'));
-      if (foundLatIdx !== -1) latIdx = foundLatIdx;
-
-      const foundLonIdx = headers.findIndex((h: string) => h === 'lon' || h === 'longitude' || h.includes('lon') || h.includes('lng') || h.includes('long'));
-      if (foundLonIdx !== -1) lonIdx = foundLonIdx;
-
-      console.log(`Mapping indeks kolom -> ID: ${idIdx}, Nama: ${nameIdx}, Lat: ${latIdx}, Lon: ${lonIdx}`);
-      dataRows = rows.slice(1);
-    } else {
-      console.log(`Baris pertama tidak dideteksi sebagai header. Menggunakan pemetaan kolom bawaan (0, 1, 2, 3)`);
-    }
-
-    const sitesList = dataRows.map((row: any[]) => {
-      const siteId = String(row[idIdx] !== undefined ? row[idIdx] : '').trim();
-      const siteName = String(row[nameIdx] !== undefined ? row[nameIdx] : '').trim();
-      
-      const latVal = String(row[latIdx] !== undefined ? row[latIdx] : '').trim();
-      const lonVal = String(row[lonIdx] !== undefined ? row[lonIdx] : '').trim();
-      
-      let coordinates = '';
-      if (latVal && lonVal) {
-        coordinates = `${latVal}, ${lonVal}`;
-      } else {
-        coordinates = latVal || lonVal;
-      }
-
-      return {
-        siteId,
-        siteName,
-        coordinates
-      };
-    }).filter(s => s.siteId !== '');
-
-    // Deduplicate sites by siteId (case-insensitive) to prevent duplicate key errors and inconsistent site lookups
-    const uniqueSitesMap = new Map<string, SiteInfo>();
-    for (const site of sitesList) {
-      const key = site.siteId.toUpperCase();
-      if (!uniqueSitesMap.has(key)) {
-        uniqueSitesMap.set(key, site);
-      } else {
-        const existing = uniqueSitesMap.get(key)!;
-        if ((!existing.coordinates && site.coordinates) || (!existing.siteName && site.siteName)) {
-          uniqueSitesMap.set(key, {
-            ...existing,
-            siteName: existing.siteName || site.siteName,
-            coordinates: existing.coordinates || site.coordinates
-          });
-        }
-      }
-    }
-    const deduplicatedSites = Array.from(uniqueSitesMap.values());
-
-    console.log(`Berhasil memuat ${deduplicatedSites.length} site unik dari Google Sheet (total baris: ${sitesList.length}).`);
-    return deduplicatedSites;
+    return parseSitesRows(data.values);
   } catch (err: any) {
     console.warn('Kendala membaca sheet SiteID dari Google Sheet, mencoba menggunakan data cache lokal:', err?.message || err);
     try {

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory, SiteInfo } from '../types';
 import { getTransferBertahap, getFinanceApprovedAmount, isPendingTransferRequest, isFinanceApprovedOpRequest, isOpBiasaRequest } from '../App';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
@@ -50,6 +50,13 @@ interface DashboardStatsProps {
   driveFolderId?: string | null;
   onConfigUpdated?: (newSheetId: string, newFolderId: string) => void;
 }
+
+const DEFAULT_SITES_LIST: SiteInfo[] = [
+  { siteId: 'JKT-SOUTH-02', siteName: 'Depotel JKT South 02', coordinates: '-6.2088, 106.8456' },
+  { siteId: 'SITE-A', siteName: 'Site Alfa Jakarta', coordinates: '-6.1751, 106.8272' },
+  { siteId: 'SITE-B', siteName: 'Site Bravo Surabaya', coordinates: '-7.2575, 112.7521' },
+  { siteId: 'SITE-C', siteName: 'Site Charlie Medan', coordinates: '3.5952, 98.6722' }
+];
 
 export const DashboardStats: React.FC<DashboardStatsProps> = ({
   role,
@@ -147,33 +154,30 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [isManualActivityModalOpen, setIsManualActivityModalOpen] = useState(false);
   useBackHandler(isManualActivityModalOpen, () => setIsManualActivityModalOpen(false), 'dashboardStats_manualActivityModal');
 
-  const defaultSitesList: SiteInfo[] = [
-    { siteId: 'JKT-SOUTH-02', siteName: 'Depotel JKT South 02', coordinates: '-6.2088, 106.8456' },
-    { siteId: 'SITE-A', siteName: 'Site Alfa Jakarta', coordinates: '-6.1751, 106.8272' },
-    { siteId: 'SITE-B', siteName: 'Site Bravo Surabaya', coordinates: '-7.2575, 112.7521' },
-    { siteId: 'SITE-C', siteName: 'Site Charlie Medan', coordinates: '3.5952, 98.6722' }
-  ];
-
-  const allSitesToUse = (sites && sites.length > 0) ? sites : defaultSitesList;
+  const allSitesToUse = useMemo(() => {
+    return (sites && sites.length > 0) ? sites : DEFAULT_SITES_LIST;
+  }, [sites]);
 
   // Auto match selected site when search input changes
   useEffect(() => {
-    if (!searchSiteIdInput.trim()) {
-      setSelectedSite(null);
+    const q = searchSiteIdInput.trim().toLowerCase();
+    if (!q) {
+      setSelectedSite(prev => prev ? null : prev);
       return;
     }
-    const q = searchSiteIdInput.trim().toLowerCase();
     const match = allSitesToUse.find(s => s.siteId.toLowerCase() === q);
     if (match) {
-      setSelectedSite(match);
+      setSelectedSite(prev => (prev?.siteId === match.siteId && prev?.coordinates === match.coordinates) ? prev : match);
+    } else {
+      setSelectedSite(prev => prev ? null : prev);
     }
   }, [searchSiteIdInput, allSitesToUse]);
 
   // Reverse geocode address corresponding to site coordinates
   useEffect(() => {
     if (!selectedSite || !selectedSite.coordinates) {
-      setGeocodedAddress(null);
-      setIsGeocodingSite(false);
+      setGeocodedAddress(prev => prev ? null : prev);
+      setIsGeocodingSite(prev => prev ? false : prev);
       return;
     }
 
@@ -182,7 +186,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
       const lat = parts[0];
       const lon = parts[1];
-      setIsGeocodingSite(true);
+      setIsGeocodingSite(prev => prev ? prev : true);
       fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
         .then(res => res.json())
         .then(data => {
@@ -236,12 +240,15 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   });
 
   const updateDirekturTab = (newTab: 'APPROVAL' | 'MONITORING') => {
-    setDirekturGroupTab(newTab);
-    try {
-      localStorage.setItem('applet_direktur_dashboard_tab', newTab);
-    } catch (e) {
-      // ignore
-    }
+    setDirekturGroupTab(prev => {
+      if (prev === newTab) return prev;
+      try {
+        localStorage.setItem('applet_direktur_dashboard_tab', newTab);
+      } catch (e) {
+        // ignore
+      }
+      return newTab;
+    });
   };
 
   useEffect(() => {
@@ -939,7 +946,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     const isRequesterManagerOrFinance = requesterProfile ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE) : (role === Role.MANAGER || role === Role.FINANCE);
     const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
 
-    const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+    const isBbmRequest = (r: BudgetRequest) => 
+      r.id.startsWith('BBMDS') || 
+      r.id.startsWith('BBM_DurenSawit') || 
+      r.id.startsWith('TFDS') || 
+      r.siteId === 'OPT-DUREN SAWIT' ||
+      r.siteId === 'BBM DUREN SAWIT' ||
+      (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
+      r.keterangan?.toUpperCase().includes('DUREN SAWIT');
     const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
     const totalRequested = myReqs.filter(r => r.siteId !== 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.jumlahPengajuan, 0);
@@ -1775,7 +1789,14 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     ).length;
     const myTaskRejected = myPersonalReqs.filter(r => r.status === RequestStatus.REJECTED).length;
     const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
-    const isBbmRequestAdmin = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+    const isBbmRequestAdmin = (r: BudgetRequest) => 
+      r.id.startsWith('BBMDS') || 
+      r.id.startsWith('BBM_DurenSawit') || 
+      r.id.startsWith('TFDS') || 
+      r.siteId === 'OPT-DUREN SAWIT' ||
+      r.siteId === 'BBM DUREN SAWIT' ||
+      (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
+      r.keterangan?.toUpperCase().includes('DUREN SAWIT');
     const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
     const closedCount = requests.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequestAdmin(r)).length;
@@ -1788,13 +1809,28 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     });
     const financeRejectedCount = financeRejectedReqs.length;
 
-    const totalTransferred = requests.filter(r => !isBbmRequestAdmin(r)).reduce((sum, r) => sum + r.adminActionAmount, 0);
+    const totalTransferred = requests.filter(r => !isBbmRequestAdmin(r) && r.status !== RequestStatus.CANCELLED).reduce((sum, r) => sum + r.adminActionAmount, 0);
     const totalClosed = usageItems
       .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItemAdmin(item))
       .reduce((sum, item) => sum + item.nominal, 0);
 
-    const unbalancedUsersStats = profiles.map(user => {
-      const userReqs = requests.filter(r => r.userEmail.toLowerCase() === user.email.toLowerCase() && !isBbmRequestAdmin(r));
+    const uniqueProfiles = (() => {
+      const map = new Map<string, UserProfile>();
+      profiles.forEach(p => {
+        const key = (p.email || '').toLowerCase().trim();
+        if (key && !map.has(key)) {
+          map.set(key, p);
+        }
+      });
+      return Array.from(map.values());
+    })();
+
+    const unbalancedUsersStats = uniqueProfiles.map(user => {
+      const userReqs = requests.filter(r => 
+        r.userEmail.toLowerCase() === user.email.toLowerCase() && 
+        r.status !== RequestStatus.CANCELLED &&
+        !isBbmRequestAdmin(r)
+      );
       const userReqIds = userReqs.map(r => r.id);
       const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItemAdmin(item));
 
@@ -3234,7 +3270,14 @@ User Agent: ${navigator.userAgent}`;
   // Compute stats for DIREKTUR role
   if (role === Role.DIREKTUR) {
     const activeReqs = requests.filter(r => r.status !== RequestStatus.CANCELLED);
-    const isBbmRequest = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
+    const isBbmRequest = (r: BudgetRequest) => 
+      r.id.startsWith('BBMDS') || 
+      r.id.startsWith('BBM_DurenSawit') || 
+      r.id.startsWith('TFDS') || 
+      r.siteId === 'OPT-DUREN SAWIT' ||
+      r.siteId === 'BBM DUREN SAWIT' ||
+      (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
+      r.keterangan?.toUpperCase().includes('DUREN SAWIT');
 
     // Direct reports approval & reconciliation tasks for Direktur (where managerEmail matches Direktur email or hierarchy)
     const direkturEmails = new Set<string>([

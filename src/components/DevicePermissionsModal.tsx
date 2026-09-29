@@ -69,7 +69,18 @@ export const DevicePermissionsModal: React.FC<DevicePermissionsModalProps> = ({
     setIsLoading(true);
     try {
       const current = await checkAllDevicePermissions();
-      setStatus(current);
+      setStatus(prev => {
+        if (
+          prev &&
+          prev.notification === current.notification &&
+          prev.geolocation === current.geolocation &&
+          prev.camera === current.camera &&
+          prev.allGranted === current.allGranted
+        ) {
+          return prev;
+        }
+        return current;
+      });
       if (onPermissionsUpdated) {
         onPermissionsUpdated(current);
       }

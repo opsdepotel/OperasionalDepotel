@@ -87,3 +87,33 @@
     - Login berikutnya mencocokkan Token UUID perangkat dengan database melalui penyimpanan 4 lapis. Jika berbeda (perangkat fisik milik orang lain), akses diblokir secara ketat dan hanya dapat dibuka kembali melalui Reset Device ID oleh Administrator.
     - Satu perangkat mobile yang telah terikat tidak dapat digunakan oleh akun lain yang juga berstatus `Mobile = TRUE` (`findBoundOtherUser`).
 
+## Operational Balance & Financial Calculation Logic - [STRICTLY LOCKED]
+- **Status: STRICTLY LOCKED**: Seluruh alur (flow), formula matematis, aturan filter, dan logika fungsi perhitungan saldo operasional, penyesuaian saldo (Adjustment), rekonsiliasi, serta rekapitulasi keuangan pada aplikasi ini telah **DIKUNCI SECARA PERMANEN**.
+- **Larangan Keras**: DILARANG KERAS melakukan perubahan, modifikasi, refactoring, pergeseran formula, atau penyesuaian aturan filter perhitungan tanpa konfirmasi dan persetujuan eksplisit dari pengguna.
+- **Formula Baku Saldo Operasional (User Balance)**:
+  - `Saldo Operasional = Total Transfer + Total Adjustment - Total Laporan Disetujui`
+  - `Total Transfer`: Akumulasi nominal `adminActionAmount` dari pengajuan user dengan `siteId !== 'ADJUSTMENT'`, `r.status !== RequestStatus.CANCELLED`, dan bukan transaksi BBM Duren Sawit.
+  - `Total Adjustment`: Akumulasi nominal `adminActionAmount` dari pengajuan user dengan `siteId === 'ADJUSTMENT'`, `r.status !== RequestStatus.CANCELLED`, dan bukan transaksi BBM Duren Sawit.
+  - `Total Laporan Disetujui`: Akumulasi nominal `nominal` dari item laporan (`UsageReportItem`) milik user yang telah disetujui penuh (`statusManager === ItemStatus.APPROVED` dan `statusAdmin === ItemStatus.APPROVED`), bukan item laporan BBM Duren Sawit.
+- **Pengecualian Transaksi BBM Duren Sawit (isBbmRequest & isBbmUsageItem)**:
+  - Seluruh kalkulasi saldo dan ringkasan operasional wajib mengecualikan transaksi BBM Duren Sawit secara seragam berdasarkan kriteria:
+    1. Prefix ID: `BBMDS`, `BBM_DurenSawit`, atau `TFDS`.
+    2. Site ID: `OPT-DUREN SAWIT` atau `BBM DUREN SAWIT`.
+    3. Site Name atau Keterangan mengandung kata `DUREN SAWIT` (case-insensitive).
+- **Penyaringan Pengajuan Batal (Cancelled Filter)**:
+  - Seluruh kalkulasi saldo, transfer, rekapitulasi, dan statistik dasbor wajib menyaring `r.status !== RequestStatus.CANCELLED`.
+- **Deduplikasi Profil Pengguna (uniqueProfiles)**:
+  - Pemetaan saldo per user wajib menggunakan email unik yang dideduplikasi (`uniqueProfiles` via `Map<string, UserProfile>`) untuk mencegah duplikasi data jika terdapat profil ganda di database.
+- **Kategori Filter Saldo User (3 Tab Adjustment)**:
+  - `Saldo Lebih`: `balance > 0.01` (user memegang sisa kas operasional lebih).
+  - `Saldo Kurang`: `balance < -0.01` (user nombok uang pribadi / menunggu reimburse).
+  - `Saldo Balanced`: `Math.abs(balance) <= 0.01` dan memiliki riwayat transaksi operasional (`hasUserTransactionHistory`).
+- **Konsistensi Lintas Modul**:
+  - Standar logika perhitungan ini berlaku seragam dan terikat di:
+    1. `AdjustmentPanel.tsx` (Form Penyesuaian Saldo Finance)
+    2. `FinanceSharedReceiptModal.tsx` (Form Penerima Sharing Nota BRImo)
+    3. `DashboardStats.tsx` (Statistik Dasbor User, Manager, Finance, Direktur)
+    4. `FinancialReportsModal.tsx` (Laporan Transaksi & Rekap Saldo Keuangan)
+    5. `UserOperationalBalanceReportModal.tsx` (Modal & Cetak PDF Transaksi User)
+
+
