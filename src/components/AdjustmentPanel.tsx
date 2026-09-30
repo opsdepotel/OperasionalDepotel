@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus } from '../types';
+import { Role, UserProfile, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, ItemReviewHistory } from '../types';
 import {
   ArrowLeft, User, Search, Coins, FileText, Camera, Upload, CheckCircle2,
   AlertCircle, Loader2, Paperclip, ShieldCheck, Calendar, AlertTriangle,
@@ -19,6 +19,7 @@ interface AdjustmentPanelProps {
   profiles: UserProfile[];
   requests: BudgetRequest[];
   usageItems: UsageReportItem[];
+  histories?: ItemReviewHistory[];
   googleToken: string;
   driveFolderId: string;
   onCreateAdjustment: (
@@ -39,6 +40,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
   profiles,
   requests,
   usageItems,
+  histories = [],
   googleToken,
   driveFolderId,
   onCreateAdjustment,
@@ -1436,6 +1438,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           userEmail={financialReportsUserEmail}
           requests={requests}
           usageItems={usageItems}
+          histories={histories}
           profiles={profiles}
           excludeTalangan={true}
         />
@@ -1450,6 +1453,7 @@ export const AdjustmentPanel: React.FC<AdjustmentPanelProps> = ({
           userEmail={talanganReportUserEmail}
           requests={requests}
           usageItems={usageItems}
+          histories={histories}
           profiles={profiles}
           onlyTalangan={true}
         />

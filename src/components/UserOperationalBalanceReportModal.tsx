@@ -51,16 +51,51 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
   const formatDateDisplay = (dateStr?: string): string => {
     if (!dateStr) return '-';
     const clean = dateStr.trim();
-    if (/^\d{4}-\d{2}-\d{2}/.test(clean)) {
-      const [y, m, d] = clean.substring(0, 10).split('-');
+    if (!clean) return '-';
+    // YYYY-MM-DD
+    const isoMatch = clean.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) {
+      const [, y, m, d] = isoMatch;
       return `${d}/${m}/${y}`;
+    }
+    // D/M/YYYY or DD/MM/YYYY
+    const dmyMatch = clean.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (dmyMatch) {
+      const [, d, m, y] = dmyMatch;
+      return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
     }
     return clean;
   };
 
-  const getRequestDate = (r: BudgetRequest): string => {
+  /**
+   * Tanggal Pengajuan: Diambil murni dari kolom Tanggal Pemakaian / Waktu Buat Pengajuan di database
+   */
+  const getPengajuanDateDisplay = (r: BudgetRequest): string => {
     const rawDate = r.tanggalPemakaian || r.createdAt || r.timestamp || '';
     return formatDateDisplay(rawDate);
+  };
+
+  /**
+   * Tanggal Transfer: Diambil murni dari data eksekusi transfer database (AdminActionTime di Pengajuan atau log transfer di ItemReviewHistory).
+   * Jika belum pernah ditransfer atau data transfer tidak ada, mengembalikan '-' tanpa fallback ke tanggal pengajuan.
+   */
+  const getTransferDateDisplay = (r: BudgetRequest): string => {
+    // 1. Cek langsung kolom AdminActionTime dari tabel Pengajuan
+    if (r.adminActionTime && r.adminActionTime.trim()) {
+      return formatDateDisplay(r.adminActionTime);
+    }
+    // 2. Cek log ItemReviewHistory dengan status TRANSFERRED atau APPROVAL_FINANCE
+    if (histories && histories.length > 0) {
+      const transferLog = histories.find(h => 
+        (h.requestUid === r.id || h.itemUid === r.id) &&
+        (h.status === 'TRANSFERRED' || h.status === RequestStatus.TRANSFERRED || h.actionType === 'APPROVAL_FINANCE')
+      );
+      if (transferLog && transferLog.timestamp && transferLog.timestamp.trim()) {
+        return formatDateDisplay(transferLog.timestamp);
+      }
+    }
+    // Transaksi belum ditransfer / data transfer tidak ada di database
+    return '-';
   };
 
   const getTimestampMs = (r: BudgetRequest): number => {
@@ -75,6 +110,15 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
   };
 
   const getTransferTimestampMs = (r: BudgetRequest): number => {
+    if (r.adminActionTime && r.adminActionTime.trim()) {
+      const parsed = new Date(r.adminActionTime).getTime();
+      if (!isNaN(parsed) && parsed > 0) return parsed;
+      const dmyMatch = r.adminActionTime.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (dmyMatch) {
+        const [, d, m, y] = dmyMatch;
+        return new Date(`${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`).getTime();
+      }
+    }
     if (histories && histories.length > 0) {
       const transferLog = histories.find(h => 
         (h.requestUid === r.id || h.itemUid === r.id) &&
@@ -89,19 +133,6 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
       }
     }
     return getTimestampMs(r);
-  };
-
-  const getTransferDateDisplay = (r: BudgetRequest): string => {
-    if (histories && histories.length > 0) {
-      const transferLog = histories.find(h => 
-        (h.requestUid === r.id || h.itemUid === r.id) &&
-        (h.status === 'TRANSFERRED' || h.status === RequestStatus.TRANSFERRED || h.actionType === 'APPROVAL_FINANCE')
-      );
-      if (transferLog && transferLog.timestamp) {
-        return formatDateDisplay(transferLog.timestamp);
-      }
-    }
-    return getRequestDate(r);
   };
 
   const getStatusLabel = (status: RequestStatus, emailKey?: string) => {
@@ -249,6 +280,7 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
 
       return [
         idx + 1,
+        getPengajuanDateDisplay(r),
         getTransferDateDisplay(r),
         uidDisplay,
         formatIDR(r.jumlahPengajuan),
@@ -261,29 +293,30 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
 
     autoTable(doc, {
       startY: 40,
-      head: [['No', 'Tanggal', 'UID / Site', 'Pengajuan', 'Ditransfer', 'Dilaporkan', 'Lebih / Sisa', 'Status']],
+      head: [['No', 'Tgl Pengajuan', 'Tgl Transfer', 'UID / Site', 'Pengajuan', 'Ditransfer', 'Dilaporkan', 'Lebih / Sisa', 'Status']],
       body: tableRows,
       theme: 'grid',
       headStyles: {
         fillColor: [15, 23, 42],
         textColor: [255, 255, 255],
-        fontSize: 8,
+        fontSize: 7.5,
         fontStyle: 'bold',
         halign: 'center'
       },
       bodyStyles: {
-        fontSize: 8,
+        fontSize: 7.5,
         textColor: [30, 41, 59]
       },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 10 },
+        0: { halign: 'center', cellWidth: 9 },
         1: { halign: 'center', cellWidth: 22 },
-        2: { cellWidth: 45 },
-        3: { halign: 'right', cellWidth: 32 },
-        4: { halign: 'right', cellWidth: 32 },
-        5: { halign: 'right', cellWidth: 32 },
-        6: { halign: 'right', cellWidth: 32 },
-        7: { halign: 'center', cellWidth: 32 }
+        2: { halign: 'center', cellWidth: 22 },
+        3: { cellWidth: 42 },
+        4: { halign: 'right', cellWidth: 29 },
+        5: { halign: 'right', cellWidth: 29 },
+        6: { halign: 'right', cellWidth: 29 },
+        7: { halign: 'right', cellWidth: 29 },
+        8: { halign: 'center', cellWidth: 28 }
       }
     });
 
@@ -363,8 +396,9 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-gradient-to-r from-slate-100 via-slate-50 to-slate-100 text-slate-700 font-bold uppercase tracking-wider text-[10px]">
-                    <th className="py-3.5 px-3 text-center w-12 border-b border-slate-200">No</th>
-                    <th className="py-3.5 px-3 border-b border-slate-200">Tanggal</th>
+                    <th className="py-3.5 px-3 text-center w-10 border-b border-slate-200">No</th>
+                    <th className="py-3.5 px-3 border-b border-slate-200 whitespace-nowrap">Tgl Pengajuan</th>
+                    <th className="py-3.5 px-3 border-b border-slate-200 whitespace-nowrap">Tgl Transfer</th>
                     <th className="py-3.5 px-3 border-b border-slate-200">UID</th>
                     <th className="py-3.5 px-3 text-right border-b border-slate-200">Pengajuan</th>
                     <th className="py-3.5 px-3 text-right border-b border-slate-200">Ditransfer</th>
@@ -390,7 +424,14 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
                           {idx + 1}
                         </td>
                         <td className="py-3 px-3 font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">
-                          {getTransferDateDisplay(r)}
+                          {getPengajuanDateDisplay(r)}
+                        </td>
+                        <td className="py-3 px-3 font-mono text-xs font-semibold text-indigo-700 whitespace-nowrap">
+                          {getTransferDateDisplay(r) !== '-' ? (
+                            <span>{getTransferDateDisplay(r)}</span>
+                          ) : (
+                            <span className="text-slate-300 font-normal">-</span>
+                          )}
                         </td>
                         <td className="py-3 px-3">
                           <div className="flex items-center gap-1.5 flex-wrap">
@@ -438,7 +479,7 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
                 </tbody>
                 <tfoot>
                   <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold text-slate-900 text-xs">
-                    <td colSpan={3} className="py-3.5 px-3 uppercase text-[10px] tracking-wider text-slate-700">
+                    <td colSpan={4} className="py-3.5 px-3 uppercase text-[10px] tracking-wider text-slate-700">
                       TOTAL REKAPITULASI LAPORAN
                     </td>
                     <td className="py-3.5 px-3 text-right font-mono text-slate-800">

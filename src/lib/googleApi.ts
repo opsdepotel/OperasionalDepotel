@@ -1321,9 +1321,64 @@ export interface AllDatabaseTables {
 }
 
 /**
+ * Fetches active item review histories via the high-performance on-demand backend endpoint /api/history.
+ * Loads only records for active (non-closed) requests (~740 records instead of 12,382).
+ */
+export async function fetchActiveItemReviewHistories(token: string, spreadsheetId: string): Promise<ItemReviewHistory[]> {
+  if (token === 'mock_demo_token') {
+    return getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
+  }
+
+  try {
+    const res = await fetch(`/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data as ItemReviewHistory[];
+      }
+    }
+  } catch (err) {
+    console.warn('[fetchActiveItemReviewHistories] /api/history request failed, falling back to direct sheets:', err);
+  }
+
+  // Fallback to direct sheet fetch
+  return fetchItemReviewHistories(token, spreadsheetId);
+}
+
+/**
+ * Fetches review history on-demand for a specific UID (active or closed) from /api/history?uid=...
+ */
+export async function fetchHistoryForUid(token: string, spreadsheetId: string, uid: string): Promise<ItemReviewHistory[]> {
+  if (!uid) return [];
+  if (token === 'mock_demo_token') {
+    const all = getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
+    return all.filter(h => h.requestUid === uid || h.itemUid === uid);
+  }
+
+  try {
+    const res = await fetch(`/api/history?uid=${encodeURIComponent(uid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data as ItemReviewHistory[];
+      }
+    }
+  } catch (err) {
+    console.warn(`[fetchHistoryForUid] /api/history?uid=${uid} failed:`, err);
+  }
+
+  return [];
+}
+
+/**
  * High-performance data loader for operational database tables.
- * Uses a single Google Sheets batchGet request (2-3s) instead of 7 separate HTTP requests (15-25s),
- * dramatically eliminating timeout issues on cellular and constrained network connections.
+ * Uses a single Google Sheets batchGet request for primary tables (Pengajuan, Laporan, Users, SiteID, Activity, ResetDeviceLog)
+ * combined with high-speed On-Demand active history loading from /api/history.
+ * Eliminates 94% of history payload by excluding closed UIDs during initial sync.
  */
 export async function fetchAllDatabaseTables(token: string, spreadsheetId: string): Promise<AllDatabaseTables> {
   if (token === 'mock_demo_token') {
@@ -1338,7 +1393,7 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
     };
   }
 
-  // Attempt 1: Fast single batchGet for all tables
+  // Attempt 1: Fast single batchGet for primary tables + parallel on-demand active history fetch
   try {
     const ranges = [
       'Pengajuan!A1:Z',
@@ -1346,14 +1401,17 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
       'Users!A1:Z',
       'SiteID!A1:Z',
       'Activity!A1:Z',
-      'ResetDeviceLog!A1:Z',
-      'ItemReviewHistory!A1:Z'
+      'ResetDeviceLog!A1:Z'
     ];
     const query = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 60000
-    });
+
+    const [res, activeHistories] = await Promise.all([
+      fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 60000
+      }),
+      fetchActiveItemReviewHistories(token, spreadsheetId).catch(() => [])
+    ]);
 
     if (res.status === 401) {
       throw new Error('[HTTP 401] Request had invalid authentication credentials.');
@@ -1375,8 +1433,6 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
       if (siteRows.length === 0) siteRows = getValues('Site');
       const actRows = getValues('Activity');
       const logRows = getValues('ResetDeviceLog');
-      let histRows = getValues('ItemReviewHistory');
-      if (histRows.length === 0) histRows = getValues('ApprovalHistory');
 
       const requests = parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, reqRows, mapToBudgetRequest);
       const usageItems = parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, usageRows, mapToUsageItem).filter(
@@ -1386,7 +1442,6 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
       const sites = parseSitesRows(siteRows);
       const activities = parseSheetRows<UserActivity>(ACTIVITY_HEADERS, actRows, mapToUserActivity);
       const resetDeviceLogs = parseSheetRows<ResetDeviceLog>(RESET_DEVICE_LOG_HEADERS, logRows, mapToResetDeviceLog);
-      const itemReviewHistories = parseSheetRows<ItemReviewHistory>(ITEM_REVIEW_HISTORY_HEADERS, histRows, mapToItemReviewHistory);
 
       return {
         requests,
@@ -1395,7 +1450,7 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
         sites,
         activities,
         resetDeviceLogs,
-        itemReviewHistories
+        itemReviewHistories: activeHistories
       };
     }
   } catch (batchErr: any) {
@@ -1413,7 +1468,7 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
     fetchSites(token, spreadsheetId),
     fetchUserActivities(token, spreadsheetId),
     fetchResetDeviceLogs(token, spreadsheetId),
-    fetchItemReviewHistories(token, spreadsheetId)
+    fetchActiveItemReviewHistories(token, spreadsheetId)
   ]);
 
   return {
@@ -2231,6 +2286,11 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
     const txt = await appendRes.text();
     throw new Error(`Gagal menyimpan Riwayat Review Item: ${txt}`);
   }
+
+  // Invalidate server on-demand history cache
+  try {
+    fetch('/api/history/invalidate', { method: 'POST' }).catch(() => {});
+  } catch {}
 }
 
 // Purge orphan ItemReviewHistory entries that do not correspond to any valid BudgetRequest or UsageReportItem

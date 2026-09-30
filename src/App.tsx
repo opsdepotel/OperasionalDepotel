@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
@@ -26,6 +26,7 @@ import {
   findOrCreateDatabase,
   findOrCreateFolder,
   fetchAllDatabaseTables,
+  fetchHistoryForUid,
   fetchBudgetRequests,
   fetchUsageItems,
   fetchProfiles,
@@ -447,6 +448,45 @@ export default function App() {
   useBackHandler(isUserDashboardPreviewModalOpen, () => setIsUserDashboardPreviewModalOpen(false), 'isUserDashboardPreviewModalOpen');
   useBackHandler(isDiomsLogoModalOpen, () => setIsDiomsLogoModalOpen(false), 'isDiomsLogoModalOpen');
   useBackHandler(!!previewDocument, () => setPreviewDocument(null), 'previewDocument');
+
+  // High-performance On-Demand History Loader for specific UID (Active or Closed)
+  const loadHistoryForUid = useCallback(async (uid?: string | null) => {
+    if (!uid) return;
+    const cleanUid = uid.trim();
+    if (!cleanUid) return;
+
+    try {
+      const activeToken = token || localStorage.getItem('g_access_token') || '';
+      const activeSheetId = spreadsheetId || SPREADSHEET_ID;
+      const records = await fetchHistoryForUid(activeToken, activeSheetId, cleanUid);
+      if (records && records.length > 0) {
+        setItemReviewHistories(prev => {
+          const existingIds = new Set(prev.map(h => h.id));
+          const newRecords = records.filter(r => !existingIds.has(r.id));
+          if (newRecords.length === 0) return prev;
+          const merged = [...newRecords, ...prev];
+          safeSetJson('op_app_cached_item_review_histories', merged, 50);
+          return merged;
+        });
+      }
+    } catch (e) {
+      console.warn(`[loadHistoryForUid] Gagal memuat riwayat on-demand untuk UID ${cleanUid}:`, e);
+    }
+  }, [token, spreadsheetId]);
+
+  // Auto-fetch on-demand history when a request or report item is opened
+  useEffect(() => {
+    const targetUid = selectedRequest?.id || reviewBudgetReq?.id || reviewReportReq?.id || transferReq?.id;
+    if (targetUid) {
+      loadHistoryForUid(targetUid);
+    }
+  }, [selectedRequest?.id, reviewBudgetReq?.id, reviewReportReq?.id, transferReq?.id, loadHistoryForUid]);
+
+  useEffect(() => {
+    if (requestHistoryModalItem?.requestId) {
+      loadHistoryForUid(requestHistoryModalItem.requestId);
+    }
+  }, [requestHistoryModalItem?.requestId, loadHistoryForUid]);
 
   // Search/Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -4086,6 +4126,7 @@ export default function App() {
             profiles={profiles}
             requests={requests}
             usageItems={usageItems}
+            histories={itemReviewHistories}
             googleToken={token!}
             driveFolderId={driveFolderId || ''}
             onCreateAdjustment={handleCreateAdjustment}

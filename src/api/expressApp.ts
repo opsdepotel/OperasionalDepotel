@@ -6,6 +6,7 @@ import path from 'path';
 import { google } from 'googleapis';
 import { googleAuthRouter } from './googleRoutes.js';
 import { pushRouter } from './pushRoutes.js';
+import { historyRouter } from './historyRoutes.js';
 import { getServiceAccountAuth } from '../lib/serverGoogleAuth.js';
 
 dotenv.config();
@@ -272,6 +273,10 @@ expressApp.post('/api/google/config', handlePostConfig);
 
 // Google Service Account & Drive Proxy Endpoints
 expressApp.use('/api/google', googleAuthRouter);
+
+// On-Demand ItemReviewHistory API Endpoints
+expressApp.use('/api/history', historyRouter);
+expressApp.use('/api/google/history', historyRouter);
 
 // Web Push Notifications Endpoints (VAPID)
 expressApp.use('/api/push', pushRouter);
