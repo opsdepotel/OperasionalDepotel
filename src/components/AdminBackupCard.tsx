@@ -29,6 +29,7 @@ import {
   BackupScanResult,
   BackupExecutionResult
 } from '../lib/driveBackup';
+import { fetchServiceAccountToken } from '../lib/serviceAccountClient';
 
 interface AdminBackupCardProps {
   token?: string | null;
@@ -124,6 +125,19 @@ export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
       setScanResult(result);
     } catch (err: any) {
       setErrorMessage(err.message || 'Gagal memindai folder Google Drive cadangan.');
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleRefreshTokenAndRetry = async () => {
+    setIsScanning(true);
+    setErrorMessage(null);
+    try {
+      await fetchServiceAccountToken(true);
+      await handleScan();
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Gagal menyegarkan token Google.');
     } finally {
       setIsScanning(false);
     }
@@ -628,11 +642,30 @@ export const AdminBackupCard: React.FC<AdminBackupCardProps> = ({
       {errorMessage && (
         <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-start gap-2.5 animate-fade-in">
           <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-          <div className="space-y-1">
+          <div className="space-y-1.5 flex-1">
             <span className="font-bold block">{errorMessage}</span>
-            <p className="text-[11px] text-rose-600">
-              Catatan: Pastikan folder Google Drive cadangan (ID: {BACKUP_TARGET_FOLDER_ID}) telah dibagikan dengan akses Editor ke akun Google Anda atau Service Account.
+            <p className="text-[11px] text-rose-600 leading-relaxed">
+              {errorMessage.includes('401') ? (
+                <>
+                  Penyebab: Token otorisasi Google di sesi browser Anda telah kedaluwarsa (HTTP 401). Folder cadangan sebenarnya sudah diset Editor, namun kredensial sesi perlu disegarkan.
+                </>
+              ) : (
+                <>
+                  Catatan: Pastikan folder Google Drive cadangan (ID: {BACKUP_TARGET_FOLDER_ID}) telah dibagikan dengan akses Editor ke akun Google Anda atau Service Account.
+                </>
+              )}
             </p>
+            {errorMessage.includes('401') && (
+              <button
+                type="button"
+                onClick={handleRefreshTokenAndRetry}
+                disabled={isScanning || isExecuting}
+                className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin' : ''}`} />
+                <span>Segarkan Token Otorisasi & Coba Lagi</span>
+              </button>
+            )}
           </div>
         </div>
       )}

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Bell,
   MapPin,
@@ -64,6 +64,11 @@ export const DevicePermissionsModal: React.FC<DevicePermissionsModalProps> = ({
   const [isTestingPush, setIsTestingPush] = useState(false);
   const [testPushStatus, setTestPushStatus] = useState<{ success: boolean; message: string } | null>(null);
 
+  const onPermissionsUpdatedRef = useRef(onPermissionsUpdated);
+  useEffect(() => {
+    onPermissionsUpdatedRef.current = onPermissionsUpdated;
+  }, [onPermissionsUpdated]);
+
   // Refresh permissions status
   const refreshStatus = useCallback(async () => {
     setIsLoading(true);
@@ -81,15 +86,15 @@ export const DevicePermissionsModal: React.FC<DevicePermissionsModalProps> = ({
         }
         return current;
       });
-      if (onPermissionsUpdated) {
-        onPermissionsUpdated(current);
+      if (onPermissionsUpdatedRef.current) {
+        onPermissionsUpdatedRef.current(current);
       }
     } catch (err) {
       console.warn('Failed to check device permissions:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [onPermissionsUpdated]);
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
@@ -119,7 +124,7 @@ export const DevicePermissionsModal: React.FC<DevicePermissionsModalProps> = ({
       await refreshStatus();
       if (perm === 'granted') {
         const targetUser = userProfile || {
-          email: 'ops.depotel@gmail.com',
+          email: 'depotel@vgd4.my.id',
           name: 'User DIOMS',
         };
         subscribeToPushNotifications(targetUser).catch((err) => {
@@ -136,7 +141,7 @@ export const DevicePermissionsModal: React.FC<DevicePermissionsModalProps> = ({
     setTestPushStatus(null);
     try {
       const targetUser = userProfile || {
-        email: 'ops.depotel@gmail.com',
+        email: 'depotel@vgd4.my.id',
         name: 'User DIOMS',
       };
       // Ensure subscribed

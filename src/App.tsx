@@ -37,6 +37,7 @@ import {
   createUsageItem,
   updateUsageItem,
   deleteUsageItem,
+  deleteBudgetRequest,
   saveUserProfile,
   uploadReceiptFile,
   uploadBase64Image,
@@ -542,6 +543,28 @@ export default function App() {
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
   const [permissionsStatus, setPermissionsStatus] = useState<DevicePermissionsStatus | null>(null);
 
+  const handlePermissionsUpdated = useCallback((newStatus: DevicePermissionsStatus) => {
+    setPermissionsStatus((prev) => {
+      if (
+        prev &&
+        prev.notification === newStatus.notification &&
+        prev.geolocation === newStatus.geolocation &&
+        prev.camera === newStatus.camera &&
+        prev.allGranted === newStatus.allGranted &&
+        prev.hasAnyDenied === newStatus.hasAnyDenied &&
+        prev.hasAnyPrompt === newStatus.hasAnyPrompt
+      ) {
+        return prev;
+      }
+      return newStatus;
+    });
+    if (newStatus.allGranted) {
+      try {
+        sessionStorage.removeItem('op_permissions_modal_dismissed_session');
+      } catch {}
+    }
+  }, []);
+
   // Monitor device permissions continuously & proactively
   useEffect(() => {
     let isMounted = true;
@@ -551,10 +574,11 @@ export default function App() {
         const current = await checkAllDevicePermissions();
         if (!isMounted) return;
 
+        let shouldOpenModal = false;
         setPermissionsStatus((prev) => {
-          // If previous was fully granted, and now revoked, immediately pop up modal!
+          // If previous was fully granted, and now revoked, schedule opening modal outside updater
           if (prev && prev.allGranted && !current.allGranted) {
-            setIsPermissionsModalOpen(true);
+            shouldOpenModal = true;
           }
           if (
             prev &&
@@ -567,6 +591,10 @@ export default function App() {
           }
           return current;
         });
+
+        if (shouldOpenModal) {
+          setIsPermissionsModalOpen(true);
+        }
 
         // If not all granted on initial load, auto-prompt if not dismissed in this session
         if (!current.allGranted && autoPrompt) {
@@ -1106,11 +1134,15 @@ export default function App() {
       // Ensure the admin profile in Google Sheets has the correct email associated with it in the background
       if (user && user.email) {
         const emailLower = user.email.toLowerCase();
-        if (emailLower === 'ops.depotel@gmail.com' || emailLower === 'ops.depotel.gmail.com') {
-          const adminProf = allProfs.find(p => p.role === Role.FINANCE || p.userId === 'admin' || p.userId === 'finance');
-          if (adminProf && adminProf.email !== 'ops.depotel@gmail.com') {
-            adminProf.email = 'ops.depotel@gmail.com';
-            adminProf.nama = 'Finance Depotel';
+        if (
+          emailLower === 'depotel@vgd4.my.id' ||
+          emailLower === 'ops.depotel@gmail.com' ||
+          emailLower === 'ops.depotel.gmail.com'
+        ) {
+          const adminProf = allProfs.find(p => p.role === Role.ADMINISTRATOR || p.userId === 'admin');
+          if (adminProf && adminProf.email !== 'depotel@vgd4.my.id') {
+            adminProf.email = 'depotel@vgd4.my.id';
+            adminProf.nama = 'Admin Depotel';
             try {
               saveUserProfile(accessToken, sheetId, adminProf).catch(console.error);
             } catch (e) {
@@ -2811,14 +2843,52 @@ export default function App() {
   };
 
 
-  const handleDeleteUsageItem = async (itemId: string) => {
+  const handleDeleteUsageItem = async (itemId: string, deleteAssociatedRequest?: boolean) => {
     const deletedItem = usageItems.find(i => i.id === itemId);
+    const targetReqId = deletedItem?.requestId || selectedRequest?.id;
+    const targetReq = requests.find(r => r.id === targetReqId) || (selectedRequest?.id === targetReqId ? selectedRequest : null);
+
+    if (deleteAssociatedRequest && targetReq) {
+      // 1. Immediately update local state & cached storage
+      const remainingUsageItems = usageItems.filter(i => i.id !== itemId && i.requestId !== targetReq.id);
+      const remainingRequests = requests.filter(r => r.id !== targetReq.id);
+      setUsageItems(remainingUsageItems);
+      setRequests(remainingRequests);
+      safeSetJson('op_app_cached_usage_items', remainingUsageItems, 150);
+      safeSetJson('op_app_cached_requests', remainingRequests, 100);
+
+      if (selectedRequest?.id === targetReq.id) {
+        setSelectedRequest(null);
+      }
+      setActiveView('dashboard');
+
+      // 2. Perform database deletion in Google Sheets
+      const currentToken = token || 'mock_demo_token';
+      const currentSheetId = spreadsheetId || 'mock_sheet_id';
+
+      const success = await runGoogleAction(
+        async () => {
+          // Delete item from Laporan sheet
+          await deleteUsageItem(currentToken, currentSheetId, itemId);
+          // Delete budget request from Pengajuan sheet
+          await deleteBudgetRequest(currentToken, currentSheetId, targetReq.id);
+        },
+        'Gagal menghapus item laporan dan UID terkait.'
+      );
+
+      if (success !== null) {
+        await handleManualRefresh();
+      } else {
+        throw new Error('Gagal menghapus item laporan dan UID terkait dari database.');
+      }
+      return;
+    }
+
     const updatedUsageItems = usageItems.filter(i => i.id !== itemId);
     setUsageItems(updatedUsageItems);
 
     let updatedReq: BudgetRequest | null = null;
     if (deletedItem) {
-      const targetReq = requests.find(r => r.id === deletedItem.requestId) || (selectedRequest?.id === deletedItem.requestId ? selectedRequest : null);
       const isTalangan = targetReq && (
         targetReq.id.startsWith('OPT-') ||
         targetReq.id.startsWith('BBMDS') ||
@@ -4071,7 +4141,7 @@ export default function App() {
             token={token}
             driveFolderId={driveFolderId}
             permissionsStatus={permissionsStatus}
-            onPermissionsUpdated={setPermissionsStatus}
+            onPermissionsUpdated={handlePermissionsUpdated}
             onOpenPermissionsModal={() => setIsPermissionsModalOpen(true)}
           />
         ) : activeView === 'new-request' && userProfile ? (
@@ -5890,14 +5960,7 @@ export default function App() {
             sessionStorage.setItem('op_permissions_modal_dismissed_session', 'true');
           } catch {}
         }}
-        onPermissionsUpdated={(newStatus) => {
-          setPermissionsStatus(newStatus);
-          if (newStatus.allGranted) {
-            try {
-              sessionStorage.removeItem('op_permissions_modal_dismissed_session');
-            } catch {}
-          }
-        }}
+        onPermissionsUpdated={handlePermissionsUpdated}
         userProfile={userProfile}
       />
 

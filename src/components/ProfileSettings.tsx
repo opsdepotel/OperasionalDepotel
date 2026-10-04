@@ -99,6 +99,11 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
     }
   }, [initialPermissions]);
 
+  const onPermissionsUpdatedRef = React.useRef(onPermissionsUpdated);
+  React.useEffect(() => {
+    onPermissionsUpdatedRef.current = onPermissionsUpdated;
+  }, [onPermissionsUpdated]);
+
   const refreshPermissions = React.useCallback(async () => {
     try {
       const current = await checkAllDevicePermissions();
@@ -114,13 +119,13 @@ export const ProfileSettings: React.FC<ProfileSettingsProps> = ({
         }
         return current;
       });
-      if (onPermissionsUpdated) {
-        onPermissionsUpdated(current);
+      if (onPermissionsUpdatedRef.current) {
+        onPermissionsUpdatedRef.current(current);
       }
     } catch (err) {
       console.warn('Failed to check device permissions:', err);
     }
-  }, [onPermissionsUpdated]);
+  }, []);
 
   React.useEffect(() => {
     refreshPermissions();

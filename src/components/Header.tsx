@@ -43,7 +43,7 @@ export const Header: React.FC<HeaderProps> = ({
     }
   };
 
-  const statusTitle = `DIOMS - Depotel Integrated Operation Monitoring System (${userProfile?.email || 'ops.depotel@gmail.com'})`;
+  const statusTitle = `DIOMS - Depotel Integrated Operation Monitoring System (${userProfile?.email || 'depotel@vgd4.my.id'})`;
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-100 shadow-sm px-4 py-2.5">

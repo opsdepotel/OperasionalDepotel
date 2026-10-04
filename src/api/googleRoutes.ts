@@ -276,6 +276,48 @@ googleAuthRouter.post('/upload-receipt', async (req, res) => {
   }
 });
 
+interface FolderCacheEntry {
+  files: Array<{ id: string; name: string }>;
+  timestamp: number;
+}
+const folderFilesCache = new Map<string, FolderCacheEntry>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache
+
+async function getFolderFilesCached(
+  drive: any,
+  folderId: string,
+  forceRefresh = false
+): Promise<Array<{ id: string; name: string }>> {
+  const now = Date.now();
+  const cached = folderFilesCache.get(folderId);
+  if (!forceRefresh && cached && now - cached.timestamp < CACHE_TTL_MS) {
+    return cached.files;
+  }
+
+  const files: Array<{ id: string; name: string }> = [];
+  let pageToken: string | undefined = undefined;
+  do {
+    const listRes: any = await drive.files.list({
+      q: `'${folderId}' in parents and trashed = false`,
+      pageSize: 1000,
+      pageToken,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+      fields: 'nextPageToken, files(id, name)'
+    });
+    const batch = (listRes.data.files as any[]) || [];
+    files.push(...batch);
+    pageToken = listRes.data.nextPageToken || undefined;
+  } while (pageToken);
+
+  folderFilesCache.set(folderId, {
+    files,
+    timestamp: now
+  });
+
+  return files;
+}
+
 /**
  * Backup endpoint to copy Google Sheet database and Photos to Google Drive Cadangan.
  * Target Folder ID: 1_XLMT5VIqctS1EyPlhHs0JzggzT39RZ2
@@ -290,6 +332,7 @@ googleAuthRouter.post('/backup', async (req, res) => {
       sourceFolderId = '1RZHDhcGEdrEu1S1OJh24Za1qkxfU-1kE',
       copySpreadsheet = true,
       copyPhotos = true,
+      forceRefresh = false,
       userToken
     } = req.body || {};
 
@@ -318,6 +361,13 @@ googleAuthRouter.post('/backup', async (req, res) => {
       });
       targetFolderName = targetFolderRes.data.name || targetFolderName;
     } catch (folderErr: any) {
+      const status = folderErr?.response?.status || folderErr?.status || 403;
+      if (status === 401) {
+        return res.status(401).json({
+          success: false,
+          error: `Sesi otorisasi Google telah kedaluwarsa (HTTP 401). Silakan refresh halaman.`
+        });
+      }
       return res.status(403).json({
         success: false,
         error: `Folder Google Drive cadangan (ID: ${targetBackupFolderId}) tidak dapat diakses atau belum dibagikan. Pastikan folder cadangan sudah dibagikan (Akses Editor) ke akun Google atau Service Account.`
@@ -337,46 +387,22 @@ googleAuthRouter.post('/backup', async (req, res) => {
       console.warn('Could not read master spreadsheet metadata:', sheetErr);
     }
 
-    // List all files in source folder with full pagination (Google Drive API returns max 1000 per page)
+    // List files in source and target folders only if needed (for scan or when copying photos)
     let sourceFiles: Array<{ id: string; name: string }> = [];
-    try {
-      let pageToken: string | undefined = undefined;
-      do {
-        const listRes: any = await drive.files.list({
-          q: `'${sourceFolderId}' in parents and trashed = false`,
-          pageSize: 1000,
-          pageToken,
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
-          fields: 'nextPageToken, files(id, name)'
-        });
-        const batch = (listRes.data.files as any[]) || [];
-        sourceFiles.push(...batch);
-        pageToken = listRes.data.nextPageToken || undefined;
-      } while (pageToken);
-    } catch (listErr) {
-      console.warn('Could not list files in source folder:', listErr);
-    }
-
-    // List all existing files in target backup folder with full pagination
     let existingFilesInBackup: Array<{ id: string; name: string }> = [];
-    try {
-      let pageToken: string | undefined = undefined;
-      do {
-        const existingListRes: any = await drive.files.list({
-          q: `'${targetBackupFolderId}' in parents and trashed = false`,
-          pageSize: 1000,
-          pageToken,
-          supportsAllDrives: true,
-          includeItemsFromAllDrives: true,
-          fields: 'nextPageToken, files(id, name)'
-        });
-        const batch = (existingListRes.data.files as any[]) || [];
-        existingFilesInBackup.push(...batch);
-        pageToken = existingListRes.data.nextPageToken || undefined;
-      } while (pageToken);
-    } catch (existErr) {
-      console.warn('Could not list existing files in target backup folder:', existErr);
+
+    if (action === 'scan' || copyPhotos) {
+      try {
+        sourceFiles = await getFolderFilesCached(drive, sourceFolderId, Boolean(forceRefresh));
+      } catch (listErr) {
+        console.warn('Could not list files in source folder:', listErr);
+      }
+
+      try {
+        existingFilesInBackup = await getFolderFilesCached(drive, targetBackupFolderId, Boolean(forceRefresh));
+      } catch (existErr) {
+        console.warn('Could not list existing files in target backup folder:', existErr);
+      }
     }
 
     const existingNamesSet = new Set(existingFilesInBackup.map(f => f.name));
@@ -466,6 +492,10 @@ googleAuthRouter.post('/backup', async (req, res) => {
               copiedPhotosCount++;
               if (copiedPhoto.data.id && photo.name) {
                 backupFilesByName.set(photo.name, copiedPhoto.data.id);
+                const targetCache = folderFilesCache.get(targetBackupFolderId);
+                if (targetCache && Array.isArray(targetCache.files)) {
+                  targetCache.files.push({ id: copiedPhoto.data.id, name: photo.name });
+                }
               }
             } catch (photoCopyErr) {
               failedPhotosCount++;
@@ -481,11 +511,11 @@ googleAuthRouter.post('/backup', async (req, res) => {
       details.push(`Semua foto bukti (${sourceFiles.length} berkas) sudah lengkap ada di Google Drive cadangan.`);
     }
 
-    // Step C: Update Photo Links in the Copied Google Sheet to point to Backup Folder Files
-    if (copiedSheetResult && copiedSheetResult.id) {
+    // Step C: Update Photo Links in the Copied Google Sheet to point to Backup Folder Files (only for processed photos)
+    if (copiedSheetResult && copiedSheetResult.id && photosToProcess.length > 0) {
       try {
         const replacementsToMake: Array<{ masterId: string; backupId: string }> = [];
-        for (const sf of sourceFiles) {
+        for (const sf of photosToProcess) {
           if (sf.name && sf.id) {
             const bId = backupFilesByName.get(sf.name);
             if (bId && bId !== sf.id) {
@@ -496,52 +526,38 @@ googleAuthRouter.post('/backup', async (req, res) => {
 
         if (replacementsToMake.length > 0) {
           const sheets = google.sheets({ version: 'v4', auth: authObj.auth });
-          const CHUNK_SIZE = 100;
-          let totalReplacedOccurrences = 0;
-
-          for (let i = 0; i < replacementsToMake.length; i += CHUNK_SIZE) {
-            const chunk = replacementsToMake.slice(i, i + CHUNK_SIZE);
-            const requests = chunk.map(r => ({
-              findReplace: {
-                find: r.masterId,
-                replacement: r.backupId,
-                allSheets: true,
-                matchCase: true,
-                matchEntireCell: false,
-                includeFormulas: true
-              }
-            }));
-
-            try {
-              const batchRes = await sheets.spreadsheets.batchUpdate({
-                spreadsheetId: copiedSheetResult.id,
-                requestBody: {
-                  requests
-                }
-              });
-
-              const replies = batchRes.data.replies || [];
-              for (const reply of replies) {
-                if (reply.findReplace?.occurrencesChanged) {
-                  totalReplacedOccurrences += reply.findReplace.occurrencesChanged;
-                }
-              }
-            } catch (chunkErr: any) {
-              console.warn(`Gagal memperbarui batch link spreadsheet cadangan (${i} - ${i + chunk.length}):`, chunkErr?.message || chunkErr);
+          const requests = replacementsToMake.slice(0, 100).map(r => ({
+            findReplace: {
+              find: r.masterId,
+              replacement: r.backupId,
+              allSheets: true,
+              matchCase: true,
+              matchEntireCell: false,
+              includeFormulas: true
             }
-          }
+          }));
 
-          if (totalReplacedOccurrences > 0) {
-            details.push(`Sinkronisasi link foto: Berhasil mengalihkan ${totalReplacedOccurrences} tautan foto di Google Sheet cadangan langsung ke Google Drive cadangan.`);
-          } else {
-            details.push(`Sinkronisasi link foto: ${replacementsToMake.length} pola file dicocokkan, tautan sheet cadangan telah diselaraskan.`);
+          try {
+            const batchRes = await sheets.spreadsheets.batchUpdate({
+              spreadsheetId: copiedSheetResult.id,
+              requestBody: { requests }
+            });
+            let totalReplacedOccurrences = 0;
+            const replies = batchRes.data.replies || [];
+            for (const reply of replies) {
+              if (reply.findReplace?.occurrencesChanged) {
+                totalReplacedOccurrences += reply.findReplace.occurrencesChanged;
+              }
+            }
+            if (totalReplacedOccurrences > 0) {
+              details.push(`Sinkronisasi link foto: Berhasil mengalihkan ${totalReplacedOccurrences} tautan foto di Google Sheet cadangan langsung ke Google Drive cadangan.`);
+            }
+          } catch (chunkErr: any) {
+            console.warn('Gagal memperbarui batch link spreadsheet cadangan:', chunkErr?.message || chunkErr);
           }
-        } else {
-          details.push(`Sinkronisasi link foto: Belum ada file foto cadangan yang cocok atau foto belum disalin sebelumnya.`);
         }
       } catch (linkUpdateErr: any) {
         console.warn('Peringatan: Gagal memperbarui link foto di Google Sheet cadangan:', linkUpdateErr?.message || linkUpdateErr);
-        details.push(`Peringatan sinkronisasi link: ${linkUpdateErr?.message || 'Proses update link dilewati'}`);
       }
     }
 

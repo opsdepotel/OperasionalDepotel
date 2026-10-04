@@ -59,7 +59,7 @@ interface UsageReportFormProps {
   driveFolderId: string;
   onAddItem: (item: UsageReportItem) => Promise<void>;
   onUpdateItem: (item: UsageReportItem) => Promise<void>;
-  onDeleteItem: (itemId: string) => Promise<void>;
+  onDeleteItem: (itemId: string, deleteAssociatedRequest?: boolean) => Promise<void>;
   onSubmitReport?: (request: BudgetRequest) => Promise<void>;
   onSubmitReview?: (
     updatedItems: { itemId: string; status: ItemStatus; comment: string }[],
@@ -2144,64 +2144,116 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
               </div>
             </div>
 
-            {/* Validation for Dana Talangan: Cannot delete if it's the last remaining item */}
-            {isTalangan && currentItems.length <= 1 ? (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
-                <p className="leading-relaxed text-[11px]">
-                  Pengajuan Dana Talangan wajib memiliki minimal 1 item laporan. Item ini adalah satu-satunya item yang ada. Jika ingin membatalkan seluruh pengajuan, silakan gunakan tombol <strong>Batalkan Pengajuan</strong> pada menu utama.
+            {/* Validation & Notification */}
+            {(() => {
+              const isLastTalanganItem = isTalangan && currentItems.length <= 1;
+              const isItemNotReviewedByManager =
+                itemPendingDelete.statusManager === ItemStatus.PENDING ||
+                itemPendingDelete.statusManager === 'PENDING' ||
+                !itemPendingDelete.statusManager;
+              const isLastTalanganPendingReview = isLastTalanganItem && isItemNotReviewedByManager;
+
+              if (isLastTalanganPendingReview) {
+                return (
+                  <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-xs space-y-2.5 text-rose-900 animate-fade-in">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="space-y-1">
+                        <p className="font-bold text-rose-800">
+                          Peringatan: Menghapus Item Terakhir Dana Talangan
+                        </p>
+                        <p className="text-[11px] text-rose-700 leading-relaxed">
+                          Dana Talangan wajib memiliki minimal 1 Item Laporan. Karena pengajuan ini hanya memiliki 1 Item Laporan dan dalam status <strong>belum di-review Manager</strong>, maka menghapus item terakhir ini <strong>berarti menghapus UID ({request.id}) terkait</strong> dengan item tersebut dari sistem dan database.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="p-2.5 bg-white/90 rounded-lg border border-rose-200/60 text-[11px] text-slate-700 font-medium">
+                      Apakah Anda ingin melanjutkan proses menghapus item terakhir ini berikut UID <strong>{request.id}</strong> terkait, atau membatalkan proses delete tersebut?
+                    </div>
+                  </div>
+                );
+              }
+
+              if (isLastTalanganItem) {
+                return (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-xs flex items-start gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+                    <p className="leading-relaxed text-[11px]">
+                      Pengajuan Dana Talangan wajib memiliki minimal 1 item laporan. Item ini telah di-review oleh Manager sehingga tidak dapat dihapus secara langsung. Jika ingin membatalkan pengajuan, silakan hubungi Manager terkait.
+                    </p>
+                  </div>
+                );
+              }
+
+              return (
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Apakah Anda yakin ingin menghapus item laporan ini? Tindakan ini akan menghapus rincian pengeluaran dari database dan total pengajuan akan disesuaikan otomatis.
                 </p>
-              </div>
-            ) : (
-              <p className="text-xs text-slate-500 leading-relaxed">
-                Apakah Anda yakin ingin menghapus item laporan ini? Tindakan ini akan menghapus rincian pengeluaran dari database dan total pengajuan akan disesuaikan otomatis.
-              </p>
-            )}
+              );
+            })()}
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                disabled={isDeletingItem}
-                onClick={() => {
-                  setItemPendingDelete(null);
-                  setDeleteError(null);
-                }}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer disabled:opacity-50"
-              >
-                {isTalangan && currentItems.length <= 1 ? 'Tutup' : 'Batal'}
-              </button>
+              {(() => {
+                const isLastTalanganItem = isTalangan && currentItems.length <= 1;
+                const isItemNotReviewedByManager =
+                  itemPendingDelete.statusManager === ItemStatus.PENDING ||
+                  itemPendingDelete.statusManager === 'PENDING' ||
+                  !itemPendingDelete.statusManager;
+                const isLastTalanganPendingReview = isLastTalanganItem && isItemNotReviewedByManager;
 
-              {(!isTalangan || currentItems.length > 1) && (
-                <button
-                  type="button"
-                  disabled={isDeletingItem}
-                  onClick={async () => {
-                    setIsDeletingItem(true);
-                    setDeleteError(null);
-                    try {
-                      await onDeleteItem(itemPendingDelete.id);
-                      setItemPendingDelete(null);
-                    } catch (err: any) {
-                      setDeleteError(err.message || 'Gagal menghapus item laporan.');
-                    } finally {
-                      setIsDeletingItem(false);
-                    }
-                  }}
-                  className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                >
-                  {isDeletingItem ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Menghapus...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Ya, Hapus Item</span>
-                    </>
-                  )}
-                </button>
-              )}
+                return (
+                  <>
+                    <button
+                      type="button"
+                      disabled={isDeletingItem}
+                      onClick={() => {
+                        setItemPendingDelete(null);
+                        setDeleteError(null);
+                      }}
+                      className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isLastTalanganItem && !isLastTalanganPendingReview ? 'Tutup' : 'Batalkan'}
+                    </button>
+
+                    {(!isLastTalanganItem || isLastTalanganPendingReview) && (
+                      <button
+                        type="button"
+                        disabled={isDeletingItem}
+                        onClick={async () => {
+                          setIsDeletingItem(true);
+                          setDeleteError(null);
+                          try {
+                            if (isLastTalanganPendingReview) {
+                              await onDeleteItem(itemPendingDelete.id, true);
+                              setItemPendingDelete(null);
+                              onClose();
+                            } else {
+                              await onDeleteItem(itemPendingDelete.id, false);
+                              setItemPendingDelete(null);
+                            }
+                          } catch (err: any) {
+                            setDeleteError(err.message || 'Gagal menghapus item laporan.');
+                            setIsDeletingItem(false);
+                          }
+                        }}
+                        className="px-4 py-2 text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        {isDeletingItem ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>{isLastTalanganPendingReview ? 'Menghapus Item & UID...' : 'Menghapus...'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>{isLastTalanganPendingReview ? 'Ya, Hapus Item & UID Terkait' : 'Ya, Hapus Item'}</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>,

@@ -7,9 +7,43 @@
  */
 
 import { SPREADSHEET_ID, DRIVE_FOLDER_ID } from './googleApi';
+import { fetchServiceAccountToken } from './serviceAccountClient';
+import { isGoogleTokenExpired } from './firebase';
 
 export const BACKUP_TARGET_FOLDER_ID = '1_XLMT5VIqctS1EyPlhHs0JzggzT39RZ2';
 export const BACKUP_HISTORY_STORAGE_KEY = 'dioms_backup_history_v1';
+
+let inFlightTokenRefresh: Promise<string | null> | null = null;
+
+/**
+ * Validates the token and auto-refreshes from server if missing or expired.
+ */
+export async function getValidDriveToken(providedToken?: string | null): Promise<string | null> {
+  if (providedToken && providedToken !== 'mock_demo_token' && !isGoogleTokenExpired()) {
+    return providedToken;
+  }
+
+  if (inFlightTokenRefresh) {
+    const res = await inFlightTokenRefresh;
+    if (res) return res;
+  }
+
+  inFlightTokenRefresh = (async () => {
+    try {
+      const saData = await fetchServiceAccountToken(true);
+      if (saData?.token) {
+        return saData.token;
+      }
+    } catch (err) {
+      console.warn('Gagal memperbarui token Google Service Account:', err);
+    }
+    return null;
+  })();
+
+  const refreshed = await inFlightTokenRefresh;
+  inFlightTokenRefresh = null;
+  return refreshed || providedToken || null;
+}
 
 export interface BackupScanResult {
   success: boolean;
@@ -127,6 +161,8 @@ export async function scanDriveBackup({
   sourceFolderId?: string;
   token?: string | null;
 }): Promise<BackupScanResult> {
+  const validToken = await getValidDriveToken(token);
+
   // 1. Try server backend endpoint first
   try {
     const res = await fetch('/api/google/backup', {
@@ -139,7 +175,7 @@ export async function scanDriveBackup({
         targetBackupFolderId: targetFolderId,
         spreadsheetId,
         sourceFolderId,
-        userToken: token || undefined
+        userToken: validToken || undefined
       })
     });
 
@@ -148,31 +184,65 @@ export async function scanDriveBackup({
       if (data && data.success) {
         return data;
       }
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        throw new Error('Sesi otorisasi Google Anda telah kedaluwarsa (HTTP 401 Unauthorized). Silakan muat ulang (refresh) halaman.');
+      }
+      if (res.status === 403) {
+        throw new Error(errData?.error || `Folder Google Drive cadangan (ID: ${targetFolderId}) tidak dapat diakses atau belum dibagikan (HTTP 403 Forbidden). Pastikan folder cadangan sudah dibagikan dengan hak akses Editor ke akun Google Anda atau Service Account.`);
+      }
+      if (errData?.error) {
+        console.warn('Backend scan returned error, trying client fallback:', errData.error);
+      }
     }
-  } catch (backendErr) {
+  } catch (backendErr: any) {
+    if (backendErr.message?.includes('HTTP 401') || backendErr.message?.includes('HTTP 403')) {
+      throw backendErr;
+    }
     console.warn('Backend /api/google/backup scan failed, trying client Google Drive API fallback:', backendErr);
   }
 
   // 2. Client-side fallback if user has OAuth token
-  if (!token || token === 'mock_demo_token') {
-    throw new Error('Token otorisasi Google tidak tersedia atau belum terhubung. Pastikan Anda telah login dengan akun Google.');
+  let activeToken = validToken;
+  if (!activeToken || activeToken === 'mock_demo_token') {
+    throw new Error('Token otorisasi Google tidak tersedia atau belum terhubung. Silakan muat ulang halaman untuk memperbarui sesi login Google.');
   }
 
   try {
     // Check target folder
-    const targetFolderRes = await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}?supportsAllDrives=true&fields=id,name`, {
-      headers: { Authorization: `Bearer ${token}` }
+    let targetFolderRes = await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}?supportsAllDrives=true&fields=id,name`, {
+      headers: { Authorization: `Bearer ${activeToken}` }
     });
-    let targetFolderName = 'Google Drive Cadangan';
-    if (targetFolderRes.ok) {
-      const folderData = await targetFolderRes.json();
-      targetFolderName = folderData.name || targetFolderName;
+
+    if (targetFolderRes.status === 401) {
+      const freshSa = await fetchServiceAccountToken(true);
+      if (freshSa?.token) {
+        activeToken = freshSa.token;
+        targetFolderRes = await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}?supportsAllDrives=true&fields=id,name`, {
+          headers: { Authorization: `Bearer ${activeToken}` }
+        });
+      }
     }
+
+    if (!targetFolderRes.ok) {
+      if (targetFolderRes.status === 401) {
+        throw new Error(`Sesi otorisasi Google Anda telah berakhir (HTTP 401 Unauthorized). Silakan muat ulang (refresh) halaman untuk memperbarui token.`);
+      }
+      if (targetFolderRes.status === 403) {
+        throw new Error(`Folder Google Drive cadangan (ID: ${targetFolderId}) tidak dapat diakses atau belum dibagikan (HTTP 403 Forbidden). Pastikan folder cadangan sudah dibagikan dengan akses Editor ke akun Google Anda atau Service Account.`);
+      }
+      throw new Error(`Folder Google Drive cadangan (ID: ${targetFolderId}) tidak dapat diakses (HTTP ${targetFolderRes.status}).`);
+    }
+
+    let targetFolderName = 'Google Drive Cadangan';
+    const folderData = await targetFolderRes.json();
+    targetFolderName = folderData.name || targetFolderName;
 
     // Check spreadsheet
     let spreadsheetName = 'Operasional Perusahaan DB';
     const sheetRes = await fetch(`https://www.googleapis.com/drive/v3/files/${spreadsheetId}?supportsAllDrives=true&fields=id,name`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${activeToken}` }
     });
     if (sheetRes.ok) {
       const sheetData = await sheetRes.json();
@@ -184,7 +254,7 @@ export async function scanDriveBackup({
     let sourcePageToken: string | null = null;
     do {
       const pageUrl: string = `https://www.googleapis.com/drive/v3/files?q='${sourceFolderId}'+in+parents+and+trashed=false&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name,size)${sourcePageToken ? `&pageToken=${encodeURIComponent(sourcePageToken)}` : ''}`;
-      const sourceFilesRes: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` } });
+      const sourceFilesRes: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${activeToken}` } });
       if (sourceFilesRes.ok) {
         const pageData: any = await sourceFilesRes.json();
         if (Array.isArray(pageData.files)) {
@@ -201,7 +271,7 @@ export async function scanDriveBackup({
     let targetPageToken: string | null = null;
     do {
       const pageUrl: string = `https://www.googleapis.com/drive/v3/files?q='${targetFolderId}'+in+parents+and+trashed=false&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name)${targetPageToken ? `&pageToken=${encodeURIComponent(targetPageToken)}` : ''}`;
-      const targetFilesRes: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` } });
+      const targetFilesRes: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${activeToken}` } });
       if (targetFilesRes.ok) {
         const pageData: any = await targetFilesRes.json();
         if (Array.isArray(pageData.files)) {
@@ -258,6 +328,8 @@ export async function executeDriveBackup({
 }): Promise<BackupExecutionResult> {
   onProgress?.({ step: 'STARTING', percent: 5, detail: 'Menghubungkan ke layanan Google Drive...' });
 
+  const validToken = await getValidDriveToken(token);
+
   // 1. Attempt backend API first
   try {
     onProgress?.({ step: 'PROCESSING', percent: 15, detail: 'Mengirim perintah backup ke backend server...' });
@@ -274,7 +346,7 @@ export async function executeDriveBackup({
         copySpreadsheet,
         copyPhotos,
         maxPhotos,
-        userToken: token || undefined
+        userToken: validToken || undefined
       })
     });
 
@@ -305,13 +377,28 @@ export async function executeDriveBackup({
       } else {
         throw new Error(data?.error || 'Gagal menjalankan proses backup di server.');
       }
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        throw new Error('Sesi otorisasi Google Anda telah berakhir (HTTP 401 Unauthorized). Silakan muat ulang (refresh) halaman.');
+      }
+      if (res.status === 403) {
+        throw new Error(errData?.error || `Folder Google Drive cadangan (ID: ${targetFolderId}) tidak dapat diakses atau belum dibagikan (HTTP 403 Forbidden). Pastikan folder cadangan sudah dibagikan dengan hak akses Editor ke akun Google Anda atau Service Account.`);
+      }
+      if (errData?.error) {
+        throw new Error(errData.error);
+      }
     }
   } catch (backendErr: any) {
+    if (backendErr.message?.includes('HTTP 401') || backendErr.message?.includes('HTTP 403')) {
+      throw backendErr;
+    }
     console.warn('Backend backup failed, trying direct browser Google Drive API fallback:', backendErr.message);
   }
 
   // 2. Client-side execution fallback
-  if (!token || token === 'mock_demo_token') {
+  let activeToken = validToken;
+  if (!activeToken || activeToken === 'mock_demo_token') {
     throw new Error('Gagal terhubung ke Google Drive. Pastikan kredensial Google aktif dan folder cadangan telah diberi izin akses.');
   }
 
@@ -321,10 +408,27 @@ export async function executeDriveBackup({
   try {
     // Check target folder
     onProgress?.({ step: 'VERIFY_FOLDER', percent: 20, detail: 'Memverifikasi akses folder Google Drive cadangan...' });
-    const folderRes = await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}?supportsAllDrives=true&fields=id,name`, {
-      headers: { Authorization: `Bearer ${token}` }
+    let folderRes = await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}?supportsAllDrives=true&fields=id,name`, {
+      headers: { Authorization: `Bearer ${activeToken}` }
     });
+
+    if (folderRes.status === 401) {
+      const freshSa = await fetchServiceAccountToken(true);
+      if (freshSa?.token) {
+        activeToken = freshSa.token;
+        folderRes = await fetch(`https://www.googleapis.com/drive/v3/files/${targetFolderId}?supportsAllDrives=true&fields=id,name`, {
+          headers: { Authorization: `Bearer ${activeToken}` }
+        });
+      }
+    }
+
     if (!folderRes.ok) {
+      if (folderRes.status === 401) {
+        throw new Error(`Sesi otorisasi Google Anda telah berakhir (HTTP 401 Unauthorized). Silakan muat ulang (refresh) halaman untuk memperbarui token.`);
+      }
+      if (folderRes.status === 403) {
+        throw new Error(`Folder Google Drive cadangan (ID: ${targetFolderId}) tidak dapat diakses atau belum dibagikan (HTTP 403 Forbidden). Pastikan folder cadangan sudah dibagikan dengan akses Editor ke akun Google Anda atau Service Account.`);
+      }
       throw new Error(`Folder Google Drive cadangan (ID: ${targetFolderId}) tidak dapat diakses (HTTP ${folderRes.status}). Pastikan akun Anda memiliki hak akses Editor ke folder tersebut.`);
     }
     const folderData = await folderRes.json();
@@ -336,7 +440,7 @@ export async function executeDriveBackup({
       
       // Fetch original sheet name
       const originalSheetRes = await fetch(`https://www.googleapis.com/drive/v3/files/${spreadsheetId}?supportsAllDrives=true&fields=id,name`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${activeToken}` }
       });
       let baseName = 'Operasional Perusahaan DB';
       if (originalSheetRes.ok) {
@@ -351,7 +455,7 @@ export async function executeDriveBackup({
       const copyRes = await fetch(`https://www.googleapis.com/drive/v3/files/${spreadsheetId}/copy?supportsAllDrives=true&fields=id,name,webViewLink`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${activeToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -387,7 +491,7 @@ export async function executeDriveBackup({
       let sourcePageToken: string | null = null;
       do {
         const pageUrl: string = `https://www.googleapis.com/drive/v3/files?q='${sourceFolderId}'+in+parents+and+trashed=false&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name)${sourcePageToken ? `&pageToken=${encodeURIComponent(sourcePageToken)}` : ''}`;
-        const res: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` } });
+        const res: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${activeToken}` } });
         if (res.ok) {
           const data: any = await res.json();
           if (Array.isArray(data.files)) {
@@ -406,7 +510,7 @@ export async function executeDriveBackup({
       let targetPageToken: string | null = null;
       do {
         const pageUrl: string = `https://www.googleapis.com/drive/v3/files?q='${targetFolderId}'+in+parents+and+trashed=false&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name)${targetPageToken ? `&pageToken=${encodeURIComponent(targetPageToken)}` : ''}`;
-        const res: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${token}` } });
+        const res: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${activeToken}` } });
         if (res.ok) {
           const data: any = await res.json();
           if (Array.isArray(data.files)) {
@@ -440,7 +544,7 @@ export async function executeDriveBackup({
           const fileCopyRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/copy?supportsAllDrives=true&fields=id,name`, {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${token}`,
+              Authorization: `Bearer ${activeToken}`,
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
@@ -517,7 +621,7 @@ export async function executeDriveBackup({
                 {
                   method: 'POST',
                   headers: {
-                    Authorization: `Bearer ${token}`,
+                    Authorization: `Bearer ${activeToken}`,
                     'Content-Type': 'application/json'
                   },
                   body: JSON.stringify({ requests })

@@ -46,7 +46,7 @@ const DEFAULT_VAPID_PUBLIC_KEY =
   'BDaE9PDK_zk-N01Z9A8YQJ_CG96fqYXjNauVDSkln--2PghmKH5i8a8cMaywxemknjae9oPuqlknIt-nonGKTnk';
 const DEFAULT_VAPID_PRIVATE_KEY =
   'iaI-S4gtd8D0OlnNgnkcm04I1AxJq67FxZ1V6QY_PDM';
-const DEFAULT_VAPID_SUBJECT = 'mailto:ops.depotel@gmail.com';
+const DEFAULT_VAPID_SUBJECT = 'mailto:depotel@vgd4.my.id';
 
 export function getVapidDetails() {
   const publicKey =

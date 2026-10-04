@@ -1219,7 +1219,9 @@ export async function fetchBudgetRequests(token: string, spreadsheetId: string):
   } catch (hdrErr) {
     console.warn('Could not auto-verify Pengajuan headers:', hdrErr);
   }
-  return parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, data.values, mapToBudgetRequest);
+  return parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, data.values, mapToBudgetRequest).filter(
+    r => Boolean(r.id && r.id.trim() !== '')
+  );
 }
 
 // Fetch Usage Report Items
@@ -1981,6 +1983,44 @@ export async function deleteUsageItem(token: string, spreadsheetId: string, item
 
   if (!clearRes.ok) {
     throw new Error('Gagal menghapus item laporan.');
+  }
+}
+
+// Delete Budget Request (Pengajuan UID)
+export async function deleteBudgetRequest(token: string, spreadsheetId: string, requestId: string): Promise<void> {
+  if (token === 'mock_demo_token') {
+    const list = getMockData<BudgetRequest[]>('mock_db_pengajuan', defaultRequests);
+    const newList = list.filter(r => r.id !== requestId);
+    setMockData('mock_db_pengajuan', newList);
+    return;
+  }
+
+  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Z`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  if (!res.ok) throw new Error('Gagal membaca data pengajuan untuk menghapus.');
+
+  const data = await res.json();
+  const rows: any[][] = data.values || [];
+  const rowIdx = findRowIndexByHeaderAndValue(rows, 'UID', requestId, ['id', 'request_uid', 'requestid', 'uid']);
+
+  if (rowIdx === -1) {
+    console.warn(`Data pengajuan dengan UID ${requestId} tidak ditemukan saat penghapusan.`);
+    return;
+  }
+
+  const sheetRowIdx = rowIdx + 1;
+
+  // Clear the row in Pengajuan sheet
+  const clearRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A${sheetRowIdx}:Z${sheetRowIdx}:clear`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!clearRes.ok) {
+    throw new Error('Gagal menghapus pengajuan UID di database.');
   }
 }
 
