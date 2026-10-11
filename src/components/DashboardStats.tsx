@@ -7,14 +7,16 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory, SiteInfo } from '../types';
 import { getTransferBertahap, getFinanceApprovedAmount, isPendingTransferRequest, isFinanceApprovedOpRequest, isOpBiasaRequest } from '../App';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
-import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
 import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
 import { ReopenUidModal } from './ReopenUidModal';
 import { AdminDatabaseToolsCard } from './AdminDatabaseToolsCard';
+import { AdminPhotoMigrationCard } from './AdminPhotoMigrationCard';
 import { AdminManualActivityModal, ManualActivitySubmitData } from './AdminManualActivityModal';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing, Smartphone } from 'lucide-react';
+import { AdminResponseTimeModal } from './AdminResponseTimeModal';
+import { UserUidMonitoringCard } from './UserUidMonitoringCard';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing, Smartphone, TrendingUp } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -32,6 +34,7 @@ interface DashboardStatsProps {
   onOpenSharedReceipt?: () => void;
   onOpenAdjustment?: () => void;
   onOpenTransferList?: () => void;
+  onOpenResponseTimeTable?: () => void;
   onOpenReportsModal?: () => void;
   profiles?: UserProfile[];
   activities?: UserActivity[];
@@ -72,6 +75,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   onOpenSharedReceipt,
   onOpenAdjustment,
   onOpenTransferList,
+  onOpenResponseTimeTable,
   onOpenReportsModal,
   profiles = [],
   activities = [],
@@ -154,6 +158,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [isManualActivityModalOpen, setIsManualActivityModalOpen] = useState(false);
   useBackHandler(isManualActivityModalOpen, () => setIsManualActivityModalOpen(false), 'dashboardStats_manualActivityModal');
 
+  // Response Time Modal States (Administrator)
+  const [isResponseTimeModalOpen, setIsResponseTimeModalOpen] = useState(false);
+  useBackHandler(isResponseTimeModalOpen, () => setIsResponseTimeModalOpen(false), 'dashboardStats_responseTimeModal');
+
   const allSitesToUse = useMemo(() => {
     return (sites && sites.length > 0) ? sites : DEFAULT_SITES_LIST;
   }, [sites]);
@@ -217,18 +225,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(site.coordinates)}`;
   };
 
-  const [isGpsModalOpen, setIsGpsModalOpen] = useState(false);
-  const [isFetchingGpsModal, setIsFetchingGpsModal] = useState(false);
-  const [gpsModalPosition, setGpsModalPosition] = useState<GeolocationPosition | null>(null);
-  const [gpsModalError, setGpsModalError] = useState<string | null>(null);
-  const [gpsFetchDurationMs, setGpsFetchDurationMs] = useState<number | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [permissionState, setPermissionState] = useState<string>('Memeriksa...');
-  const [gpsUpdateCount, setGpsUpdateCount] = useState<number>(0);
-  const [lastGpsCheckTime, setLastGpsCheckTime] = useState<Date | null>(null);
-  const [isAutoGpsActive, setIsAutoGpsActive] = useState<boolean>(true);
-  const [prevGpsModalPosition, setPrevGpsModalPosition] = useState<GeolocationPosition | null>(null);
-
   const [direkturGroupTab, setDirekturGroupTab] = useState<'APPROVAL' | 'MONITORING'>(() => {
     try {
       const saved = localStorage.getItem('applet_direktur_dashboard_tab');
@@ -260,138 +256,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       }
     }
   }, [role, activeFilter]);
-
-  useBackHandler(isGpsModalOpen, () => setIsGpsModalOpen(false), 'dashboardStats_gpsModal');
-
-  useEffect(() => {
-    if (!isGpsModalOpen) {
-      setGpsUpdateCount(0);
-      setGpsModalPosition(null);
-      setPrevGpsModalPosition(null);
-      setGpsModalError(null);
-      setLastGpsCheckTime(null);
-      return;
-    }
-
-    if (!navigator.geolocation) {
-      setGpsModalError('Perangkat atau browser Anda tidak mendukung pencarian lokasi GPS.');
-      return;
-    }
-
-    if (!isAutoGpsActive) return;
-
-    setIsFetchingGpsModal(prev => gpsModalPosition ? false : true);
-    setGpsModalError(null);
-
-    let watchId: number | null = null;
-    let intervalId: any = null;
-    let startTime = Date.now();
-
-    if (navigator.permissions && navigator.permissions.query) {
-      navigator.permissions.query({ name: 'geolocation' }).then((p) => {
-        setPermissionState(p.state);
-      }).catch(() => {
-        setPermissionState('Aktif / Standard');
-      });
-    } else {
-      setPermissionState('Aktif / Standard');
-    }
-
-    const handlePos = (pos: GeolocationPosition) => {
-      const duration = Date.now() - startTime;
-      setGpsModalPosition(prev => {
-        if (prev) setPrevGpsModalPosition(prev);
-        return pos;
-      });
-      setGpsFetchDurationMs(duration);
-      setIsFetchingGpsModal(false);
-      setGpsModalError(null);
-      setGpsUpdateCount(c => c + 1);
-      setLastGpsCheckTime(new Date());
-    };
-
-    const handleErr = (err: GeolocationPositionError) => {
-      let msg = 'Gagal mengambil koordinat lokasi GPS dari perangkat.';
-      if (err.code === err.PERMISSION_DENIED) {
-        msg = 'Akses lokasi (GPS) ditolak. Harap beri izin akses lokasi pada browser/perangkat Anda.';
-      } else if (err.code === err.POSITION_UNAVAILABLE) {
-        msg = 'Sinyal GPS atau posisi tidak tersedia pada perangkat.';
-      } else if (err.code === err.TIMEOUT) {
-        msg = 'Waktu pengambilan sinyal GPS habis (timeout). Silakan klik Ulangi Cek GPS.';
-      }
-      setGpsModalError(msg);
-      setIsFetchingGpsModal(false);
-    };
-
-    // First immediate check
-    startTime = Date.now();
-    navigator.geolocation.getCurrentPosition(handlePos, handleErr, {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 0,
-    });
-
-    // Real-time stream with watchPosition
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        startTime = Date.now();
-        handlePos(pos);
-      },
-      (err) => {},
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-      }
-    );
-
-    // Continuous repetition interval every 2.5s
-    intervalId = setInterval(() => {
-      startTime = Date.now();
-      navigator.geolocation.getCurrentPosition(handlePos, () => {}, {
-        enableHighAccuracy: true,
-        timeout: 5000,
-        maximumAge: 0,
-      });
-    }, 2500);
-
-    return () => {
-      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-      if (intervalId !== null) clearInterval(intervalId);
-    };
-  }, [isGpsModalOpen, isAutoGpsActive]);
-
-  const fetchGpsDataManual = () => {
-    if (!navigator.geolocation) return;
-    setIsFetchingGpsModal(true);
-    setGpsModalError(null);
-    const startTime = Date.now();
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setGpsModalPosition(pos);
-        setGpsFetchDurationMs(Date.now() - startTime);
-        setIsFetchingGpsModal(false);
-        setGpsUpdateCount(c => c + 1);
-        setLastGpsCheckTime(new Date());
-      },
-      (err) => {
-        setGpsModalError('Gagal memperbarui posisi GPS.');
-        setIsFetchingGpsModal(false);
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
-  };
-
-  const handleOpenGpsCheck = () => {
-    setIsGpsModalOpen(true);
-    setIsAutoGpsActive(true);
-  };
-
-  const copyToClipboard = (text: string, fieldName: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(fieldName);
-    setTimeout(() => setCopiedField(null), 2000);
-  };
 
   const formatDateDisplay = (dateStr?: string): string => {
     if (!dateStr) return '-';
@@ -2350,6 +2214,64 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
+        {/* Administrator Kartu Pintasan: Tabel Response Waktu Pengajuan & Transfer */}
+        <div
+          id="admin-response-time-shortcut-card"
+          onClick={() => {
+            if (onOpenResponseTimeTable) {
+              onOpenResponseTimeTable();
+            } else {
+              setIsResponseTimeModalOpen(true);
+            }
+          }}
+          className="p-5 rounded-2xl border border-teal-200 bg-gradient-to-br from-teal-50/90 via-white to-emerald-50/60 shadow-md hover:shadow-lg hover:border-teal-400 transition-all cursor-pointer group flex items-center justify-between gap-4 select-none"
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              if (onOpenResponseTimeTable) {
+                onOpenResponseTimeTable();
+              } else {
+                setIsResponseTimeModalOpen(true);
+              }
+            }
+          }}
+          title="Klik untuk membuka Tabel Response Waktu Pengajuan & Persetujuan (SLA)"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-teal-600 to-emerald-700 text-white flex items-center justify-center shrink-0 shadow-md shadow-teal-200 group-hover:scale-105 transition-transform">
+              <Clock className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-teal-600 transition-colors">
+                  Tabel Response Waktu Pengajuan &amp; Transfer
+                </h3>
+                <span className="text-[9px] font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full border border-teal-200 flex items-center gap-1">
+                  <TrendingUp className="w-3 h-3 text-teal-600" />
+                  SLA Timeline
+                </span>
+                <span className="text-[9px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">
+                  {requests.filter(r => r.id && r.id.startsWith('OP-') && !r.id.startsWith('OPT-')).length} UID (OP-)
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 font-medium mt-1">
+                Tabel timeline proses khusus UID Pengajuan (prefix OP-): Submit, Approved Manager, Approved Finance, dan Transferred (format DD/MM/YYYY hh:mm).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="hidden sm:inline-block text-xs font-semibold text-teal-700 group-hover:text-teal-900 transition-colors">
+              Buka Tabel
+            </span>
+            <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+              &rarr;
+            </div>
+          </div>
+        </div>
+
         {/* Administrator Kartu Pintasan: Penerima Sharing Nota BRImo */}
         {onOpenSharedReceipt && (
           <div
@@ -2452,6 +2374,19 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           onConfigUpdated={onConfigUpdated}
         />
 
+        {/* Administrator Kartu Monitoring UID Belum Dilaporkan (USER Murni) */}
+        <UserUidMonitoringCard
+          requests={requests}
+          usageItems={usageItems}
+          profiles={profiles || []}
+        />
+
+        {/* Administrator Kartu Migrasi Kepemilikan Foto Google Drive */}
+        <AdminPhotoMigrationCard
+          token={token}
+          adminEmail={email}
+        />
+
         {/* Administrator Kartu Manual Activity Report (Input Kegiatan Susulan) */}
         {onSaveManualActivity && (
           <div
@@ -2515,17 +2450,18 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             className="p-4 sm:p-5 rounded-2xl border border-rose-100 bg-white shadow-sm flex flex-col gap-3 transition-all"
             id="admin-orphan-cleanup-card"
           >
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="font-display font-bold text-slate-800 text-sm flex items-center gap-2">
-                  <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
-                  <span>Pembersihan Orphan Data (ItemReviewHistory)</span>
-                </h3>
-                <p className="text-[11px] text-slate-500 font-medium mt-0.5">
-                  Hapus baris riwayat review yang tidak memiliki referensi Pengajuan/Laporan valid.
-                </p>
-              </div>
+            <div>
+              <h3 className="font-display font-bold text-slate-800 text-sm flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>Pembersihan Orphan Data (ItemReviewHistory)</span>
+              </h3>
+              <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                Hapus baris riwayat review yang tidak memiliki referensi Pengajuan/Laporan valid.
+              </p>
+            </div>
 
+            {/* Garis Pembatas & Tombol Bersihkan Orphan Data di Kanan Bawah */}
+            <div className="border-t border-slate-100 pt-2 flex justify-end items-center">
               {!showPurgeConfirm && (
                 <button
                   type="button"
@@ -2693,553 +2629,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           </div>
         )}
 
-        {/* Modal Cek GPS Perangkat */}
-        {isGpsModalOpen && (
-          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200 overflow-y-auto">
-            <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-auto max-h-[92vh] flex flex-col">
-              {/* Header Modal */}
-              <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 text-white p-5 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center shrink-0">
-                    <MapPin className="w-5 h-5 text-emerald-300" />
-                  </div>
-                  <div>
-                    <h3 className="text-base font-display font-bold text-white flex items-center gap-2">
-                      Diagnostik &amp; Form Parameter GPS
-                      <span className="text-[9px] font-bold bg-emerald-500/30 text-emerald-200 px-2 py-0.5 rounded-full border border-emerald-400/30 uppercase tracking-wider">
-                        Monitoring Berulang Aktif
-                      </span>
-                    </h3>
-                    <p className="text-[11px] text-emerald-200 mt-0.5">
-                      Pengecekan GPS otomatis berjalan berulang sampai Anda menekan tombol Keluar / Kembali
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsGpsModalOpen(false)}
-                    className="px-3.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-400/30 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
-                    title="Keluar / Kembali"
-                  >
-                    <ArrowLeft className="w-4 h-4 text-rose-300" />
-                    <span className="hidden sm:inline">Keluar / Kembali</span>
-                  </button>
-                  <button
-                    onClick={() => setIsGpsModalOpen(false)}
-                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Status Banner Pengecekan Berulang */}
-              <div className="bg-emerald-900/10 border-b border-emerald-200/60 px-5 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <div className="flex items-center gap-2 text-emerald-900 font-medium">
-                  {isAutoGpsActive ? (
-                    <>
-                      <span className="relative flex h-2.5 w-2.5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-600"></span>
-                      </span>
-                      <span className="font-bold">Pengecekan GPS Berulang Sedang Aktif</span>
-                      <span className="text-[11px] text-emerald-700 font-mono hidden sm:inline">(Refresh otomatis tiap ~2.5 detik)</span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="h-2.5 w-2.5 rounded-full bg-amber-500 inline-block"></span>
-                      <span className="font-bold text-amber-900">Pengecekan Dijeda</span>
-                    </>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span className="bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full font-mono">
-                    Total Cek: {gpsUpdateCount}x
-                  </span>
-                </div>
-              </div>
-
-              {/* Body Content */}
-              <div className="p-5 overflow-y-auto space-y-4">
-                {isFetchingGpsModal && !gpsModalPosition ? (
-                  <div className="py-12 text-center space-y-3">
-                    <Loader2 className="w-10 h-10 text-emerald-600 animate-spin mx-auto" />
-                    <div>
-                      <h4 className="text-sm font-bold text-slate-800 font-display">Meminta Sinyal &amp; Parameter GPS...</h4>
-                      <p className="text-xs text-slate-400 mt-1">Mengakses sensor Geolocation API dari perangkat ini</p>
-                    </div>
-                  </div>
-                ) : gpsModalError && !gpsModalPosition ? (
-                  <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl text-rose-800 space-y-3">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
-                      <div>
-                        <h4 className="text-xs font-bold text-rose-900">Gagal Mengambil Lokasi GPS</h4>
-                        <p className="text-xs text-rose-700 mt-1 font-medium">{gpsModalError}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={fetchGpsDataManual}
-                        className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
-                      >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                        Coba Ulangi Cek GPS
-                      </button>
-                      <button
-                        onClick={() => setIsGpsModalOpen(false)}
-                        className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                      >
-                        Keluar / Kembali
-                      </button>
-                    </div>
-                  </div>
-                ) : gpsModalPosition ? (() => {
-                  const coords = gpsModalPosition.coords;
-                  const lat = coords.latitude;
-                  const lng = coords.longitude;
-                  const acc = coords.accuracy;
-                  const altitude = coords.altitude;
-                  const altAcc = coords.altitudeAccuracy;
-                  const heading = coords.heading;
-                  const speed = coords.speed;
-                  const timestamp = gpsModalPosition.timestamp;
-                  const fakeCheck = detectFakeGps(gpsModalPosition, '', prevGpsModalPosition, gpsUpdateCount);
-
-                  const latLngStr = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-
-                  const isHighAcc = acc <= 15;
-                  const isMedAcc = acc > 15 && acc <= 50;
-
-                  return (
-                    <div className="space-y-4">
-                      {/* Top Quick Status Badges */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">IZIN GPS BROWSER</span>
-                          <span className={`inline-block text-[10px] font-extrabold mt-1 px-2 py-0.5 rounded-full uppercase ${
-                            permissionState.toLowerCase() === 'granted' ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : 'bg-amber-100 text-amber-800 border border-amber-200'
-                          }`}>
-                            {permissionState}
-                          </span>
-                        </div>
-
-                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">TINGKAT AKURASI</span>
-                          <span className={`inline-block text-[10px] font-extrabold mt-1 px-2 py-0.5 rounded-full ${
-                            isHighAcc ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : isMedAcc ? 'bg-blue-100 text-blue-800 border border-blue-200' : 'bg-rose-100 text-rose-800 border border-rose-200'
-                          }`}>
-                            {isHighAcc ? 'Tinggi (< 15m)' : isMedAcc ? 'Sedang (15-50m)' : 'Rendah (> 50m)'}
-                          </span>
-                        </div>
-
-                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">SKOR VALIDITAS HARDWARE</span>
-                          <span className={`inline-block text-[10px] font-extrabold mt-1 px-2 py-0.5 rounded-full uppercase ${
-                            fakeCheck.overallScore >= 80 ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' : fakeCheck.overallScore >= 60 ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-rose-100 text-rose-800 border border-rose-200'
-                          }`}>
-                            {fakeCheck.overallScore} / 100 ({fakeCheck.isFake ? 'Indikasi Fake' : 'Valid Hardware'})
-                          </span>
-                        </div>
-
-                        <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-center">
-                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider block">UPDATE TERAKHIR</span>
-                          <span className="text-xs font-bold font-mono text-emerald-700 mt-1 block">
-                            {lastGpsCheckTime ? lastGpsCheckTime.toLocaleTimeString('id-ID') : '-'}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Card Evaluasi Kombinasi 3 Parameter Fake GPS */}
-                      {fakeCheck.evaluations && (
-                        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 text-white p-4 rounded-2xl shadow-md border border-slate-700 space-y-3">
-                          <div className="flex items-center justify-between border-b border-slate-700 pb-2.5">
-                            <div className="flex items-center gap-2">
-                              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                              <h4 className="text-xs font-bold text-white font-display uppercase tracking-wider">
-                                Metode Evaluasi Fake GPS System (3 Parameter Hardware)
-                              </h4>
-                            </div>
-                            <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase ${
-                              fakeCheck.isFake ? 'bg-rose-500/20 text-rose-300 border border-rose-400/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
-                            }`}>
-                              {fakeCheck.isFake ? 'Terdeteksi Anomali' : 'Terverifikasi Asli'}
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                            {/* Parameter 1: Timestamp Hardware */}
-                            {(() => {
-                              const ts = fakeCheck.evaluations.timestamp;
-                              return (
-                                <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 flex flex-col justify-between">
-                                  <div>
-                                    <div className="flex items-center justify-between gap-1 mb-1">
-                                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-tight">
-                                        1. Timestamp Hardware
-                                      </span>
-                                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                        ts.status === 'VALID' ? 'bg-emerald-500/20 text-emerald-300' : ts.status === 'WARNING' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
-                                      }`}>
-                                        {ts.status} ({ts.score}%)
-                                      </span>
-                                    </div>
-                                    <p className="text-[11px] font-mono font-bold text-emerald-300">{ts.detailValue}</p>
-                                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">{ts.analysisNote}</p>
-                                  </div>
-                                </div>
-                              );
-                            })()}
-
-                            {/* Parameter 2: Akurasi Radius */}
-                            {(() => {
-                              const acc = fakeCheck.evaluations.accuracy;
-                              return (
-                                <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 flex flex-col justify-between">
-                                  <div>
-                                    <div className="flex items-center justify-between gap-1 mb-1">
-                                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-tight">
-                                        2. Akurasi Radius
-                                      </span>
-                                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                        acc.status === 'VALID' ? 'bg-emerald-500/20 text-emerald-300' : acc.status === 'WARNING' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
-                                      }`}>
-                                        {acc.status} ({acc.score}%)
-                                      </span>
-                                    </div>
-                                    <p className="text-[11px] font-mono font-bold text-emerald-300">{acc.detailValue}</p>
-                                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">{acc.analysisNote}</p>
-                                  </div>
-                                </div>
-                              );
-                            })()}
-
-                            {/* Parameter 3: Data Elevasi */}
-                            {(() => {
-                              const alt = fakeCheck.evaluations.elevation;
-                              return (
-                                <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 flex flex-col justify-between">
-                                  <div>
-                                    <div className="flex items-center justify-between gap-1 mb-1">
-                                      <span className="text-[10px] font-bold text-slate-300 uppercase tracking-tight">
-                                        3. Data Elevasi 3D
-                                      </span>
-                                      <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                                        alt.status === 'VALID' ? 'bg-emerald-500/20 text-emerald-300' : alt.status === 'WARNING' ? 'bg-amber-500/20 text-amber-300' : 'bg-rose-500/20 text-rose-300'
-                                      }`}>
-                                        {alt.status} ({alt.score}%)
-                                      </span>
-                                    </div>
-                                    <p className="text-[11px] font-mono font-bold text-emerald-300">{alt.detailValue}</p>
-                                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">{alt.analysisNote}</p>
-                                  </div>
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Fake GPS Warning if detected */}
-                      {fakeCheck.isFake && (
-                        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-3">
-                          <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-                          <div className="text-xs text-amber-900">
-                            <span className="font-bold block">Catatan Anomali Fake GPS:</span>
-                            <span>{fakeCheck.reason}</span>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Form Parameter Grid */}
-                      <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/80 space-y-3">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5 font-display">
-                            <Navigation className="w-4 h-4 text-emerald-600" />
-                            Parameter Sensor GPS Perangkat (Live)
-                          </h4>
-                          <span className="text-[10px] text-slate-400 font-mono">
-                            Fixed: {new Date(timestamp).toLocaleTimeString('id-ID')}
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          {/* Latitude */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Garis Lintang (Latitude)
-                            </label>
-                            <div className="relative">
-                              <input
-                                type="text"
-                                readOnly
-                                value={lat}
-                                className="w-full bg-white border border-slate-200 text-slate-900 text-xs font-mono font-bold rounded-xl py-2 px-3 pr-9 shadow-sm"
-                              />
-                              <button
-                                onClick={() => copyToClipboard(String(lat), 'lat')}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
-                                title="Salin Latitude"
-                              >
-                                {copiedField === 'lat' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Longitude */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Garis Bujur (Longitude)
-                            </label>
-                            <div className="relative">
-                              <input
-                                type="text"
-                                readOnly
-                                value={lng}
-                                className="w-full bg-white border border-slate-200 text-slate-900 text-xs font-mono font-bold rounded-xl py-2 px-3 pr-9 shadow-sm"
-                              />
-                              <button
-                                onClick={() => copyToClipboard(String(lng), 'lng')}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
-                                title="Salin Longitude"
-                              >
-                                {copiedField === 'lng' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Akurasi */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Akurasi Radius (Accuracy)
-                            </label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={`${acc.toFixed(2)} Meter (${Math.round(acc)}m)`}
-                              className="w-full bg-white border border-slate-200 text-slate-900 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
-                            />
-                          </div>
-
-                          {/* Lat Lng Combined */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Koordinat Gabungan (Lat, Lng)
-                            </label>
-                            <div className="relative">
-                              <input
-                                type="text"
-                                readOnly
-                                value={latLngStr}
-                                className="w-full bg-white border border-indigo-200 text-indigo-700 text-xs font-mono font-bold rounded-xl py-2 px-3 pr-9 shadow-sm"
-                              />
-                              <button
-                                onClick={() => copyToClipboard(latLngStr, 'latlng')}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
-                                title="Salin Koordinat Gabungan"
-                              >
-                                {copiedField === 'latlng' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Altitude */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Ketinggian / Elevasi (Altitude)
-                            </label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={altitude !== null && altitude !== undefined ? `${altitude.toFixed(2)} Meter` : 'Tidak Didukung Hardware (Null)'}
-                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
-                            />
-                          </div>
-
-                          {/* Altitude Accuracy */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Akurasi Ketinggian (Altitude Accuracy)
-                            </label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={altAcc !== null && altAcc !== undefined ? `${altAcc.toFixed(2)} Meter` : 'Tidak Didukung Hardware (Null)'}
-                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
-                            />
-                          </div>
-
-                          {/* Heading */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Arah Vektor Pergerakan (Heading)
-                            </label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={heading !== null && !isNaN(heading) ? `${heading.toFixed(1)}° (Derajat)` : 'Diam / Tidak Ada Arah (Null)'}
-                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
-                            />
-                          </div>
-
-                          {/* Speed */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Kecepatan Perangkat (Speed)
-                            </label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={speed !== null && !isNaN(speed) ? `${(speed * 3.6).toFixed(2)} km/jam (${speed.toFixed(2)} m/s)` : '0 km/jam (Diam)'}
-                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
-                            />
-                          </div>
-
-                          {/* Timestamp Hardware */}
-                          <div className="sm:col-span-2">
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Waktu Terekam Sensor GPS Hardware (Timestamp Epoch)
-                            </label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={`${new Date(timestamp).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'medium' })} (${timestamp})`}
-                              className="w-full bg-white border border-slate-200 text-slate-800 text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm"
-                            />
-                          </div>
-
-                          {/* Timestamp Hardware Delta dalam milidetik (ms) */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Timestamp Hardware Delta (Milidetik / ms)
-                            </label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={fakeCheck.timeDeltaMs !== null && fakeCheck.timeDeltaMs !== undefined ? `${fakeCheck.timeDeltaMs.toLocaleString('id-ID')} ms (${(fakeCheck.timeDeltaMs / 1000).toFixed(2)} detik)` : 'Tidak Tersedia'}
-                              className={`w-full bg-white border text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm ${
-                                fakeCheck.isTimestampStagnant ? 'border-rose-300 text-rose-700 bg-rose-50/50' : 'border-emerald-300 text-emerald-800 bg-emerald-50/30'
-                              }`}
-                            />
-                          </div>
-
-                          {/* Evaluasi Dinamika Fix Timestamp */}
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              Dinamika Perubahan Fix (Polling #{gpsUpdateCount})
-                            </label>
-                            <input
-                              type="text"
-                              readOnly
-                              value={
-                                gpsUpdateCount <= 1
-                                  ? 'Cek Awal (Memantau Polling Next Fix)'
-                                  : fakeCheck.isTimestampStagnant
-                                  ? 'ANOMALI: Stagnan / Beku (Indikasi Fake GPS)'
-                                  : 'VALID: Dinamis / Fresh Fix (Sinyal Asli)'
-                              }
-                              className={`w-full bg-white border text-xs font-mono font-bold rounded-xl py-2 px-3 shadow-sm ${
-                                fakeCheck.isTimestampStagnant ? 'border-rose-300 text-rose-700 bg-rose-50/50' : 'border-emerald-300 text-emerald-800 bg-emerald-50/30'
-                              }`}
-                            />
-                          </div>
-
-                          {/* User Agent */}
-                          <div className="sm:col-span-2">
-                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
-                              User Agent / Informasi Perangkat Browser
-                            </label>
-                            <textarea
-                              readOnly
-                              rows={2}
-                              value={navigator.userAgent}
-                              className="w-full bg-white border border-slate-200 text-slate-600 text-[10px] font-mono rounded-xl p-2.5 resize-none shadow-sm"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Bottom Action Controls */}
-                      <div className="pt-3 flex flex-wrap items-center justify-between gap-2.5 border-t border-slate-200">
-                        <div className="flex flex-wrap items-center gap-2">
-                          {isAutoGpsActive ? (
-                            <button
-                              onClick={() => setIsAutoGpsActive(false)}
-                              className="px-3.5 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer"
-                            >
-                              <Pause className="w-3.5 h-3.5" />
-                              Jeda Pengecekan
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => setIsAutoGpsActive(true)}
-                              className="px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
-                            >
-                              <Play className="w-3.5 h-3.5" />
-                              Lanjutkan Pengecekan Berulang
-                            </button>
-                          )}
-
-                          <button
-                            onClick={fetchGpsDataManual}
-                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl border border-slate-200 transition-all flex items-center gap-2 cursor-pointer"
-                            title="Paksa refresh lokasi sekarang"
-                          >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                            Refresh Sekarang
-                          </button>
-
-                          <a
-                            href={`https://www.google.com/maps?q=${lat},${lng}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer border border-slate-200"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5 text-slate-600" />
-                            Maps
-                          </a>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => {
-                              const summaryText = `--- DATA DIAGNOSTIK GPS PERANGKAT ---
-Tanggal Fix: ${new Date(timestamp).toLocaleString('id-ID')}
-Latitude: ${lat}
-Longitude: ${lng}
-Koordinat: ${latLngStr}
-Akurasi: ${acc.toFixed(2)}m
-Elevasi: ${altitude !== null ? `${altitude}m` : 'Null'}
-Akurasi Elevasi: ${altAcc !== null ? `${altAcc}m` : 'Null'}
-Arah (Heading): ${heading !== null ? `${heading}°` : 'Null'}
-Kecepatan: ${speed !== null ? `${speed}m/s` : '0'}
-Evaluasi Fake GPS: ${fakeCheck.reason}
-User Agent: ${navigator.userAgent}`;
-                              copyToClipboard(summaryText, 'all');
-                            }}
-                            className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs rounded-xl transition-all flex items-center gap-2 cursor-pointer"
-                          >
-                            {copiedField === 'all' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                            {copiedField === 'all' ? 'Tersalin!' : 'Salin Parameter'}
-                          </button>
-
-                          {/* Explicit Keluar / Kembali Button */}
-                          <button
-                            onClick={() => setIsGpsModalOpen(false)}
-                            className="px-5 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer border border-slate-700"
-                          >
-                            <ArrowLeft className="w-4 h-4 text-slate-300" />
-                            Keluar / Kembali
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })() : null}
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Modal Reopen UID (Administrator) */}
 
         {/* Modal Reopen UID (Administrator) */}
         <ReopenUidModal
@@ -3263,6 +2653,15 @@ User Agent: ${navigator.userAgent}`;
             onSubmitManualActivity={onSaveManualActivity}
           />
         )}
+
+        {/* Modal Response Time Table (Administrator) */}
+        <AdminResponseTimeModal
+          isOpen={isResponseTimeModalOpen}
+          onClose={() => setIsResponseTimeModalOpen(false)}
+          requests={requests}
+          histories={histories}
+          profiles={profiles}
+        />
       </div>
     );
   }

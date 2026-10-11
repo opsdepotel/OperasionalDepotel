@@ -5,7 +5,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, SiteInfo, UserProfile } from '../types';
+import { BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, SiteInfo, UserProfile, formatTimestamp } from '../types';
 import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
 import { saveOfflineBbmRefill } from '../lib/offlineReportStorage';
 import { Fuel, Calendar, MapPin, Coins, FileText, Camera, RefreshCw, CheckCircle2, AlertCircle, X, ExternalLink, UploadCloud } from 'lucide-react';
@@ -86,12 +86,25 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
     String(userProfile?.mobile).trim() === '1';
 
-  // System date calculation
-  const todayDate = new Date();
-  const tanggal = todayDate.toISOString().split('T')[0];
+  // Helper to format Date to local YYYY-MM-DD (WIB / Local timezone, immune to UTC day-shift)
+  const getLocalDateString = (d: Date = new Date()) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
+
+  // System date calculation (immune to UTC offset issues)
+  const tanggal = getLocalDateString(new Date());
 
   // Helper to format date string "2026-07-22" -> "22 Jul 2026"
   const formatDateDisplay = (dateStr: string) => {
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const year = parts[0];
+      const monthIdx = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+      return `${day} ${months[monthIdx] || ''} ${year}`;
+    }
     const d = new Date(dateStr + 'T00:00:00');
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     const day = d.getDate();
@@ -339,15 +352,19 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
     setIsSubmitting(true);
     setSubmitStep('Menyiapkan transaksi BBM...');
     try {
-      const uid = generateBbmUid();
-      const nowIso = new Date().toISOString();
+      // Re-evaluate system date & timestamp at the exact moment of submission (ensures consistency across midnight)
+      const submitDate = new Date();
+      const currentTanggal = getLocalDateString(submitDate);
+      const nowTimestamp = formatTimestamp(submitDate);
+      const nowIso = submitDate.toISOString();
+      const uid = generateUniqueUID('BBMDS', currentTanggal, requests);
 
       // 1. BudgetRequest (Pengajuan) -> Closed status directly
       const req: BudgetRequest = {
         id: uid,
         userEmail,
         managerEmail: managerEmail || userEmail,
-        tanggalPemakaian: tanggal,
+        tanggalPemakaian: currentTanggal,
         siteId: siteId.trim().toUpperCase(),
         jumlahPengajuan: amount,
         keterangan: keterangan.trim(),
@@ -355,14 +372,15 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
         managerActionAmount: amount,
         managerComment: 'Otomatis disetujui & closed oleh sistem BBM Duren Sawit.',
         adminActionAmount: 0,
-        createdAt: nowIso
+        createdAt: nowIso,
+        timestamp: nowTimestamp
       };
 
       // 2. UsageReportItem (Laporan) -> ItemID prefix "BBMDS" bersesuaian dengan UID
       const reportItem: UsageReportItem = {
         id: `${uid}-1`,
         requestId: uid,
-        tanggalPenggunaan: tanggal,
+        tanggalPenggunaan: currentTanggal,
         nominal: amount,
         keterangan: keterangan.trim(),
         buktiUrl: photoDataUrl,
@@ -371,7 +389,8 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
         managerComment: 'Otomatis terverifikasi sistem BBM Duren Sawit',
         statusAdmin: ItemStatus.APPROVED,
         adminComment: 'Otomatis terverifikasi sistem BBM Duren Sawit',
-        updatedAt: nowIso
+        updatedAt: nowIso,
+        timestamp: nowTimestamp
       };
 
       await onSubmit(req, reportItem, (step) => setSubmitStep(step));
@@ -391,13 +410,16 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
       if (isOfflineErr) {
         try {
           setSubmitStep('Menyimpan laporan BBM ke IndexedDB HP...');
-          const uid = generateBbmUid();
-          const nowIso = new Date().toISOString();
+          const submitDate = new Date();
+          const currentTanggal = getLocalDateString(submitDate);
+          const nowTimestamp = formatTimestamp(submitDate);
+          const nowIso = submitDate.toISOString();
+          const uid = generateUniqueUID('BBMDS', currentTanggal, requests);
           const req: BudgetRequest = {
             id: uid,
             userEmail,
             managerEmail: managerEmail || userEmail,
-            tanggalPemakaian: tanggal,
+            tanggalPemakaian: currentTanggal,
             siteId: siteId.trim().toUpperCase(),
             jumlahPengajuan: amount,
             keterangan: keterangan.trim(),
@@ -405,12 +427,13 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
             managerActionAmount: amount,
             managerComment: 'Otomatis disetujui & closed oleh sistem BBM Duren Sawit.',
             adminActionAmount: 0,
-            createdAt: nowIso
+            createdAt: nowIso,
+            timestamp: nowTimestamp
           };
           const reportItem: UsageReportItem = {
             id: `${uid}-1`,
             requestId: uid,
-            tanggalPenggunaan: tanggal,
+            tanggalPenggunaan: currentTanggal,
             nominal: amount,
             keterangan: keterangan.trim(),
             buktiUrl: photoDataUrl || '',
@@ -419,14 +442,15 @@ export const BbmRefillModal: React.FC<BbmRefillModalProps> = ({
             managerComment: 'Otomatis terverifikasi sistem BBM Duren Sawit',
             statusAdmin: ItemStatus.APPROVED,
             adminComment: 'Otomatis terverifikasi sistem BBM Duren Sawit',
-            updatedAt: nowIso
+            updatedAt: nowIso,
+            timestamp: nowTimestamp
           };
 
           await saveOfflineBbmRefill(
             {
               userEmail,
               managerEmail: managerEmail || userEmail,
-              tanggal,
+              tanggal: currentTanggal,
               siteId: siteId.trim().toUpperCase(),
               siteName: someFound ? (siteResults.find(r => r.found)?.siteName || 'Depot / Pos Utama') : 'BBM DUREN SAWIT',
               nominal: amount,

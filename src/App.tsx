@@ -92,6 +92,7 @@ import { OP_TimeLine } from './components/OP_TimeLine';
 import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt, clearAllSharedReceipts } from './lib/sharedReceiptStorage';
 import { DevicePermissionsModal } from './components/DevicePermissionsModal';
 import { ManualActivitySubmitData } from './components/AdminManualActivityModal';
+import { AdminResponseTimeModal } from './components/AdminResponseTimeModal';
 import { checkAllDevicePermissions, DevicePermissionsStatus } from './lib/devicePermissions';
 import { subscribeToPushNotifications, triggerPushNotification, parsePushSubscriptions } from './lib/pushNotifications';
 
@@ -416,7 +417,7 @@ export default function App() {
   const [activeRole, setActiveRole] = useState<Role>(() => userProfile?.role || Role.USER);
 
   // Navigation / Views
-  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'transfer-list' | 'profile-settings' | 'activities' | 'push-test'>('dashboard');
+  const [activeView, setActiveView] = useState<'dashboard' | 'new-request' | 'report-usage' | 'setup-profile' | 'adjustment' | 'transfer-list' | 'profile-settings' | 'activities' | 'push-test' | 'response-time'>('dashboard');
   const [selectedRequest, setSelectedRequest] = useState<BudgetRequest | null>(null);
   const [editingRequest, setEditingRequest] = useState<BudgetRequest | null>(null);
 
@@ -1480,7 +1481,15 @@ export default function App() {
           finalReportItem.buktiFileId = uploadRes.fileId;
         }
 
-        await createBudgetRequest(currentToken, currentSheetId, bbmItem.reqPayload, { skipLock: true });
+        const reqPayload = { ...bbmItem.reqPayload };
+        if (!reqPayload.timestamp && bbmItem.timestamp) {
+          reqPayload.timestamp = formatTimestamp(bbmItem.timestamp);
+        }
+        if (!finalReportItem.timestamp && bbmItem.timestamp) {
+          finalReportItem.timestamp = formatTimestamp(bbmItem.timestamp);
+        }
+
+        await createBudgetRequest(currentToken, currentSheetId, reqPayload, { skipLock: true });
         await createUsageItem(currentToken, currentSheetId, finalReportItem);
         await removeOfflineBbmRefill(bbmItem.id);
         syncedCount++;
@@ -2034,6 +2043,40 @@ export default function App() {
     if (!token || !spreadsheetId) return;
     const isExisting = requests.some(r => r.id === newRequest.id);
     const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
+
+    // Restriction Check: USER Murni cannot submit new request if unreportedUids > 2
+    if (!isExisting) {
+      const isPureUser = (userProfile?.role === Role.USER) || (activeRole === Role.USER);
+      if (isPureUser) {
+        const applicantEmail = (userProfile?.email || newRequest.userEmail).trim().toLowerCase();
+        
+        const isBbmRequest = (r: BudgetRequest) =>
+          r.id.startsWith('BBMDS') ||
+          r.id.startsWith('BBM_DurenSawit') ||
+          r.id.startsWith('TFDS') ||
+          r.siteId === 'OPT-DUREN SAWIT' ||
+          r.siteId === 'BBM DUREN SAWIT' ||
+          (r.keterangan && r.keterangan.toUpperCase().includes('DUREN SAWIT'));
+
+        const userReqs = requests.filter(r =>
+          (r.userEmail || '').trim().toLowerCase() === applicantEmail &&
+          r.status !== RequestStatus.CANCELLED &&
+          r.siteId !== 'ADJUSTMENT' &&
+          !isBbmRequest(r)
+        );
+
+        const unreportedUids = userReqs
+          .filter(r =>
+            r.status === RequestStatus.TRANSFERRED &&
+            usageItems.filter(item => item.requestId === r.id).length === 0
+          )
+          .map(r => r.id);
+
+        if (unreportedUids.length > 2) {
+          throw new Error(`Pengajuan Baru Dibatalkan: Anda saat ini memiliki ${unreportedUids.length} UID yang telah ditransfer oleh Finance tetapi belum ada laporan pemakaian sama sekali (${unreportedUids.join(', ')}). Batas maksimal UID belum dilaporkan adalah 2 UID. Silakan isi laporan pemakaian untuk UID sebelumnya terlebih dahulu.`);
+        }
+      }
+    }
 
     let finalReportItem: UsageReportItem | undefined = firstItem;
 
@@ -4025,7 +4068,11 @@ export default function App() {
       />
 
       {/* Main Container */}
-      <main className="flex-1 p-4 max-w-md mx-auto w-full space-y-4">
+      <main className={`flex-1 p-4 mx-auto w-full space-y-4 ${
+        activeView === 'response-time' || activeView === 'adjustment'
+          ? 'max-w-7xl'
+          : 'max-w-md'
+      }`}>
         {/* Error / Offline Banner */}
         {error && (
           <div className={`rounded-2xl p-4 text-xs flex flex-col gap-3 animate-slide-up shadow-sm border ${
@@ -4159,6 +4206,7 @@ export default function App() {
             initialRequest={editingRequest || undefined}
             userProfile={userProfile}
             requests={requests}
+            usageItems={usageItems}
             onRefreshOfflineQueues={refreshOfflineQueues}
             profiles={profiles}
           />
@@ -4249,6 +4297,15 @@ export default function App() {
             profiles={profiles}
             currentAdminEmail={userProfile.email}
             onBack={() => setActiveView('dashboard')}
+          />
+        ) : activeView === 'response-time' && userProfile ? (
+          <AdminResponseTimeModal
+            isOpen={true}
+            isFullPageView={true}
+            onClose={() => setActiveView('dashboard')}
+            requests={requests}
+            histories={itemReviewHistories}
+            profiles={profiles}
           />
         ) : (
           /* Dashboard Main Section */
@@ -4342,6 +4399,7 @@ export default function App() {
                   onOpenSharedReceipt={handleOpenSharedReceiptForm}
                   onOpenAdjustment={() => setActiveView('adjustment')}
                   onOpenTransferList={() => setActiveView('transfer-list')}
+                  onOpenResponseTimeTable={() => setActiveView('response-time')}
                   onOpenReportsModal={() => setIsFinancialReportsModalOpen(true)}
                   profiles={profiles}
                   activities={activities}

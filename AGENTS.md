@@ -116,4 +116,8 @@
     4. `FinancialReportsModal.tsx` (Laporan Transaksi & Rekap Saldo Keuangan)
     5. `UserOperationalBalanceReportModal.tsx` (Modal & Cetak PDF Transaksi User)
 
+## GPS Integrity & Fake GPS / Zero Drift Detection Logic - [STRICTLY LOCKED]
+- **Status: STRICTLY LOCKED**: Seluruh alur, algoritma deteksi, kriteria evaluasi 5-parameter (Movement & Teleportation, Accuracy 0m / Precision, Timestamp Hardware Progression & Stagnancy, Elevation 3D, serta Zero Drift & Jitter Verification) pada modul `src/lib/fakeGpsDetector.ts` dan integrasinya di `ActivityLogView.tsx` serta `DashboardStats.tsx` telah **DIKUNCI SECARA PERMANEN**.
+- **Larangan Keras**: DILARANG KERAS melakukan perubahan, modifikasi, penyesuaian batas toleransi, refactoring, atau penghapusan logika deteksi Fake GPS & Zero Drift tanpa konfirmasi dan persetujuan eksplisit dari pengguna.
+
 

@@ -1,7 +1,7 @@
 import { google } from 'googleapis';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 let cachedAuthClient: any = null;
 let cachedTokenInfo: { token: string; expiresAt: number } | null = null;

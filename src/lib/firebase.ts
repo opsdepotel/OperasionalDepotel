@@ -21,8 +21,9 @@ try {
 export { auth };
 
 export const provider = new GoogleAuthProvider();
-// Add Google Sheets and Google Drive file scopes
+// Add Google Sheets and Google Drive scopes
 provider.addScope('https://www.googleapis.com/auth/spreadsheets');
+provider.addScope('https://www.googleapis.com/auth/drive');
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 
 let isSigningIn = false;
@@ -155,7 +156,13 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     const nowTs = Date.now().toString();
     try {
       localStorage.setItem('g_access_token', cachedAccessToken);
+      localStorage.setItem('g_user_oauth_token', cachedAccessToken);
+      localStorage.setItem('g_user_oauth_email', result.user.email || '');
       localStorage.setItem('g_token_timestamp', nowTs);
+      localStorage.removeItem('g_is_service_account');
+      window.dispatchEvent(new CustomEvent('google_user_token_updated', {
+        detail: { token: cachedAccessToken, email: result.user.email }
+      }));
       
       // Serialize some of the user profile so we can restore it offline / on bypass
       const minimalUser = {

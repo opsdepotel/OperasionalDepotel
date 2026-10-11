@@ -9,7 +9,7 @@ import { pushRouter } from './pushRoutes.js';
 import { historyRouter } from './historyRoutes.js';
 import { getServiceAccountAuth } from '../lib/serverGoogleAuth.js';
 
-dotenv.config();
+dotenv.config({ override: true });
 
 // Server-side App Database Config Storage
 export interface ServerAppConfig {

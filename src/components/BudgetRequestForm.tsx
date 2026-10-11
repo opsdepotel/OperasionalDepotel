@@ -27,6 +27,7 @@ interface BudgetRequestFormProps {
   profiles?: UserProfile[];
   managerName?: string;
   requests?: BudgetRequest[];
+  usageItems?: UsageReportItem[];
 }
 
 // Helper to get today's date in local Jakarta timezone
@@ -55,9 +56,40 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   onRefreshOfflineQueues,
   profiles = [],
   managerName,
-  requests = []
+  requests = [],
+  usageItems = []
 }) => {
   const todayStr = getTodayDateStr();
+
+  // Restriction check for pure USER role (Role.USER)
+  const isPureUser = (userProfile?.role === Role.USER) && !initialRequest;
+
+  const isBbmRequest = (r: BudgetRequest) =>
+    r.id.startsWith('BBMDS') ||
+    r.id.startsWith('BBM_DurenSawit') ||
+    r.id.startsWith('TFDS') ||
+    r.siteId === 'OPT-DUREN SAWIT' ||
+    r.siteId === 'BBM DUREN SAWIT' ||
+    (r.keterangan && r.keterangan.toUpperCase().includes('DUREN SAWIT'));
+
+  const unreportedUids = useMemo(() => {
+    if (!isPureUser || !userEmail) return [];
+    const emailLower = userEmail.trim().toLowerCase();
+    const userReqs = requests.filter(r =>
+      (r.userEmail || '').trim().toLowerCase() === emailLower &&
+      r.status !== RequestStatus.CANCELLED &&
+      r.siteId !== 'ADJUSTMENT' &&
+      !isBbmRequest(r)
+    );
+    return userReqs
+      .filter(r =>
+        r.status === RequestStatus.TRANSFERRED &&
+        (usageItems || []).filter(item => item.requestId === r.id).length === 0
+      )
+      .map(r => r.id);
+  }, [isPureUser, userEmail, requests, usageItems]);
+
+  const isSubmissionBlocked = isPureUser && unreportedUids.length > 2;
 
   // Resolve supervisor / reviewer display name
   const reviewerProfile = useMemo(() => {
@@ -209,6 +241,11 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
     e.preventDefault();
     setError(null);
 
+    if (isSubmissionBlocked) {
+      setError(`Pengajuan Dibatalkan: Anda saat ini memiliki ${unreportedUids.length} UID yang telah ditransfer oleh Finance tetapi belum ada laporan pemakaian sama sekali (${unreportedUids.join(', ')}). Batas maksimal UID belum dilaporkan adalah 2 UID. Silakan isi laporan pemakaian untuk UID sebelumnya terlebih dahulu.`);
+      return;
+    }
+
     // If on Step 1 of Dana Talangan, advance to Step 2 instead of submitting
     if (isTalangan && !initialRequest && talanganStep === 1) {
       handleNextToStep2();
@@ -350,6 +387,27 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           Batal
         </button>
       </div>
+
+      {/* Warning Banner when Submission is Blocked (>2 Unreported UIDs) */}
+      {isSubmissionBlocked && (
+        <div className="bg-rose-50 border border-rose-200 text-rose-900 p-4 rounded-2xl mb-4 space-y-2 text-xs animate-fade-in shadow-xs">
+          <div className="flex items-center gap-2 font-bold text-rose-900 text-sm">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+            <span>Pengajuan Baru Dibatalkan (Batas Maksimal Terlampaui)</span>
+          </div>
+          <p className="leading-relaxed">
+            Anda saat ini memiliki <strong className="text-rose-900 font-extrabold">{unreportedUids.length} UID</strong> yang telah mendapat transfer dana dari Finance tetapi belum ada laporan pemakaian sama sekali:
+          </p>
+          <div className="font-mono text-[11px] bg-white p-2 rounded-xl border border-rose-200 text-rose-900 font-bold flex flex-wrap gap-1.5">
+            {unreportedUids.map(uid => (
+              <span key={uid} className="px-2 py-0.5 bg-rose-100 rounded-lg">{uid}</span>
+            ))}
+          </div>
+          <p className="leading-relaxed text-[11px] text-rose-800">
+            Sesuai aturan operasional, pengguna dengan lebih dari 2 UID belum dilaporkan tidak dapat membuat pengajuan baru (baik Pengajuan Operasional maupun Dana Talangan). Silakan isi laporan pemakaian untuk UID sebelumnya terlebih dahulu.
+          </p>
+        </div>
+      )}
 
       {/* Segmented Control for Request Type */}
       {!initialRequest && (

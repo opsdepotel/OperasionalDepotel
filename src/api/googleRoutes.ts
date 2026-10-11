@@ -61,6 +61,44 @@ googleAuthRouter.get('/token', async (req, res) => {
 });
 
 /**
+ * Streams photo file binary for cross-account browser migration fallback.
+ */
+googleAuthRouter.get('/photo-file/:fileId', async (req, res) => {
+  try {
+    const { fileId } = req.params;
+    if (!fileId || fileId.includes('/') || fileId.includes('..')) {
+      return res.status(400).send('Invalid file ID');
+    }
+
+    const authObj = await getServerGoogleAuth();
+    if (!authObj) {
+      return res.status(500).send('Server Google Auth unavailable');
+    }
+
+    const serviceDrive = google.drive({ version: 'v3', auth: authObj.auth });
+    
+    // Get metadata for content-type
+    const meta = await serviceDrive.files.get({
+      fileId,
+      fields: 'id, name, mimeType',
+      supportsAllDrives: true
+    }).catch(() => null);
+
+    const streamRes = await serviceDrive.files.get(
+      { fileId, alt: 'media', supportsAllDrives: true },
+      { responseType: 'stream' }
+    );
+
+    res.setHeader('Content-Type', meta?.data?.mimeType || 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    streamRes.data.pipe(res);
+  } catch (err: any) {
+    console.warn(`Could not serve photo binary for file ${req.params.fileId}:`, err?.message || err);
+    res.status(404).send('Photo not found');
+  }
+});
+
+/**
  * Generates OAuth Authorization URL for Admin to generate a GOOGLE_REFRESH_TOKEN
  */
 googleAuthRouter.get('/oauth-auth-url', (req, res) => {
@@ -581,6 +619,443 @@ googleAuthRouter.post('/backup', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: error.message || 'Gagal menjalankan proses backup ke Google Drive cadangan.'
+    });
+  }
+});
+
+/**
+ * Route: /api/google/photo-migration
+ * Handles scanning Google Drive photo ownership and batch migrating files to depotel@vgd4.my.id.
+ */
+googleAuthRouter.post('/photo-migration', async (req, res) => {
+  try {
+    const {
+      action = 'scan',
+      userToken,
+      batchSize = 10,
+      activeFolderId = '1RZHDhcGEdrEu1S1OJh24Za1qkxfU-1kE',
+      archiveFolderId = '1u3wyWZ9CgYwM2867-mLEBkEwLJ3z6oiY',
+      batchMappings = [],
+      fileIds = []
+    } = req.body || {};
+
+    const authObj = await getServerGoogleAuth();
+    const sheets = google.sheets({ version: 'v4', auth: authObj.auth });
+    const serviceDrive = google.drive({ version: 'v3', auth: authObj.auth });
+    const spreadsheetId = '1H39tuO0E_WLJUtl6ebzH4w3kd76XZa9rMLadwDuxwQs';
+
+    // Helper to extract file ID from URL or ID string
+    const extractId = (url?: any, fid?: any): string | null => {
+      let id = String(fid || '').trim();
+      if (!id && url) {
+        const m = String(url).match(/\/d\/([a-zA-Z0-9_-]+)/) || String(url).match(/[?&]id=([a-zA-Z0-9_-]+)/);
+        if (m) id = m[1];
+      }
+      return id && !id.startsWith('BBM_NOTA_') && !id.startsWith('MOCK_') && !id.startsWith('http') ? id : null;
+    };
+
+    if (action === 'scan') {
+      // 1. Fetch 4 sheets in parallel
+      const [pengajuanRes, laporanRes, actRes, histRes] = await Promise.all([
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Pengajuan!N2:O' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Laporan!F2:G' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Activity!J2:K' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'ItemReviewHistory!N2:O' }).catch(() => ({ data: { values: [] as any[][] } }))
+      ]);
+
+      const dbFileIdSet = new Set<string>();
+      (pengajuanRes.data.values || []).forEach((r: any[]) => { const id = extractId(r[0], r[1]); if (id) dbFileIdSet.add(id); });
+      (laporanRes.data.values || []).forEach((r: any[]) => { const id = extractId(r[0], r[1]); if (id) dbFileIdSet.add(id); });
+      (actRes.data.values || []).forEach((r: any[]) => { const id = extractId(r[0], r[1]); if (id) dbFileIdSet.add(id); });
+      (histRes.data.values || []).forEach((r: any[]) => { const id = extractId(r[1], r[0]); if (id) dbFileIdSet.add(id); });
+
+      const dbFileIds = Array.from(dbFileIdSet);
+
+      // 2. Fetch all physical files in active Drive folder NOT owned by depotel@vgd4.my.id
+      const nonDepotelFiles: Array<{
+        id: string;
+        name?: string;
+        owners?: Array<{ displayName?: string; emailAddress?: string }>;
+        webViewLink?: string;
+        createdTime?: string;
+        size?: string;
+      }> = [];
+      let pageToken: string | undefined = undefined;
+
+      try {
+        do {
+          const listRes: any = await serviceDrive.files.list({
+            q: `'${activeFolderId}' in parents and not 'depotel@vgd4.my.id' in owners and mimeType != 'application/vnd.google-apps.folder' and mimeType != 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+            fields: 'nextPageToken, files(id, name, owners, webViewLink, createdTime, size)',
+            pageSize: 1000,
+            pageToken,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
+          });
+          const fetched = (listRes.data.files || []).filter((f: any) => Boolean(f?.id));
+          nonDepotelFiles.push(...fetched);
+          pageToken = listRes.data.nextPageToken;
+        } while (pageToken);
+      } catch (listErr) {
+        console.warn('Could not list non-depotel files in active folder:', listErr);
+      }
+
+      // Filter: files still in Google Sheets that are NOT owned by depotel@vgd4.my.id (need duplication)
+      const nonDepotelDbFiles = nonDepotelFiles.filter(f => dbFileIdSet.has(f.id));
+      const nonDepotelDbFileIds = nonDepotelDbFiles.map(f => f.id);
+
+      // Filter: files NOT in Google Sheets and NOT owned by depotel@vgd4.my.id (orphaned files, ready for backup)
+      const orphanedFiles = nonDepotelFiles.filter(f => !dbFileIdSet.has(f.id));
+      const orphanedFileIds = orphanedFiles.map(f => f.id);
+
+      // Total files already owned by depotel@vgd4.my.id in database
+      const migratedDbFilesCount = Math.max(0, dbFileIds.length - nonDepotelDbFileIds.length);
+
+      const orphanedList = orphanedFiles.map(f => ({
+        id: f.id,
+        name: f.name || `foto_${f.id}.jpg`,
+        ownerEmail: f.owners?.[0]?.emailAddress || 'Tidak diketahui',
+        ownerName: f.owners?.[0]?.displayName || '',
+        webViewLink: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+        createdTime: f.createdTime,
+        size: f.size
+      }));
+
+      const unmigratedDbList = nonDepotelDbFiles.map(f => ({
+        id: f.id,
+        name: f.name || `foto_${f.id}.jpg`,
+        ownerEmail: f.owners?.[0]?.emailAddress || 'Tidak diketahui',
+        ownerName: f.owners?.[0]?.displayName || '',
+        webViewLink: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+        createdTime: f.createdTime,
+        size: f.size
+      }));
+
+      return res.json({
+        success: true,
+        totalDbFiles: dbFileIds.length,
+        dbFileIds: nonDepotelDbFileIds,
+        migratedDbFilesCount,
+        totalDriveFiles: nonDepotelFiles.length,
+        orphanedFileIds,
+        orphanedList,
+        unmigratedDbList,
+        activeFolderId,
+        archiveFolderId
+      });
+    }
+
+    if (action === 'verify-ownership') {
+      const [pengajuanRes, laporanRes, actRes, histRes] = await Promise.all([
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Pengajuan!N2:O' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Laporan!F2:G' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Activity!J2:K' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'ItemReviewHistory!N2:O' }).catch(() => ({ data: { values: [] as any[][] } }))
+      ]);
+
+      const sheetFileEntries: Array<{ sheet: string; fileId: string }> = [];
+      const dbFileIdSet = new Set<string>();
+
+      const extractEntry = (val: any, sheet: string) => {
+        if (!val) return;
+        const str = String(val).trim();
+        const m = str.match(/\/d\/([a-zA-Z0-9_-]+)/) || str.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+        let id: string | null = null;
+        if (m) id = m[1];
+        else if (str.length > 20 && !str.startsWith('http') && !str.startsWith('MOCK_') && !str.startsWith('BBM_NOTA_')) {
+          id = str;
+        }
+        if (id) {
+          dbFileIdSet.add(id);
+          sheetFileEntries.push({ sheet, fileId: id });
+        }
+      };
+
+      (pengajuanRes.data.values || []).forEach((r: any[]) => { extractEntry(r[0], 'Pengajuan'); extractEntry(r[1], 'Pengajuan'); });
+      (laporanRes.data.values || []).forEach((r: any[]) => { extractEntry(r[0], 'Laporan'); extractEntry(r[1], 'Laporan'); });
+      (actRes.data.values || []).forEach((r: any[]) => { extractEntry(r[0], 'Activity'); extractEntry(r[1], 'Activity'); });
+      (histRes.data.values || []).forEach((r: any[]) => { extractEntry(r[1], 'ItemReviewHistory'); extractEntry(r[0], 'ItemReviewHistory'); });
+
+      // 2. Query ALL files in Drive active folder that are NOT owned by depotel@vgd4.my.id
+      const nonDepotelFiles: Array<{
+        id: string;
+        name?: string;
+        owners?: Array<{ displayName?: string; emailAddress?: string }>;
+        webViewLink?: string;
+        createdTime?: string;
+        size?: string;
+      }> = [];
+      let pageToken: string | undefined = undefined;
+
+      try {
+        do {
+          const listRes: any = await serviceDrive.files.list({
+            q: `'${activeFolderId}' in parents and not 'depotel@vgd4.my.id' in owners and mimeType != 'application/vnd.google-apps.folder' and mimeType != 'application/vnd.google-apps.spreadsheet' and trashed = false`,
+            fields: 'nextPageToken, files(id, name, owners, webViewLink, createdTime, size)',
+            pageSize: 1000,
+            pageToken,
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
+          });
+          const fetched = (listRes.data.files || []).filter((f: any) => Boolean(f?.id));
+          nonDepotelFiles.push(...fetched);
+          pageToken = listRes.data.nextPageToken;
+        } while (pageToken);
+      } catch (listErr) {
+        console.warn('Could not list non-depotel files in active folder:', listErr);
+      }
+
+      const nonDepotelSet = new Set(nonDepotelFiles.map(f => f.id));
+
+      // 3. Cross-check 100% of all Google Sheet links against non-depotel files
+      const sheetMatches = sheetFileEntries.filter(e => nonDepotelSet.has(e.fileId));
+      const uniqueNonDepotelSheetIds = new Set(sheetMatches.map(e => e.fileId));
+
+      const totalUniqueFiles = dbFileIdSet.size;
+      const unmigratedCount = uniqueNonDepotelSheetIds.size;
+      const verifiedCount = Math.max(0, totalUniqueFiles - unmigratedCount);
+      const percentage = totalUniqueFiles > 0 ? Number(((verifiedCount / totalUniqueFiles) * 100).toFixed(1)) : 100;
+
+      // Detailed itemized lists for administrator inspection
+      const orphanedList = nonDepotelFiles
+        .filter(f => !dbFileIdSet.has(f.id))
+        .map(f => ({
+          id: f.id,
+          name: f.name || `foto_${f.id}.jpg`,
+          ownerEmail: f.owners?.[0]?.emailAddress || 'Tidak diketahui',
+          ownerName: f.owners?.[0]?.displayName || '',
+          webViewLink: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+          createdTime: f.createdTime,
+          size: f.size
+        }));
+
+      const unmigratedDbList = nonDepotelFiles
+        .filter(f => dbFileIdSet.has(f.id))
+        .map(f => {
+          const occ = sheetMatches.filter(m => m.fileId === f.id);
+          const sheetsUsed = Array.from(new Set(occ.map(o => o.sheet)));
+          return {
+            id: f.id,
+            name: f.name || `foto_${f.id}.jpg`,
+            ownerEmail: f.owners?.[0]?.emailAddress || 'Tidak diketahui',
+            ownerName: f.owners?.[0]?.displayName || '',
+            webViewLink: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+            createdTime: f.createdTime,
+            size: f.size,
+            sheets: sheetsUsed
+          };
+        });
+
+      return res.json({
+        success: true,
+        isFullAudit: true,
+        database: {
+          totalCells: sheetFileEntries.length,
+          totalUniqueFiles,
+          verifiedFilesCount: verifiedCount,
+          unmigratedFilesCount: unmigratedCount,
+          percentage,
+          unmigratedFileIds: Array.from(uniqueNonDepotelSheetIds),
+          sheetBreakdown: {
+            Pengajuan: {
+              total: sheetFileEntries.filter(e => e.sheet === 'Pengajuan').length,
+              unmigrated: sheetMatches.filter(e => e.sheet === 'Pengajuan').length
+            },
+            Laporan: {
+              total: sheetFileEntries.filter(e => e.sheet === 'Laporan').length,
+              unmigrated: sheetMatches.filter(e => e.sheet === 'Laporan').length
+            },
+            Activity: {
+              total: sheetFileEntries.filter(e => e.sheet === 'Activity').length,
+              unmigrated: sheetMatches.filter(e => e.sheet === 'Activity').length
+            },
+            ItemReviewHistory: {
+              total: sheetFileEntries.filter(e => e.sheet === 'ItemReviewHistory').length,
+              unmigrated: sheetMatches.filter(e => e.sheet === 'ItemReviewHistory').length
+            }
+          }
+        },
+        folder: {
+          nonDepotelTotal: nonDepotelFiles.length,
+          nonDepotelInDatabase: unmigratedCount,
+          orphanedReadyForBackup: Math.max(0, nonDepotelFiles.length - unmigratedCount)
+        },
+        orphanedList,
+        unmigratedDbList,
+        databaseSample: {
+          sampled: totalUniqueFiles,
+          ownedByDepotel: verifiedCount,
+          ownedByOther: unmigratedCount,
+          depotelPercentage: Math.round(percentage)
+        },
+        folderSample: {
+          sampled: nonDepotelFiles.length,
+          ownedByDepotel: verifiedCount,
+          ownedByOther: unmigratedCount,
+          depotelPercentage: Math.round(percentage)
+        }
+      });
+    }
+
+    if (action === 'commit-batch') {
+      const mappings: Array<{ oldFileId: string; newFileId: string; newWebViewLink: string; fileName?: string }> = batchMappings || [];
+      if (mappings.length === 0) {
+        return res.json({ success: true, updatedCells: 0, movedFiles: 0, results: [] });
+      }
+
+      // Fetch 4 sheets
+      const [pengajuanRes, laporanRes, actRes, histRes] = await Promise.all([
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Pengajuan!N2:O' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Laporan!F2:G' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'Activity!J2:K' }).catch(() => ({ data: { values: [] as any[][] } })),
+        sheets.spreadsheets.values.get({ spreadsheetId, range: 'ItemReviewHistory!N2:O' }).catch(() => ({ data: { values: [] as any[][] } }))
+      ]);
+
+      const sheetUpdateRequests: any[] = [];
+      const movedResults: any[] = [];
+
+      for (const item of mappings) {
+        const { oldFileId, newFileId, newWebViewLink } = item;
+        if (!oldFileId || !newFileId) continue;
+
+        // Queue cell updates
+        // 1. Pengajuan
+        (pengajuanRes.data.values || []).forEach((row: any[], idx: number) => {
+          const rowIdx = idx + 2;
+          if (row[0]?.includes(oldFileId) || row[1]?.trim() === oldFileId) {
+            sheetUpdateRequests.push({
+              range: `Pengajuan!N${rowIdx}:O${rowIdx}`,
+              values: [[newWebViewLink, newFileId]]
+            });
+          }
+        });
+
+        // 2. Laporan
+        (laporanRes.data.values || []).forEach((row: any[], idx: number) => {
+          const rowIdx = idx + 2;
+          if (row[0]?.includes(oldFileId) || row[1]?.trim() === oldFileId) {
+            sheetUpdateRequests.push({
+              range: `Laporan!F${rowIdx}:G${rowIdx}`,
+              values: [[newWebViewLink, newFileId]]
+            });
+          }
+        });
+
+        // 3. Activity
+        (actRes.data.values || []).forEach((row: any[], idx: number) => {
+          const rowIdx = idx + 2;
+          if (row[0]?.includes(oldFileId) || row[1]?.trim() === oldFileId) {
+            sheetUpdateRequests.push({
+              range: `Activity!J${rowIdx}:K${rowIdx}`,
+              values: [[newWebViewLink, newFileId]]
+            });
+          }
+        });
+
+        // 4. ItemReviewHistory
+        (histRes.data.values || []).forEach((row: any[], idx: number) => {
+          const rowIdx = idx + 2;
+          if (row[1]?.includes(oldFileId) || row[0]?.trim() === oldFileId) {
+            sheetUpdateRequests.push({
+              range: `ItemReviewHistory!N${rowIdx}:O${rowIdx}`,
+              values: [[newFileId, newWebViewLink]]
+            });
+          }
+        });
+
+        // Move old file to archive folder
+        let moved = false;
+        try {
+          await serviceDrive.files.update({
+            fileId: oldFileId,
+            addParents: archiveFolderId,
+            removeParents: activeFolderId,
+            supportsAllDrives: true
+          });
+          moved = true;
+        } catch (mvErr) {
+          console.warn(`Could not move old file ${oldFileId} to archive folder:`, mvErr);
+        }
+
+        movedResults.push({ oldFileId, newFileId, moved });
+      }
+
+      // Execute atomic batch update on Google Sheets
+      if (sheetUpdateRequests.length > 0) {
+        await sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId,
+          requestBody: {
+            valueInputOption: 'USER_ENTERED',
+            data: sheetUpdateRequests
+          }
+        });
+      }
+
+      return res.json({
+        success: true,
+        updatedCells: sheetUpdateRequests.length,
+        movedFiles: movedResults.filter(r => r.moved).length,
+        results: movedResults
+      });
+    }
+
+    if (action === 'archive-orphaned') {
+      const itemsToMove: string[] = (fileIds || []).slice(0, 50);
+      let movedCount = 0;
+
+      // Prioritize userToken (depotel@vgd4.my.id, the activeFolderId owner) for authority to move/remove children
+      let driveClient = serviceDrive;
+      if (userToken && userToken !== 'mock_demo_token') {
+        const userAuth = new google.auth.OAuth2();
+        userAuth.setCredentials({ access_token: userToken });
+        driveClient = google.drive({ version: 'v3', auth: userAuth });
+      }
+
+      for (const fId of itemsToMove) {
+        let moved = false;
+        // Attempt 1: Move from activeFolderId to archiveFolderId
+        try {
+          await driveClient.files.update({
+            fileId: fId,
+            addParents: archiveFolderId,
+            removeParents: activeFolderId,
+            supportsAllDrives: true,
+            enforceSingleParent: true
+          });
+          moved = true;
+        } catch (mErr: any) {
+          // Attempt 2: If addParents to archiveFolder fails (cross-domain restrictions on external files),
+          // remove the file from activeFolderId directly since depotel@vgd4.my.id owns activeFolderId
+          try {
+            await driveClient.files.update({
+              fileId: fId,
+              removeParents: activeFolderId,
+              supportsAllDrives: true
+            });
+            moved = true;
+          } catch (rErr: any) {
+            console.warn(`Could not move/remove orphaned file ${fId}:`, rErr?.message || mErr?.message);
+          }
+        }
+
+        if (moved) {
+          movedCount++;
+        }
+      }
+
+      return res.json({
+        success: true,
+        movedCount,
+        remainingCount: Math.max(0, (fileIds || []).length - itemsToMove.length)
+      });
+    }
+
+    return res.status(400).json({ success: false, error: 'Aksi tidak dikenali.' });
+  } catch (err: any) {
+    console.error('Error in /api/google/photo-migration:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message || 'Gagal memproses migrasi foto.'
     });
   }
 });
