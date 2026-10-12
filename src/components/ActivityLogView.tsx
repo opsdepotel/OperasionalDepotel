@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UserProfile, SiteInfo, UserActivity, Role } from '../types';
 import { safeSetJson } from '../lib/storage';
@@ -540,256 +539,6 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [isFetchingGps, setIsFetchingGps] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
-
-  // WebRTC Live Camera States & Refs
-  const [isWebRtcCameraOpen, setIsWebRtcCameraOpen] = useState(false);
-  const [webRtcStream, setWebRtcStream] = useState<MediaStream | null>(null);
-  const [cameraFacingMode, setCameraFacingMode] = useState<'environment' | 'user'>('environment');
-  const [webRtcError, setWebRtcError] = useState<string | null>(null);
-  const [isStartingCamera, setIsStartingCamera] = useState(false);
-  const [isTorchOn, setIsTorchOn] = useState(false);
-  const [hasTorchSupport, setHasTorchSupport] = useState(false);
-  const [hasMultipleCameras, setHasMultipleCameras] = useState(false);
-  const [useFallbackFileInput, setUseFallbackFileInput] = useState(false);
-
-  const webRtcVideoRef = useRef<HTMLVideoElement | null>(null);
-
-  useBackHandler(isWebRtcCameraOpen, () => stopWebRtcCamera(), 'activity_webRtcCameraViewfinder');
-
-  // Stop WebRTC tracks safely
-  const stopWebRtcCamera = () => {
-    if (webRtcStream) {
-      webRtcStream.getTracks().forEach(track => {
-        try {
-          track.stop();
-        } catch (e) {}
-      });
-      setWebRtcStream(null);
-    }
-    if (webRtcVideoRef.current) {
-      webRtcVideoRef.current.srcObject = null;
-    }
-    setIsWebRtcCameraOpen(false);
-    setIsTorchOn(false);
-  };
-
-  // Ensure stream tracks are stopped on unmount
-  useEffect(() => {
-    return () => {
-      if (webRtcStream) {
-        webRtcStream.getTracks().forEach(track => {
-          try { track.stop(); } catch (e) {}
-        });
-      }
-    };
-  }, [webRtcStream]);
-
-  // Production-grade video stream binder: Ensures webRtcVideoRef attaches stream as soon as video DOM element mounts
-  useEffect(() => {
-    if (isWebRtcCameraOpen && webRtcStream && webRtcVideoRef.current) {
-      const videoEl = webRtcVideoRef.current;
-      if (videoEl.srcObject !== webRtcStream) {
-        videoEl.srcObject = webRtcStream;
-      }
-      videoEl.play().catch(e => {
-        console.warn('WebRTC video play warning:', e);
-      });
-    }
-  }, [isWebRtcCameraOpen, webRtcStream]);
-
-  // Check available camera devices & torch capability
-  const checkCameraCapabilities = async (stream: MediaStream) => {
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoDevices = devices.filter(d => d.kind === 'videoinput');
-        setHasMultipleCameras(videoDevices.length > 1);
-      }
-
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack && typeof videoTrack.getCapabilities === 'function') {
-        const capabilities: any = videoTrack.getCapabilities();
-        setHasTorchSupport(!!capabilities.torch);
-      } else {
-        setHasTorchSupport(false);
-      }
-    } catch (e) {
-      setHasMultipleCameras(false);
-      setHasTorchSupport(false);
-    }
-  };
-
-  // Start WebRTC Live Camera Stream
-  const handleOpenWebRtcCamera = async (targetFacingMode: 'environment' | 'user' = 'environment') => {
-    setErrorMsg(null);
-    setWebRtcError(null);
-
-    if (!selectedSiteId.trim() || !keterangan.trim()) {
-      setErrorMsg('Wajib memilih Site ID dan mengisi Keterangan Kegiatan terlebih dahulu sebelum mengambil foto.');
-      return;
-    }
-    if (!isValidGpsCoordinates(coordinatesActual)) {
-      setErrorMsg('Data koordinat GPS wajib tersedia sebelum mengambil foto kegiatan harian. Silakan aktifkan lokasi (GPS).');
-      return;
-    }
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      setWebRtcError('Browser atau perangkat Anda tidak mendukung akses Kamera WebRTC langsung.');
-      setUseFallbackFileInput(true);
-      return;
-    }
-
-    setIsStartingCamera(true);
-    setIsWebRtcCameraOpen(true);
-    setCameraFacingMode(targetFacingMode);
-
-    // Stop previous stream if switching camera
-    if (webRtcStream) {
-      webRtcStream.getTracks().forEach(track => {
-        try { track.stop(); } catch (e) {}
-      });
-      setWebRtcStream(null);
-    }
-
-    let stream: MediaStream | null = null;
-
-    try {
-      // Attempt 1: Try requested facing mode with soft constraint (prevents OverconstrainedError on multi-camera HP)
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: targetFacingMode,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        },
-        audio: false
-      });
-    } catch (err1) {
-      try {
-        // Attempt 2: Medium resolution soft constraint
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: targetFacingMode,
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        });
-      } catch (err2) {
-        try {
-          // Attempt 3: Try exact constraint as fallback
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: { exact: targetFacingMode }
-            },
-            audio: false
-          });
-        } catch (err3) {
-          try {
-            // Attempt 4: Any video input available
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: true,
-              audio: false
-            });
-          } catch (err4: any) {
-            console.error('All WebRTC getUserMedia attempts failed:', err4);
-            let errText = 'Gagal mengakses Kamera HP.';
-            if (err4.name === 'NotAllowedError' || err4.name === 'PermissionDeniedError') {
-              errText = 'Akses Kamera ditolak oleh browser/HP. Silakan izinkan akses Kamera di setelan browser Anda.';
-            } else if (err4.name === 'NotFoundError' || err4.name === 'DevicesNotFoundError') {
-              errText = 'Kamera tidak ditemukan di perangkat Anda.';
-            } else if (err4.name === 'NotReadableError' || err4.name === 'TrackStartError') {
-              errText = 'Kamera sedang digunakan oleh aplikasi lain. Silakan tutup aplikasi lain yang menggunakan kamera.';
-            }
-            setWebRtcError(errText);
-            setIsStartingCamera(false);
-            return;
-          }
-        }
-      }
-    }
-
-    if (stream) {
-      setWebRtcStream(stream);
-      checkCameraCapabilities(stream);
-
-      if (webRtcVideoRef.current) {
-        webRtcVideoRef.current.srcObject = stream;
-        try {
-          await webRtcVideoRef.current.play();
-        } catch (e) {}
-      }
-    }
-
-    setIsStartingCamera(false);
-  };
-
-  // Toggle Front / Back camera
-  const handleToggleFacingMode = () => {
-    const nextMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
-    handleOpenWebRtcCamera(nextMode);
-  };
-
-  // Toggle Flashlight / Torch
-  const handleToggleTorch = async () => {
-    if (!webRtcStream) return;
-    const track = webRtcStream.getVideoTracks()[0];
-    if (track && typeof track.applyConstraints === 'function') {
-      try {
-        const nextTorch = !isTorchOn;
-        await track.applyConstraints({
-          advanced: [{ torch: nextTorch }]
-        } as any);
-        setIsTorchOn(nextTorch);
-      } catch (err) {
-        console.warn('Torch constraint not supported:', err);
-      }
-    }
-  };
-
-  // Capture current frame from live WebRTC video
-  const handleCaptureWebRtcFrame = () => {
-    if (!webRtcVideoRef.current) return;
-
-    const video = webRtcVideoRef.current;
-    if (video.readyState < 2) { // HAVE_CURRENT_DATA
-      return;
-    }
-
-    try {
-      const canvas = document.createElement('canvas');
-      const width = video.videoWidth || 1280;
-      const height = video.videoHeight || 720;
-
-      canvas.width = width;
-      canvas.height = height;
-
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      // Draw current video frame onto canvas
-      ctx.drawImage(video, 0, 0, width, height);
-
-      // Convert frame to JPEG File
-      canvas.toBlob((blob) => {
-        if (blob) {
-          const timestamp = Date.now();
-          const capturedFile = new File([blob], `kegiatan_live_${timestamp}.jpg`, {
-            type: 'image/jpeg',
-            lastModified: timestamp
-          });
-
-          // Set originalPhotoFile - this automatically triggers the watermarking effect!
-          setOriginalPhotoFile(capturedFile);
-
-          // Close WebRTC camera modal and stop tracks
-          stopWebRtcCamera();
-        }
-      }, 'image/jpeg', 0.92);
-    } catch (err) {
-      console.error('Failed to capture frame from WebRTC video:', err);
-      setWebRtcError('Gagal mengambil gambar dari kamera live. Silakan coba lagi.');
-    }
-  };
 
   // Canvas utility to apply watermark to captured photo with downscaling and JPEG compression to prevent OOM crash
   const applyWatermarkToImage = (
@@ -1718,49 +1467,44 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                       </span>
                     </div>
                   ) : isMobileUser ? (
-                    <div className="w-full space-y-2 p-2">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenWebRtcCamera('environment')}
+                    <div className="w-full p-2">
+                      <label
+                        htmlFor="activity-camera-input"
                         className="w-full py-4 bg-gradient-to-br from-indigo-600 via-indigo-700 to-blue-700 text-white rounded-2xl flex flex-col items-center justify-center gap-1 transition-all cursor-pointer shadow-md hover:shadow-indigo-200 active:scale-[0.99]"
-                        id="activity-open-webrtc-camera-btn"
+                        id="activity-open-camera-btn"
                       >
                         <div className="flex items-center gap-2">
                           <Camera className="w-5 h-5 text-emerald-300 animate-pulse" />
-                          <span className="text-xs font-black tracking-wide">BUKA KAMERA LIVE HP (WebRTC Direct)</span>
+                          <span className="text-xs font-black tracking-wide">AMBIL FOTO KAMERA HP</span>
                         </div>
                         <span className="text-[10px] text-indigo-100 font-bold bg-white/20 px-2.5 py-0.5 rounded-full border border-white/20">
-                          100% Kamera Live • Kedap Galeri
+                          Kamera Bawaan HP • Watermark Otomatis
                         </span>
-                      </button>
-
-                      {/* Hidden fallback file input in case WebRTC fails */}
-                      {useFallbackFileInput && (
-                        <div className="text-center pt-1">
-                          <label className="cursor-pointer inline-flex items-center gap-1 text-[11px] font-bold text-slate-500 hover:text-indigo-600 underline">
-                            <span>Gunakan Kamera Bawaan HP (Mode Fallback)</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              capture="environment"
-                              onChange={handlePhotoChange}
-                              className="hidden"
-                              id="activity-camera-input-fallback"
-                            />
-                          </label>
-                        </div>
-                      )}
+                        <input
+                          id="activity-camera-input"
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={handlePhotoChange}
+                          onClick={(e: any) => { e.currentTarget.value = null; }}
+                          className="hidden"
+                        />
+                      </label>
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2 p-2 w-full">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenWebRtcCamera('environment')}
-                        className="flex flex-col items-center justify-center p-3 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/80 rounded-xl transition-all cursor-pointer font-bold text-xs"
-                      >
+                      <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/80 rounded-xl transition-all font-bold text-xs">
                         <Camera className="w-5 h-5 text-indigo-600 mb-1" />
-                        <span className="text-[10px] font-bold">Kamera Live HP</span>
-                      </button>
+                        <span className="text-[10px] font-bold">Kamera Perangkat</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={handlePhotoChange}
+                          onClick={(e: any) => { e.currentTarget.value = null; }}
+                          className="hidden"
+                        />
+                      </label>
                       <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl transition-all">
                         <UploadCloud className="w-5 h-5 text-indigo-500 mb-1" />
                         <span className="text-[10px] font-bold text-slate-600">File / Galeri</span>
@@ -1768,6 +1512,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           type="file"
                           accept="image/*"
                           onChange={handlePhotoChange}
+                          onClick={(e: any) => { e.currentTarget.value = null; }}
                           className="hidden"
                         />
                       </label>
@@ -2567,155 +2312,6 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           currentAdminEmail={userEmail}
           onSubmitManualActivity={onSaveManualActivity}
         />
-      )}
-
-      {/* WebRTC Live Camera Viewfinder Modal */}
-      {isWebRtcCameraOpen && createPortal(
-        <div className="fixed inset-0 z-[100000] bg-black flex flex-col justify-between overflow-hidden animate-fade-in select-none">
-          {/* Viewfinder Header Toolbar */}
-          <div className="p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent flex items-center justify-between z-20 text-white shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
-              <div>
-                <div className="text-xs font-bold flex items-center gap-1.5 text-emerald-400">
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>Kamera Live HP (Wajib Real-time)</span>
-                </div>
-                <div className="text-[10px] text-slate-300 font-mono">
-                  {selectedSiteId} | GPS: {coordinatesActual || 'Mencari GPS...'}
-                </div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={stopWebRtcCamera}
-              className="p-2 bg-white/20 hover:bg-white/30 backdrop-blur-md rounded-full text-white transition-all cursor-pointer"
-              title="Tutup Kamera"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Viewfinder Center Video Stream */}
-          <div className="relative flex-1 bg-slate-950 flex items-center justify-center overflow-hidden">
-            {isStartingCamera && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 text-white z-10 gap-3">
-                <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
-                <span className="text-xs font-bold">Menghubungkan ke Kamera HP...</span>
-              </div>
-            )}
-
-            {webRtcError ? (
-              <div className="p-6 text-center max-w-sm bg-slate-900 border border-slate-800 rounded-3xl m-4 text-white space-y-4 shadow-2xl">
-                <AlertOctagon className="w-12 h-12 text-rose-500 mx-auto" />
-                <div>
-                  <h4 className="font-bold text-sm text-rose-400 mb-1">Gagal Mengakses Kamera</h4>
-                  <p className="text-xs text-slate-300 leading-relaxed">{webRtcError}</p>
-                </div>
-                <div className="space-y-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => handleOpenWebRtcCamera(cameraFacingMode)}
-                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all"
-                  >
-                    Coba Hubungkan Ulang Kamera
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      stopWebRtcCamera();
-                      setUseFallbackFileInput(true);
-                    }}
-                    className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-medium"
-                  >
-                    Gunakan Kamera Bawaan Perangkat (Fallback)
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <video
-                  ref={(el) => {
-                    webRtcVideoRef.current = el;
-                    if (el && webRtcStream && el.srcObject !== webRtcStream) {
-                      el.srcObject = webRtcStream;
-                      el.play().catch(e => console.warn('Video ref play warning:', e));
-                    }
-                  }}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
-                />
-
-                {/* Viewfinder Corner Overlay Brackets */}
-                <div className="absolute inset-8 sm:inset-16 pointer-events-none border-2 border-white/30 rounded-3xl flex flex-col justify-between p-4">
-                  <div className="flex justify-between">
-                    <div className="w-6 h-6 border-t-2 border-l-2 border-emerald-400 rounded-tl-lg" />
-                    <div className="w-6 h-6 border-t-2 border-r-2 border-emerald-400 rounded-tr-lg" />
-                  </div>
-                  <div className="text-center">
-                    <span className="px-3 py-1 bg-black/60 backdrop-blur-md text-emerald-300 rounded-full text-[10px] font-bold tracking-wider border border-emerald-500/30 uppercase">
-                      Posisikan Objek Kegiatan Di Dalam Bingkai
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <div className="w-6 h-6 border-b-2 border-l-2 border-emerald-400 rounded-bl-lg" />
-                    <div className="w-6 h-6 border-b-2 border-r-2 border-emerald-400 rounded-br-lg" />
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Viewfinder Bottom Toolbar */}
-          {!webRtcError && (
-            <div className="p-6 bg-gradient-to-t from-black/90 via-black/60 to-transparent flex items-center justify-around z-20 shrink-0">
-              {/* Torch Toggle */}
-              {hasTorchSupport ? (
-                <button
-                  type="button"
-                  onClick={handleToggleTorch}
-                  className={`p-3.5 rounded-full transition-all cursor-pointer ${isTorchOn ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/50' : 'bg-white/20 text-white hover:bg-white/30'}`}
-                  title="Lampu Kilat / Flashlight"
-                >
-                  <Sparkles className="w-5 h-5" />
-                </button>
-              ) : (
-                <div className="w-12 h-12" />
-              )}
-
-              {/* Main Shutter Button */}
-              <button
-                type="button"
-                disabled={isStartingCamera || !!webRtcError}
-                onClick={handleCaptureWebRtcFrame}
-                className="w-20 h-20 rounded-full bg-white border-4 border-indigo-600 shadow-2xl flex items-center justify-center cursor-pointer active:scale-90 hover:scale-105 transition-transform disabled:opacity-50"
-                title="Ambil Foto Kegiatan"
-              >
-                <div className="w-16 h-16 rounded-full bg-indigo-600 flex items-center justify-center text-white">
-                  <Camera className="w-8 h-8" />
-                </div>
-              </button>
-
-              {/* Toggle Front / Back Camera */}
-              {hasMultipleCameras ? (
-                <button
-                  type="button"
-                  onClick={handleToggleFacingMode}
-                  className="p-3.5 bg-white/20 hover:bg-white/30 text-white rounded-full transition-all cursor-pointer"
-                  title="Ganti Kamera Depan / Belakang"
-                >
-                  <RefreshCw className="w-5 h-5" />
-                </button>
-              ) : (
-                <div className="w-12 h-12" />
-              )}
-            </div>
-          )}
-        </div>,
-        document.body
       )}
     </div>
   );

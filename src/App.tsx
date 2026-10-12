@@ -2044,40 +2044,6 @@ export default function App() {
     const isExisting = requests.some(r => r.id === newRequest.id);
     const isReqTalangan = newRequest.id.startsWith('OPT-') || newRequest.keterangan.startsWith('[DANA TALANGAN]');
 
-    // Restriction Check: USER Murni cannot submit new request if unreportedUids > 2
-    if (!isExisting) {
-      const isPureUser = (userProfile?.role === Role.USER) || (activeRole === Role.USER);
-      if (isPureUser) {
-        const applicantEmail = (userProfile?.email || newRequest.userEmail).trim().toLowerCase();
-        
-        const isBbmRequest = (r: BudgetRequest) =>
-          r.id.startsWith('BBMDS') ||
-          r.id.startsWith('BBM_DurenSawit') ||
-          r.id.startsWith('TFDS') ||
-          r.siteId === 'OPT-DUREN SAWIT' ||
-          r.siteId === 'BBM DUREN SAWIT' ||
-          (r.keterangan && r.keterangan.toUpperCase().includes('DUREN SAWIT'));
-
-        const userReqs = requests.filter(r =>
-          (r.userEmail || '').trim().toLowerCase() === applicantEmail &&
-          r.status !== RequestStatus.CANCELLED &&
-          r.siteId !== 'ADJUSTMENT' &&
-          !isBbmRequest(r)
-        );
-
-        const unreportedUids = userReqs
-          .filter(r =>
-            r.status === RequestStatus.TRANSFERRED &&
-            usageItems.filter(item => item.requestId === r.id).length === 0
-          )
-          .map(r => r.id);
-
-        if (unreportedUids.length > 2) {
-          throw new Error(`Pengajuan Baru Dibatalkan: Anda saat ini memiliki ${unreportedUids.length} UID yang telah ditransfer oleh Finance tetapi belum ada laporan pemakaian sama sekali (${unreportedUids.join(', ')}). Batas maksimal UID belum dilaporkan adalah 2 UID. Silakan isi laporan pemakaian untuk UID sebelumnya terlebih dahulu.`);
-        }
-      }
-    }
-
     let finalReportItem: UsageReportItem | undefined = firstItem;
 
     const historyLog: ItemReviewHistory = {
@@ -4069,9 +4035,11 @@ export default function App() {
 
       {/* Main Container */}
       <main className={`flex-1 p-4 mx-auto w-full space-y-4 ${
-        activeView === 'response-time' || activeView === 'adjustment'
+        activeView === 'response-time'
           ? 'max-w-7xl'
-          : 'max-w-md'
+          : activeView === 'adjustment'
+            ? 'max-w-2xl'
+            : 'max-w-md'
       }`}>
         {/* Error / Offline Banner */}
         {error && (
@@ -4206,7 +4174,6 @@ export default function App() {
             initialRequest={editingRequest || undefined}
             userProfile={userProfile}
             requests={requests}
-            usageItems={usageItems}
             onRefreshOfflineQueues={refreshOfflineQueues}
             profiles={profiles}
           />
