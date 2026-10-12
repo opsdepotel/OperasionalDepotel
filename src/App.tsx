@@ -93,6 +93,7 @@ import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt, clear
 import { DevicePermissionsModal } from './components/DevicePermissionsModal';
 import { ManualActivitySubmitData } from './components/AdminManualActivityModal';
 import { AdminResponseTimeModal } from './components/AdminResponseTimeModal';
+import { UserUidMonitoringModal, checkUserMurniSubmissionStatus } from './components/UserUidMonitoringModal';
 import { checkAllDevicePermissions, DevicePermissionsStatus } from './lib/devicePermissions';
 import { subscribeToPushNotifications, triggerPushNotification, parsePushSubscriptions } from './lib/pushNotifications';
 
@@ -543,6 +544,14 @@ export default function App() {
   // Device Permissions State (Notification, Geolocation, Camera)
   const [isPermissionsModalOpen, setIsPermissionsModalOpen] = useState(false);
   const [permissionsStatus, setPermissionsStatus] = useState<DevicePermissionsStatus | null>(null);
+
+  // User Murni blocked submission prompt modal
+  const [userMurniBlockedModalInfo, setUserMurniBlockedModalInfo] = useState<{
+    isOpen: boolean;
+    count: number;
+    uids: string[];
+  }>({ isOpen: false, count: 0, uids: [] });
+  useBackHandler(userMurniBlockedModalInfo.isOpen, () => setUserMurniBlockedModalInfo(prev => ({ ...prev, isOpen: false })), 'app_userMurniBlockedModal');
 
   const handlePermissionsUpdated = useCallback((newStatus: DevicePermissionsStatus) => {
     setPermissionsStatus((prev) => {
@@ -4037,9 +4046,11 @@ export default function App() {
       <main className={`flex-1 p-4 mx-auto w-full space-y-4 ${
         activeView === 'response-time'
           ? 'max-w-7xl'
-          : activeView === 'adjustment'
-            ? 'max-w-2xl'
-            : 'max-w-md'
+          : activeView === 'user-uid-monitoring'
+            ? 'max-w-4xl'
+            : activeView === 'adjustment'
+              ? 'max-w-2xl'
+              : 'max-w-md'
       }`}>
         {/* Error / Offline Banner */}
         {error && (
@@ -4174,6 +4185,7 @@ export default function App() {
             initialRequest={editingRequest || undefined}
             userProfile={userProfile}
             requests={requests}
+            usageItems={usageItems}
             onRefreshOfflineQueues={refreshOfflineQueues}
             profiles={profiles}
           />
@@ -4274,6 +4286,16 @@ export default function App() {
             histories={itemReviewHistories}
             profiles={profiles}
           />
+        ) : activeView === 'user-uid-monitoring' && userProfile ? (
+          <UserUidMonitoringModal
+            isOpen={true}
+            profiles={profiles}
+            requests={requests}
+            usageItems={usageItems}
+            currentRole={activeRole}
+            currentUserEmail={userProfile.email}
+            onClose={() => setActiveView('dashboard')}
+          />
         ) : (
           /* Dashboard Main Section */
           <div className="space-y-4 animate-slide-up">
@@ -4368,6 +4390,7 @@ export default function App() {
                   onOpenTransferList={() => setActiveView('transfer-list')}
                   onOpenResponseTimeTable={() => setActiveView('response-time')}
                   onOpenReportsModal={() => setIsFinancialReportsModalOpen(true)}
+                  onOpenUserUidMonitoring={() => setActiveView('user-uid-monitoring')}
                   profiles={profiles}
                   activities={activities}
                   onOpenActivities={() => setActiveView('activities')}
@@ -4547,40 +4570,90 @@ export default function App() {
                       )}
 
                       {/* Action buttons for USER role and MANAGER/FINANCE (SUBMISSION mode only) */}
-                      {(activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && dashboardTab === 'SUBMISSION')) && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && statusFilter !== 'TRANSFERRED' && statusFilter !== RequestStatus.TRANSFERRED && (
-                        <div className="flex gap-2 pt-1">
-                          <button
-                            onClick={() => {
-                              if (!userProfile?.managerEmail && activeRole === Role.USER) {
-                                alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
-                              } else {
-                                setEditingRequest(null);
-                                setInitialIsTalangan(false);
-                                setActiveView('new-request');
-                              }
-                            }}
-                            className="flex-1 py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Ajukan Anggaran</span>
-                          </button>
-                          <button
-                            onClick={() => {
-                              if (!userProfile?.managerEmail && activeRole === Role.USER) {
-                                alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
-                              } else {
-                                setEditingRequest(null);
-                                setInitialIsTalangan(true);
-                                setActiveView('new-request');
-                              }
-                            }}
-                            className="flex-1 py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                          >
-                            <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-400" />
-                            <span>Laporan Dana Talangan</span>
-                          </button>
-                        </div>
-                      )}
+                      {(() => {
+                        const currentUserMurniStatus = activeRole === Role.USER 
+                          ? checkUserMurniSubmissionStatus(userProfile, requests, usageItems)
+                          : { isBlocked: false, count: 0, unreportedUids: [] };
+
+                        return (activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && dashboardTab === 'SUBMISSION')) && statusFilter !== RequestStatus.APPROVED && statusFilter !== 'REPORTING' && statusFilter !== RequestStatus.CLOSED && statusFilter !== 'CLOSED' && statusFilter !== 'TRANSFERRED' && statusFilter !== RequestStatus.TRANSFERRED && (
+                          <div className="space-y-2 pt-1">
+                            {/* Peringatan Pembatasan UID Belum Dilaporkan (Role USER Murni) */}
+                            {currentUserMurniStatus.isBlocked && (
+                              <div className="bg-rose-50 border border-rose-300 rounded-2xl p-3 text-xs text-rose-900 space-y-1.5 shadow-2xs animate-slide-up">
+                                <div className="flex items-start gap-2">
+                                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-bold text-rose-950 font-display">
+                                        Pengajuan Baru Dibatasi
+                                      </span>
+                                      <span className="bg-rose-200 text-rose-800 text-[10px] font-extrabold px-1.5 py-0.5 rounded font-mono">
+                                        {currentUserMurniStatus.count} UID Belum Lapor
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-rose-800 mt-0.5 leading-relaxed">
+                                      Anda memiliki <strong>{currentUserMurniStatus.count} UID</strong> yang sudah ditransfer dan belum dilaporkan sama sekali. Sesuai aturan sistem, pengajuan baru diblokir sampai laporan nota diselesaikan.
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  if (!userProfile?.managerEmail && activeRole === Role.USER) {
+                                    alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
+                                  } else if (currentUserMurniStatus.isBlocked) {
+                                    setUserMurniBlockedModalInfo({
+                                      isOpen: true,
+                                      count: currentUserMurniStatus.count,
+                                      uids: currentUserMurniStatus.unreportedUids.map(u => u.id)
+                                    });
+                                  } else {
+                                    setEditingRequest(null);
+                                    setInitialIsTalangan(false);
+                                    setActiveView('new-request');
+                                  }
+                                }}
+                                className={`flex-1 py-2 px-3 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer ${
+                                  currentUserMurniStatus.isBlocked
+                                    ? 'bg-indigo-600/70 hover:bg-indigo-600/80 border border-indigo-400/40'
+                                    : 'bg-indigo-600 hover:bg-indigo-700'
+                                }`}
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Ajukan Anggaran</span>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (!userProfile?.managerEmail && activeRole === Role.USER) {
+                                    alert('Email Manager Anda belum dikonfigurasi oleh Finance. Silakan hubungi Finance Anda.');
+                                  } else if (currentUserMurniStatus.isBlocked) {
+                                    setUserMurniBlockedModalInfo({
+                                      isOpen: true,
+                                      count: currentUserMurniStatus.count,
+                                      uids: currentUserMurniStatus.unreportedUids.map(u => u.id)
+                                    });
+                                  } else {
+                                    setEditingRequest(null);
+                                    setInitialIsTalangan(true);
+                                    setActiveView('new-request');
+                                  }
+                                }}
+                                className={`flex-1 py-2 px-3 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer ${
+                                  currentUserMurniStatus.isBlocked
+                                    ? 'bg-slate-800/80 hover:bg-slate-800/90'
+                                    : 'bg-slate-900 hover:bg-slate-800'
+                                }`}
+                              >
+                                <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-400" />
+                                <span>Laporan Dana Talangan</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Request Cards Grid */}
@@ -5977,6 +6050,50 @@ export default function App() {
       )}
 
       {/* Device Permissions Modal (Notifikasi, Lokasi/GPS, Kamera) */}
+      {/* Modal Peringatan Pemblokiran User Murni (> 2 UID Belum Dilaporkan) */}
+      {userMurniBlockedModalInfo.isOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4 animate-scale-up">
+            <div className="w-14 h-14 rounded-2xl bg-rose-100 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto">
+              <ShieldAlert className="w-7 h-7" />
+            </div>
+            <div>
+              <h3 className="font-display font-bold text-base text-slate-900">
+                Pengajuan Tidak Dapat Diproses
+              </h3>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                Anda memiliki <strong>{userMurniBlockedModalInfo.count} UID</strong> yang sudah ditransfer oleh Finance namun belum Anda laporkan sama sekali (0 nota).
+              </p>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-3.5 text-left space-y-1.5">
+              <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">
+                Daftar UID Belum Dilaporkan:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {userMurniBlockedModalInfo.uids.map(uid => (
+                  <span key={uid} className="font-mono text-xs font-bold bg-white text-rose-800 border border-rose-300 px-2 py-0.5 rounded-lg shadow-2xs">
+                    {uid}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
+              Sesuai aturan sistem, User Murni hanya dapat membuat pengajuan baru jika memiliki maksimal 2 UID belum dilaporkan (tidak lebih dari 2 UID). Harap buka menu laporan dan unggah nota pemakaian untuk UID di atas terlebih dahulu.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setUserMurniBlockedModalInfo({ isOpen: false, count: 0, uids: [] })}
+              className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
+            >
+              Saya Mengerti &amp; Tutup
+            </button>
+          </div>
+        </div>
+      )}
+
       <DevicePermissionsModal
         isOpen={isPermissionsModalOpen}
         onClose={() => {

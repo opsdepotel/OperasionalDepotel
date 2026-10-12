@@ -1467,52 +1467,39 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                       </span>
                     </div>
                   ) : isMobileUser ? (
-                    <div className="w-full p-2">
-                      <label
-                        htmlFor="activity-camera-input"
-                        className="w-full py-4 bg-gradient-to-br from-indigo-600 via-indigo-700 to-blue-700 text-white rounded-2xl flex flex-col items-center justify-center gap-1 transition-all cursor-pointer shadow-md hover:shadow-indigo-200 active:scale-[0.99]"
-                        id="activity-open-camera-btn"
-                      >
-                        <div className="flex items-center gap-2">
-                          <Camera className="w-5 h-5 text-emerald-300 animate-pulse" />
-                          <span className="text-xs font-black tracking-wide">AMBIL FOTO KAMERA HP</span>
-                        </div>
-                        <span className="text-[10px] text-indigo-100 font-bold bg-white/20 px-2.5 py-0.5 rounded-full border border-white/20">
-                          Kamera Bawaan HP • Watermark Otomatis
-                        </span>
-                        <input
-                          id="activity-camera-input"
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          onChange={handlePhotoChange}
-                          onClick={(e: any) => { e.currentTarget.value = null; }}
-                          className="hidden"
-                        />
-                      </label>
-                    </div>
+                    <label className="cursor-pointer flex flex-col items-center justify-center gap-1.5 py-3.5 px-6 my-2 bg-sky-50/50 hover:bg-sky-100/60 active:scale-[0.98] border border-sky-200/60 text-sky-700 rounded-2xl shadow-xs transition-all">
+                      <Camera className="w-6 h-6 text-sky-600" />
+                      <span className="text-xs font-bold text-sky-800 tracking-wide">Kamera HP</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={handlePhotoChange}
+                        className="hidden"
+                        id="activity-camera-input"
+                        required
+                      />
+                    </label>
                   ) : (
                     <div className="grid grid-cols-2 gap-2 p-2 w-full">
-                      <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-800 border border-indigo-200/80 rounded-xl transition-all font-bold text-xs">
-                        <Camera className="w-5 h-5 text-indigo-600 mb-1" />
-                        <span className="text-[10px] font-bold">Kamera Perangkat</span>
+                      <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-sky-50/50 hover:bg-sky-100/60 text-sky-700 border border-sky-200/60 rounded-xl transition-all">
+                        <Camera className="w-5 h-5 text-sky-600 mb-1" />
+                        <span className="text-[10px] font-bold text-sky-800">Kamera HP</span>
                         <input
                           type="file"
                           accept="image/*"
                           capture="environment"
                           onChange={handlePhotoChange}
-                          onClick={(e: any) => { e.currentTarget.value = null; }}
                           className="hidden"
                         />
                       </label>
-                      <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200 rounded-xl transition-all">
-                        <UploadCloud className="w-5 h-5 text-indigo-500 mb-1" />
+                      <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-slate-50 hover:bg-sky-50 hover:text-sky-600 border border-slate-200 rounded-xl transition-all">
+                        <UploadCloud className="w-5 h-5 text-slate-500 mb-1" />
                         <span className="text-[10px] font-bold text-slate-600">File / Galeri</span>
                         <input
                           type="file"
                           accept="image/*"
                           onChange={handlePhotoChange}
-                          onClick={(e: any) => { e.currentTarget.value = null; }}
                           className="hidden"
                         />
                       </label>

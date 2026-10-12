@@ -7,6 +7,7 @@ import React, { useState, useRef, useMemo } from 'react';
 import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus, formatTimestamp, Role } from '../types';
 import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
 import { FormProgressOverlay } from './FormProgressOverlay';
+import { checkUserMurniSubmissionStatus } from './UserUidMonitoringModal';
 import {
   Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles,
   Camera, UploadCloud, X, Image as ImageIcon, AlertTriangle, ShieldCheck, CheckCircle2, Lock,
@@ -61,35 +62,10 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 }) => {
   const todayStr = getTodayDateStr();
 
-  // Restriction check for pure USER role (Role.USER)
-  const isPureUser = (userProfile?.role === Role.USER) && !initialRequest;
-
-  const isBbmRequest = (r: BudgetRequest) =>
-    r.id.startsWith('BBMDS') ||
-    r.id.startsWith('BBM_DurenSawit') ||
-    r.id.startsWith('TFDS') ||
-    r.siteId === 'OPT-DUREN SAWIT' ||
-    r.siteId === 'BBM DUREN SAWIT' ||
-    (r.keterangan && r.keterangan.toUpperCase().includes('DUREN SAWIT'));
-
-  const unreportedUids = useMemo(() => {
-    if (!isPureUser || !userEmail) return [];
-    const emailLower = userEmail.trim().toLowerCase();
-    const userReqs = requests.filter(r =>
-      (r.userEmail || '').trim().toLowerCase() === emailLower &&
-      r.status !== RequestStatus.CANCELLED &&
-      r.siteId !== 'ADJUSTMENT' &&
-      !isBbmRequest(r)
-    );
-    return userReqs
-      .filter(r =>
-        r.status === RequestStatus.TRANSFERRED &&
-        (usageItems || []).filter(item => item.requestId === r.id).length === 0
-      )
-      .map(r => r.id);
-  }, [isPureUser, userEmail, requests, usageItems]);
-
-  const isSubmissionBlocked = isPureUser && unreportedUids.length > 2;
+  // Status pembatasan pengajuan bagi User Murni (> 2 UID belum dilaporkan)
+  const userMurniStatus = useMemo(() => {
+    return checkUserMurniSubmissionStatus(userProfile, requests, usageItems);
+  }, [userProfile, requests, usageItems]);
 
   // Resolve supervisor / reviewer display name
   const reviewerProfile = useMemo(() => {
@@ -241,11 +217,6 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
     e.preventDefault();
     setError(null);
 
-    if (isSubmissionBlocked) {
-      setError(`Pengajuan Dibatalkan: Anda saat ini memiliki ${unreportedUids.length} UID yang telah ditransfer oleh Finance tetapi belum ada laporan pemakaian sama sekali (${unreportedUids.join(', ')}). Batas maksimal UID belum dilaporkan adalah 2 UID. Silakan isi laporan pemakaian untuk UID sebelumnya terlebih dahulu.`);
-      return;
-    }
-
     // If on Step 1 of Dana Talangan, advance to Step 2 instead of submitting
     if (isTalangan && !initialRequest && talanganStep === 1) {
       handleNextToStep2();
@@ -294,6 +265,14 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       }
     } else {
       finalAmount = initialRequest ? parseNumericValue(jumlahPengajuan) : talanganAmount;
+    }
+
+    // Enforcement: User Murni Pembatasan UID Belum Dilaporkan (> 2 UID)
+    if (userMurniStatus.isBlocked && !initialRequest) {
+      setError(
+        `Pengajuan Dibatasi: Anda memiliki ${userMurniStatus.count} UID yang sudah ditransfer namun belum dilaporkan sama sekali. Sesuai aturan sistem, Anda tidak dapat membuat Pengajuan Operasional maupun Dana Talangan baru hingga laporan diselesaikan.`
+      );
+      return;
     }
 
     // Online-only enforcement for Budget Requests & Dana Talangan (Menjamin data selalu sinkron & bebas risiko multi-transfer)
@@ -388,27 +367,6 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         </button>
       </div>
 
-      {/* Warning Banner when Submission is Blocked (>2 Unreported UIDs) */}
-      {isSubmissionBlocked && (
-        <div className="bg-rose-50 border border-rose-200 text-rose-900 p-4 rounded-2xl mb-4 space-y-2 text-xs animate-fade-in shadow-xs">
-          <div className="flex items-center gap-2 font-bold text-rose-900 text-sm">
-            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
-            <span>Pengajuan Baru Dibatalkan (Batas Maksimal Terlampaui)</span>
-          </div>
-          <p className="leading-relaxed">
-            Anda saat ini memiliki <strong className="text-rose-900 font-extrabold">{unreportedUids.length} UID</strong> yang telah mendapat transfer dana dari Finance tetapi belum ada laporan pemakaian sama sekali:
-          </p>
-          <div className="font-mono text-[11px] bg-white p-2 rounded-xl border border-rose-200 text-rose-900 font-bold flex flex-wrap gap-1.5">
-            {unreportedUids.map(uid => (
-              <span key={uid} className="px-2 py-0.5 bg-rose-100 rounded-lg">{uid}</span>
-            ))}
-          </div>
-          <p className="leading-relaxed text-[11px] text-rose-800">
-            Sesuai aturan operasional, pengguna dengan lebih dari 2 UID belum dilaporkan tidak dapat membuat pengajuan baru (baik Pengajuan Operasional maupun Dana Talangan). Silakan isi laporan pemakaian untuk UID sebelumnya terlebih dahulu.
-          </p>
-        </div>
-      )}
-
       {/* Segmented Control for Request Type */}
       {!initialRequest && (
         <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl mb-4">
@@ -449,6 +407,31 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           <div className="bg-red-50 border border-red-100 text-red-600 rounded-xl p-3 text-xs flex items-start gap-2">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {/* Banner Peringatan Pembatasan UID Belum Dilaporkan (> 2 UID) */}
+        {userMurniStatus.isBlocked && !initialRequest && (
+          <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 rounded-2xl p-4 text-xs space-y-2 shadow-xs animate-slide-up">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <h4 className="font-bold text-rose-950 font-display">
+                  Pengajuan Dibatasi ({userMurniStatus.count} UID Belum Dilaporkan)
+                </h4>
+                <p className="text-[11px] text-rose-800 mt-1 leading-relaxed">
+                  Anda memiliki <strong>{userMurniStatus.count} UID</strong> yang sudah ditransfer oleh Finance namun belum dilaporkan sama sekali. Sesuai aturan sistem, User Murni tidak dapat melakukan Pengajuan Operasional maupun Dana Talangan jika memiliki lebih dari 2 UID yang belum dilaporkan.
+                </p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-rose-200 flex flex-wrap gap-1.5 items-center">
+              <span className="text-[10px] font-bold text-rose-700">UID Perlu Dilaporkan:</span>
+              {userMurniStatus.unreportedUids.map(u => (
+                <span key={u.id} className="bg-white text-rose-800 px-2 py-0.5 rounded font-mono font-bold text-[10px] border border-rose-300">
+                  {u.id}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
@@ -870,12 +853,14 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-100 disabled:bg-slate-300 transition-all cursor-pointer"
+                disabled={isSubmitting || (userMurniStatus.isBlocked && !initialRequest)}
+                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-100 disabled:bg-slate-300 disabled:cursor-not-allowed transition-all cursor-pointer"
               >
                 <Sparkles className="w-4 h-4" />
                 <span>
-                  {isSubmitting ? 'Menyimpan Laporan Dana Talangan...' : 'Simpan Laporan Dana Talangan'}
+                  {isSubmitting 
+                    ? 'Menyimpan Laporan Dana Talangan...' 
+                    : (userMurniStatus.isBlocked && !initialRequest ? 'Pengajuan Dibatasi (≥ 2 UID Belum Lapor)' : 'Simpan Laporan Dana Talangan')}
                 </span>
               </button>
             </div>
@@ -888,14 +873,16 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
         {(!isTalangan || initialRequest) && (
           <button
             type="submit"
-            disabled={isSubmitting}
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 transition-all cursor-pointer"
+            disabled={isSubmitting || (userMurniStatus.isBlocked && !initialRequest)}
+            className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-indigo-100 disabled:bg-slate-300 disabled:cursor-not-allowed transition-all cursor-pointer"
           >
             <Sparkles className="w-4 h-4" />
             <span>
               {isSubmitting 
                 ? 'Menyimpan Pengajuan...' 
-                : (initialRequest ? 'Kirim Revisi Pengajuan' : 'Kirim Pengajuan Anggaran')}
+                : (userMurniStatus.isBlocked && !initialRequest
+                    ? 'Pengajuan Dibatasi (≥ 2 UID Belum Lapor)'
+                    : (initialRequest ? 'Kirim Revisi Pengajuan' : 'Kirim Pengajuan Anggaran'))}
             </span>
           </button>
         )}
