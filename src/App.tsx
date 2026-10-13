@@ -3582,44 +3582,6 @@ export default function App() {
     return isNaN(parsed) ? null : new Date(parsed);
   };
 
-  // Auto-cancel REJECTED requests older than 2 days (48 hours)
-  const processedAutoCancelIdsRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (!token || !spreadsheetId || requests.length === 0) return;
-
-    const now = new Date().getTime();
-    const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
-
-    const expiredReqs = requests.filter(r => {
-      if (r.status !== RequestStatus.REJECTED) return false;
-      if (processedAutoCancelIdsRef.current.has(r.id)) return false;
-      const cDate = getRequestCreatedDate(r);
-      if (!cDate) return false;
-      return (now - cDate.getTime()) >= TWO_DAYS_MS;
-    });
-
-    if (expiredReqs.length > 0) {
-      expiredReqs.forEach(r => processedAutoCancelIdsRef.current.add(r.id));
-      const processAutoCancel = async () => {
-        const expiredIds = new Set(expiredReqs.map(r => r.id));
-        setRequests(prev => prev.map(r => expiredIds.has(r.id) ? { ...r, status: RequestStatus.CANCELLED } : r));
-
-        for (const req of expiredReqs) {
-          try {
-            await updateBudgetRequest(token, spreadsheetId, {
-              ...req,
-              status: RequestStatus.CANCELLED
-            });
-          } catch (err) {
-            console.error(`Auto-cancel failed for request ${req.id}:`, err);
-          }
-        }
-      };
-      processAutoCancel();
-    }
-  }, [requests, token, spreadsheetId]);
-
   const handleCancelBudgetRequest = async (req: BudgetRequest) => {
     if (!token || !spreadsheetId) return;
     setIsLoading(true);

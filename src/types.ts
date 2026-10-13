@@ -24,7 +24,7 @@ export enum RequestStatus {
   PENDING_TALANGAN_TRANSFER = 'PENDING_TALANGAN_TRANSFER', // Waiting for Admin to transfer/reimburse bailout funds
   PENDING_PENGAJUAN_TRANSFER = 'PENDING_PENGAJUAN_TRANSFER', // Waiting for Finance to transfer operational funds after Finance approval
   TRANSFER_BERTAHAP = 'TRANSFER_BERTAHAP', // Partial transfer made for operational funds, User can start reporting while waiting for next transfer
-  CANCELLED = 'CANCELLED' // Cancelled manually or auto-cancelled after 2 days
+  CANCELLED = 'CANCELLED' // Cancelled manually by applicant
 }
 
 export enum ItemStatus {
