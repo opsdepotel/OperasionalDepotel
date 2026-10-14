@@ -6,11 +6,8 @@ import {
   getServerAccessToken,
   getGoogleAuthStatus,
   getServiceAccountAuth,
-  getServiceAccountStatus,
-  invalidateServerTokens
+  getServiceAccountStatus
 } from '../lib/serverGoogleAuth.js';
-import { requireFirebaseAuth, requireRole } from './authMiddleware.js';
-import { Role } from '../types.js';
 
 export const googleAuthRouter = express.Router();
 
@@ -33,36 +30,32 @@ googleAuthRouter.get('/status', (req, res) => {
 });
 
 /**
- * Provides a short-lived Google Access Token for Google Sheets database operations.
- * Generates token from GOOGLE_SERVICE_ACCOUNT_JSON or Server OAuth.
+ * Returns a valid OAuth Access Token from Server Refresh Token or Service Account.
  */
 googleAuthRouter.get('/token', async (req, res) => {
   try {
-    const forceRefresh = req.query.force === 'true' || req.query.force === '1';
-    if (forceRefresh) {
-      invalidateServerTokens();
-    }
-
     const tokenResult = await getServerAccessToken();
     if (!tokenResult.token) {
       return res.status(503).json({
         success: false,
-        error: tokenResult.error || 'Koneksi Google Auth server belum tersedia. Pastikan GOOGLE_SERVICE_ACCOUNT_JSON telah dikonfigurasi di Vercel.'
+        isConfigured: false,
+        error: 'Google Auth (Refresh Token / Service Account) belum dikonfigurasi di server environment variables.'
       });
     }
 
-    const saStatus = getServiceAccountStatus();
-    return res.json({
+    const status = getGoogleAuthStatus();
+    res.json({
       success: true,
       token: tokenResult.token,
-      email: saStatus.serviceAccountEmail || 'service-account@google.com',
-      type: tokenResult.type
+      accessToken: tokenResult.token,
+      authMode: tokenResult.type,
+      serviceAccountEmail: status.serviceAccountEmail
     });
   } catch (error: any) {
-    console.error('Error generating token in /api/google/token:', error);
-    return res.status(500).json({
+    console.error('Error generating Google token:', error);
+    res.status(500).json({
       success: false,
-      error: error.message || 'Gagal menghasilkan access token Google dari server.'
+      error: error.message || 'Gagal menghasilkan token dari Google Auth.'
     });
   }
 });
@@ -70,7 +63,7 @@ googleAuthRouter.get('/token', async (req, res) => {
 /**
  * Streams photo file binary for cross-account browser migration fallback.
  */
-googleAuthRouter.get('/photo-file/:fileId', requireFirebaseAuth, async (req, res) => {
+googleAuthRouter.get('/photo-file/:fileId', async (req, res) => {
   try {
     const { fileId } = req.params;
     if (!fileId || fileId.includes('/') || fileId.includes('..')) {
@@ -108,7 +101,7 @@ googleAuthRouter.get('/photo-file/:fileId', requireFirebaseAuth, async (req, res
 /**
  * Generates OAuth Authorization URL for Admin to generate a GOOGLE_REFRESH_TOKEN
  */
-googleAuthRouter.get('/oauth-auth-url', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), (req, res) => {
+googleAuthRouter.get('/oauth-auth-url', (req, res) => {
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET;
@@ -210,7 +203,7 @@ googleAuthRouter.get('/oauth-callback', async (req, res) => {
 /**
  * Upload file/receipt proxy using Server OAuth (Primary) or Service Account (Secondary) directly to Google Drive.
  */
-googleAuthRouter.post('/upload-receipt', requireFirebaseAuth, async (req, res) => {
+googleAuthRouter.post('/upload-receipt', async (req, res) => {
   try {
     const authObj = await getServerGoogleAuth();
     if (!authObj) {
@@ -367,7 +360,7 @@ async function getFolderFilesCached(
  * Backup endpoint to copy Google Sheet database and Photos to Google Drive Cadangan.
  * Target Folder ID: 1_XLMT5VIqctS1EyPlhHs0JzggzT39RZ2
  */
-googleAuthRouter.post('/backup', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), async (req, res) => {
+googleAuthRouter.post('/backup', async (req, res) => {
   try {
     let authObj = await getServerGoogleAuth();
     const {
@@ -634,7 +627,7 @@ googleAuthRouter.post('/backup', requireFirebaseAuth, requireRole(Role.ADMINISTR
  * Route: /api/google/photo-migration
  * Handles scanning Google Drive photo ownership and batch migrating files to depotel@vgd4.my.id.
  */
-googleAuthRouter.post('/photo-migration', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), async (req, res) => {
+googleAuthRouter.post('/photo-migration', async (req, res) => {
   try {
     const {
       action = 'scan',

@@ -6,6 +6,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { fetchServiceAccountToken } from './serviceAccountClient';
 
 let app: any = null;
 let auth: any = null;
@@ -33,6 +34,30 @@ export const initAuth = async (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // First, check if backend has a configured Google Service Account
+  try {
+    const saData = await fetchServiceAccountToken();
+    if (saData && saData.token) {
+      cachedAccessToken = saData.token;
+      localStorage.setItem('g_access_token', saData.token);
+      localStorage.setItem('g_token_timestamp', Date.now().toString());
+      localStorage.setItem('g_is_service_account', 'true');
+      
+      const saUser = {
+        uid: 'service_account',
+        email: saData.email || 'service-account@google.iam.gserviceaccount.com',
+        displayName: 'Google Service Account (Auto)',
+        photoURL: ''
+      } as unknown as User;
+      
+      if (onAuthSuccess) {
+        onAuthSuccess(saUser, saData.token);
+        return () => {};
+      }
+    }
+  } catch (saErr) {
+    console.warn('Service account auto-auth check skipped:', saErr);
+  }
 
   // If we have a stored token, check if it's already expired
   const storedToken = localStorage.getItem('g_access_token');
@@ -208,16 +233,6 @@ export const getTokenRemainingMinutes = (): number => {
   return Math.floor(remainingMs / 60000);
 };
 
-export const getFirebaseIdToken = async (forceRefresh = false): Promise<string | null> => {
-  if (!auth?.currentUser) return null;
-  try {
-    return await auth.currentUser.getIdToken(forceRefresh);
-  } catch (err) {
-    console.warn('Failed to get Firebase ID token:', err);
-    return null;
-  }
-};
-
 export const logout = async () => {
   try {
     if (auth) {
@@ -230,7 +245,4 @@ export const logout = async () => {
   localStorage.removeItem('g_access_token');
   localStorage.removeItem('g_token_timestamp');
   localStorage.removeItem('g_google_user');
-  localStorage.removeItem('g_is_service_account');
-  localStorage.removeItem('op_service_account_email');
 };
-

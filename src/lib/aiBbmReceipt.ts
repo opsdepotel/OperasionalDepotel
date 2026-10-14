@@ -6,7 +6,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { BudgetRequest, UsageReportItem } from '../types';
 import { getAccessToken } from './firebase';
-import { apiFetch } from './apiClient';
 
 export interface AiBbmReceiptResult {
   nominalInput: number;
@@ -331,7 +330,7 @@ export async function requestAiBbmReceiptCheck(
 
   let primaryError = '';
   try {
-    const res = await apiFetch('/api/ai/check-bbm-receipt', {
+    const res = await fetch('/api/ai/check-bbm-receipt', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -10,8 +10,6 @@ import {
   sendPushNotification,
 } from '../lib/serverPush.js';
 import { syncSubscriptionToGoogleSheets } from '../lib/serverPushToSheets.js';
-import { requireFirebaseAuth, requireRole, resolveUserRole } from './authMiddleware.js';
-import { Role } from '../types.js';
 
 export const pushRouter = express.Router();
 
@@ -36,11 +34,9 @@ pushRouter.get('/vapid-public-key', (req, res) => {
 /**
  * Registers a new PushSubscription from the client PWA.
  */
-pushRouter.post('/subscribe', requireFirebaseAuth, (req, res) => {
+pushRouter.post('/subscribe', (req, res) => {
   try {
-    const { subscription, name, role } = req.body;
-    // Server-verified identity: enforce user's authenticated email
-    const email = req.user?.email || req.body.email;
+    const { subscription, email, name, role } = req.body;
 
     if (!subscription || !subscription.endpoint || !subscription.keys) {
       return res.status(400).json({
@@ -90,7 +86,7 @@ pushRouter.post('/subscribe', requireFirebaseAuth, (req, res) => {
 /**
  * Unsubscribes a device endpoint.
  */
-pushRouter.post('/unsubscribe', requireFirebaseAuth, (req, res) => {
+pushRouter.post('/unsubscribe', (req, res) => {
   try {
     const { endpoint } = req.body;
     if (!endpoint) {
@@ -116,11 +112,9 @@ pushRouter.post('/unsubscribe', requireFirebaseAuth, (req, res) => {
 /**
  * Sends a test push notification to a user's registered devices.
  */
-pushRouter.post('/test', requireFirebaseAuth, async (req, res) => {
+pushRouter.post('/test', async (req, res) => {
   try {
-    const { subscription, subscriptions, title, body } = req.body;
-    // Server-verified email
-    const email = req.user?.email || req.body.email;
+    const { email, subscription, subscriptions, title, body } = req.body;
 
     const payload = {
       title: title || '🔔 Uji Coba Push Notifikasi Berhasil!',
@@ -192,23 +186,9 @@ function isDuplicatePush(key: string, windowMs = 8000): boolean {
 /**
  * Sends push notification to a specific email, role, or broadcast.
  */
-pushRouter.post('/send', requireFirebaseAuth, async (req, res) => {
+pushRouter.post('/send', async (req, res) => {
   try {
     const { email, role, broadcast, title, body, requestId, url, extra, subscriptions, subscription } = req.body;
-
-    // Server-side authorization check for broadcasts
-    if (broadcast) {
-      if (!req.user!.role) {
-        req.user!.role = await resolveUserRole(req.user!.email);
-      }
-      const allowedRoles = [Role.ADMINISTRATOR, Role.MANAGER, Role.FINANCE, Role.DIREKTUR];
-      if (!allowedRoles.includes(req.user!.role)) {
-        return res.status(403).json({
-          success: false,
-          error: 'Anda tidak memiliki hak akses untuk mengirim notifikasi siaran (broadcast).'
-        });
-      }
-    }
 
     if (!title || !body) {
       return res.status(400).json({
@@ -290,7 +270,7 @@ pushRouter.post('/send', requireFirebaseAuth, async (req, res) => {
 /**
  * Returns summary count of registered push subscriptions.
  */
-pushRouter.get('/subscriptions', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), (req, res) => {
+pushRouter.get('/subscriptions', (req, res) => {
   try {
     const all = getAllSubscriptions();
     res.json({

@@ -23,7 +23,6 @@ import {
 } from 'lucide-react';
 import { UserProfile, Role } from '../types';
 import { useBackHandler } from '../hooks/useBackHandler';
-import { apiFetch } from '../lib/apiClient';
 
 interface AdminPushTestCardProps {
   profiles: UserProfile[];
@@ -211,10 +210,11 @@ export const AdminPushTestCard: React.FC<AdminPushTestCardProps> = ({
         };
 
         try {
-          const res = await apiFetch('/api/push/send', {
+          const res = await fetch('/api/push/send', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
+              ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
             },
             body: JSON.stringify(payload),
           });

@@ -303,13 +303,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     userProfile.email.trim().toLowerCase() === request.userEmail.trim().toLowerCase()
   );
 
-  const isTalangan = request.id.startsWith('OPT-') || request.id.startsWith('BBMDS') || request.id.startsWith('BBM_DurenSawit') || request.tipePengajuan === 'DANA_TALANGAN' || request.keterangan.startsWith('[DANA TALANGAN]');
-  const canUserAddItems = isTalangan
-    ? [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status)
-    : [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status);
-
   // Modal & Preview States
-  const [isFormOpen, setIsFormOpen] = useState(() => isSubmitter && canUserAddItems && currentItems.length === 0);
+  const [isFormOpen, setIsFormOpen] = useState(() => isSubmitter && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && currentItems.length === 0);
   const [showCameraStream, setShowCameraStream] = useState(false);
   const [previewItem, setPreviewItem] = useState<UsageReportItem | null>(null);
   const [previewRequestProof, setPreviewRequestProof] = useState(false);
@@ -576,6 +571,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const hasRejectedItems = currentItems.some(
     i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED
   );
+
+  const isTalangan = request.id.startsWith('OPT-') || request.keterangan.startsWith('[DANA TALANGAN]');
 
   return (
     <div className="space-y-4 max-w-md mx-auto animate-slide-up pb-8">
@@ -1144,47 +1141,33 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       </div>
 
       {/* Trigger Button to Open Input Form Modal (Only for Submitter of the Request) */}
-      {isSubmitter && (
-        canUserAddItems ? (
-          !hasRejectedItems ? (
-            <button
-              onClick={() => {
-                setEditingItem(null);
-                setTanggal(new Date().toISOString().split('T')[0]);
-                setNominal('');
-                setKeterangan('');
-                setSelectedFile(null);
-                setActionError(null);
-                setIsFormOpen(true);
-              }}
-              className="w-full py-3 border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/20 hover:bg-indigo-50/50 text-indigo-600 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
-            >
-              <Plus className="w-4.5 h-4.5" />
-              <span>{isTalangan ? 'Tambah Item Talangan' : 'Tambah Rincian Penggunaan'}</span>
-            </button>
-          ) : (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-800 flex items-start gap-2.5">
-              <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
-              <div className="space-y-0.5">
-                <p className="font-bold">Perbaikan Laporan Diperlukan</p>
-                <p className="text-[11px] text-amber-700 leading-relaxed">
-                  Terdapat item laporan yang ditolak / butuh revisi. Anda dapat memperbaiki atau menghapus item yang bersangkutan tanpa perlu memperbaikinya.
-                </p>
-              </div>
-            </div>
-          )
+      {isSubmitter && [RequestStatus.PENDING_APPROVAL, RequestStatus.PENDING_TALANGAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(request.status) && (
+        !hasRejectedItems ? (
+          <button
+            onClick={() => {
+              setEditingItem(null);
+              setTanggal(new Date().toISOString().split('T')[0]);
+              setNominal('');
+              setKeterangan('');
+              setSelectedFile(null);
+              setActionError(null);
+              setIsFormOpen(true);
+            }}
+            className="w-full py-3 border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/20 hover:bg-indigo-50/50 text-indigo-600 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
+          >
+            <Plus className="w-4.5 h-4.5" />
+            <span>{isTalangan ? 'Tambah Item Talangan' : 'Tambah Rincian Penggunaan'}</span>
+          </button>
         ) : (
-          !isTalangan && [RequestStatus.PENDING_APPROVAL, RequestStatus.APPROVED, RequestStatus.PARTIALLY_APPROVED, RequestStatus.PENDING_PENGAJUAN_TRANSFER].includes(request.status) && (
-            <div className="bg-amber-50/80 border border-amber-200/80 rounded-2xl p-3.5 text-xs text-amber-800 flex items-start gap-2.5">
-              <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-600" />
-              <div className="space-y-0.5">
-                <p className="font-bold">Menunggu Transfer Finance</p>
-                <p className="text-[11px] text-amber-700 leading-relaxed">
-                  Rincian penggunaan nota dapat diisi setelah anggaran disetujui dan ditransfer oleh Finance.
-                </p>
-              </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-xs text-amber-800 flex items-start gap-2.5">
+            <Info className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+            <div className="space-y-0.5">
+              <p className="font-bold">Perbaikan Laporan Diperlukan</p>
+              <p className="text-[11px] text-amber-700 leading-relaxed">
+                Terdapat item laporan yang ditolak / butuh revisi. Anda dapat memperbaiki atau menghapus item yang bersangkutan tanpa perlu memperbaikinya.
+              </p>
             </div>
-          )
+          </div>
         )
       )}
 

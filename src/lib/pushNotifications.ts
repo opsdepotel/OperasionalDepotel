@@ -6,7 +6,6 @@
 
 import { UserProfile } from '../types';
 import { saveUserPushSubscriptionToSheet, SPREADSHEET_ID, SPREADSHEET_ID_KEY } from './googleApi';
-import { apiFetch } from './apiClient';
 
 const FALLBACK_VAPID_PUBLIC_KEY =
   'BDaE9PDK_zk-N01Z9A8YQJ_CG96fqYXjNauVDSkln--2PghmKH5i8a8cMaywxemknjae9oPuqlknIt-nonGKTnk';
@@ -128,10 +127,11 @@ export async function subscribeToPushNotifications(
       clientToken: storedToken,
     };
 
-    const res = await apiFetch('/api/push/subscribe', {
+    const res = await fetch('/api/push/subscribe', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(storedToken ? { Authorization: `Bearer ${storedToken}` } : {}),
       },
       body: JSON.stringify(payload),
     });
@@ -181,7 +181,7 @@ export async function unsubscribeFromPushNotifications(): Promise<boolean> {
       await subscription.unsubscribe();
 
       // Notify backend
-      await apiFetch('/api/push/unsubscribe', {
+      await fetch('/api/push/unsubscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ endpoint }),
@@ -208,7 +208,7 @@ export async function sendTestPushNotification(
 ): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
     const subscription = await getCurrentPushSubscription();
-    const res = await apiFetch('/api/push/test', {
+    const res = await fetch('/api/push/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -291,7 +291,7 @@ export async function triggerPushNotification(params: {
   }
 
   try {
-    const res = await apiFetch('/api/push/send', {
+    const res = await fetch('/api/push/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),

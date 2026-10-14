@@ -16,7 +16,6 @@ interface AppLoginFormProps {
   isLoading: boolean;
   onResetGoogle?: () => void;
   onLoginWithCredentials?: (userId: string, password: string, onError: (msg: string) => void) => void;
-  onRefreshServerData?: () => Promise<boolean | void>;
   externalError?: string | null;
   onClearExternalError?: () => void;
   hasSharedReceipt?: boolean;
@@ -30,7 +29,6 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
   isLoading,
   onResetGoogle,
   onLoginWithCredentials,
-  onRefreshServerData,
   externalError,
   onClearExternalError,
   hasSharedReceipt,
@@ -297,22 +295,6 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
           )}
         </button>
 
-        {onRefreshServerData && (
-          <div className="text-center pt-0.5">
-            <button
-              type="button"
-              onClick={async () => {
-                await onRefreshServerData();
-              }}
-              disabled={isLoading}
-              className="text-[11px] text-slate-500 hover:text-amber-600 font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>Segarkan Data Akun dari Server</span>
-            </button>
-          </div>
-        )}
-
         {deviceId && (
           <p className="text-[10px] text-slate-400 font-mono text-center pt-1 truncate select-all">
             Device ID: {deviceId}
@@ -352,30 +334,13 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
               <p className="text-slate-700 text-xs font-medium leading-relaxed">{activeError}</p>
             </div>
 
-            <div className="space-y-2 pt-1">
-              <button
-                type="button"
-                onClick={handleCloseModal}
-                className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-200 transition-all cursor-pointer flex items-center justify-center gap-2"
-              >
-                <span>Tutup &amp; Coba Lagi</span>
-              </button>
-
-              {onRefreshServerData && (
-                <button
-                  type="button"
-                  onClick={async () => {
-                    handleCloseModal();
-                    await onRefreshServerData();
-                  }}
-                  disabled={isLoading}
-                  className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl border border-slate-300 transition-all cursor-pointer flex items-center justify-center gap-2"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-                  <span>Segarkan Akun dari Google Sheets</span>
-                </button>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={handleCloseModal}
+              className="w-full py-2.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl shadow-md shadow-red-200 transition-all cursor-pointer flex items-center justify-center gap-2"
+            >
+              <span>Tutup &amp; Coba Lagi</span>
+            </button>
           </div>
         </div>
       )}

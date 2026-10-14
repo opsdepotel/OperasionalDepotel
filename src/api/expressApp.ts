@@ -7,9 +7,7 @@ import { google } from 'googleapis';
 import { googleAuthRouter } from './googleRoutes.js';
 import { pushRouter } from './pushRoutes.js';
 import { historyRouter } from './historyRoutes.js';
-import { getServiceAccountAuth, getServerAccessToken } from '../lib/serverGoogleAuth.js';
-import { requireFirebaseAuth, requireRole } from './authMiddleware.js';
-import { Role } from '../types.js';
+import { getServiceAccountAuth } from '../lib/serverGoogleAuth.js';
 
 dotenv.config({ override: true });
 
@@ -240,7 +238,7 @@ const handleGetConfig = (req: express.Request, res: express.Response) => {
 
 const handlePostConfig = (req: express.Request, res: express.Response) => {
   try {
-    const { spreadsheetId, driveFolderId } = req.body;
+    const { spreadsheetId, driveFolderId, userEmail, actorRole } = req.body;
     if (!spreadsheetId || typeof spreadsheetId !== 'string' || !spreadsheetId.trim()) {
       return res.status(400).json({
         success: false,
@@ -248,13 +246,10 @@ const handlePostConfig = (req: express.Request, res: express.Response) => {
       });
     }
 
-    // Server-verified identity: Do not trust client-supplied userEmail or actorRole
-    const adminEmail = req.user?.email || 'ADMINISTRATOR';
-
     const updated = writeServerConfig({
       spreadsheetId: spreadsheetId.trim(),
       driveFolderId: driveFolderId ? driveFolderId.trim() : undefined,
-      updatedBy: adminEmail
+      updatedBy: userEmail || actorRole || 'ADMINISTRATOR'
     });
 
     res.json({
@@ -266,15 +261,15 @@ const handlePostConfig = (req: express.Request, res: express.Response) => {
     console.error('Error updating server config:', error);
     res.status(500).json({
       success: false,
-      error: 'Gagal memperbarui konfigurasi terpusat server.'
+      error: error.message || 'Gagal memperbarui konfigurasi terpusat server.'
     });
   }
 };
 
-expressApp.get('/api/config', requireFirebaseAuth, handleGetConfig);
-expressApp.post('/api/config', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), handlePostConfig);
-expressApp.get('/api/google/config', requireFirebaseAuth, handleGetConfig);
-expressApp.post('/api/google/config', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), handlePostConfig);
+expressApp.get('/api/config', handleGetConfig);
+expressApp.post('/api/config', handlePostConfig);
+expressApp.get('/api/google/config', handleGetConfig);
+expressApp.post('/api/google/config', handlePostConfig);
 
 // Google Service Account & Drive Proxy Endpoints
 expressApp.use('/api/google', googleAuthRouter);
@@ -287,7 +282,7 @@ expressApp.use('/api/google/history', historyRouter);
 expressApp.use('/api/push', pushRouter);
 
 // AI Screen Recapture & Spoofing Detection Endpoint
-expressApp.post('/api/ai/check-screen-recapture', requireFirebaseAuth, async (req, res) => {
+expressApp.post('/api/ai/check-screen-recapture', async (req, res) => {
   try {
     const { imageBase64, imageUrl, fileId, googleAccessToken, activityInfo } = req.body;
 
@@ -519,7 +514,7 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
 });
 
 // AI BBM Duren Sawit Receipt OCR Check Endpoint
-expressApp.post('/api/ai/check-bbm-receipt', requireFirebaseAuth, async (req, res) => {
+expressApp.post('/api/ai/check-bbm-receipt', async (req, res) => {
   try {
     const {
       imageBase64,
