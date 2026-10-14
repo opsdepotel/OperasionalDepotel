@@ -298,7 +298,7 @@ export const canUserCancelRequest = (
   const isTalangan = req.id.startsWith('OPT-') ||
                      req.tipePengajuan === 'DANA_TALANGAN' ||
                      (req.keterangan || '').startsWith('[DANA TALANGAN]') ||
-                     req.category === 'TALANGAN';
+                     (req as any).category === 'TALANGAN';
 
   if (isTalangan) {
     // KONDISI 2: Dana Talangan yang tidak ada satu item Talangan yang sudah mendapatkan Review (Approval atau Rejection) Manager
@@ -2471,6 +2471,25 @@ export default function App() {
     if (!token || !spreadsheetId || !reviewBudgetReq) return;
     const isApprovedFull = approvedAmount === reviewBudgetReq.jumlahPengajuan;
     const isFinance = activeRole === Role.FINANCE || userProfile?.role === Role.FINANCE;
+
+    // STATE GUARD: Prevent overwriting status if request has already advanced or has usage items
+    const isAdvancedState = [
+      RequestStatus.TRANSFERRED,
+      RequestStatus.TRANSFER_BERTAHAP,
+      RequestStatus.REPORTING,
+      RequestStatus.REVIEW_MANAGER,
+      RequestStatus.REVIEW_ADMIN,
+      RequestStatus.PENDING_TALANGAN_TRANSFER,
+      RequestStatus.CLOSED
+    ].includes(reviewBudgetReq.status);
+
+    const hasUsageItems = usageItems.some(i => i.requestId === reviewBudgetReq.id);
+
+    if (isFinance && (isAdvancedState || hasUsageItems)) {
+      alert(`Pengajuan UID ${reviewBudgetReq.id} sudah masuk dalam tahap pelaporan/transfer. Tinjauan anggaran awal tidak dapat menimpa status yang sedang berjalan.`);
+      setReviewBudgetReq(null);
+      return;
+    }
 
     const updated: BudgetRequest = isFinance ? {
       ...reviewBudgetReq,
@@ -5540,7 +5559,7 @@ export default function App() {
                                         <>
                                           {(req.status === RequestStatus.APPROVED || 
                                              req.status === RequestStatus.PARTIALLY_APPROVED) && (
-                                            isOpBiasaRequest(req) && !isFinanceApprovedOpRequest(req, itemReviewHistories) ? (
+                                            isOpBiasaRequest(req) && !isFinanceApprovedOpRequest(req, itemReviewHistories) && !usageItems.some(i => i.requestId === req.id) ? (
                                               <button
                                                 type="button"
                                                 onClick={() => setReviewBudgetReq(req)}

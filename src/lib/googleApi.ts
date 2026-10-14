@@ -5,6 +5,7 @@
 
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from '../types';
 import { uploadReceiptViaServiceAccount, fetchServiceAccountToken, invalidateServiceAccountToken } from './serviceAccountClient';
+import { apiFetch } from './apiClient';
 
 const originalFetch = window.fetch;
 
@@ -315,11 +316,29 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
     'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
   ].includes(bbmStr);
 
-  const rawMobile = row.Mobile ?? row['Mobile(Boolean)'] ?? row['Mobile'] ?? row['Mobile Device'] ?? row.mobile ?? '';
+  let rawMobile = row.Mobile ?? row['Mobile (Boolean)'] ?? row['Mobile(Boolean)'] ?? row['Mobile'] ?? row['Mobile Device'] ?? row.mobile ?? '';
+  if ((rawMobile === undefined || rawMobile === '') && row._sheetHeaders && row._rawRow) {
+    const mobileColIdx = (row._sheetHeaders as string[]).findIndex(sh => {
+      const norm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return norm === 'mobile' || norm.startsWith('mobile');
+    });
+    if (mobileColIdx !== -1 && mobileColIdx < row._rawRow.length) {
+      rawMobile = row._rawRow[mobileColIdx];
+    }
+  }
   const mobileStr = String(rawMobile).trim().toUpperCase();
   const isMobile = mobileStr === 'TRUE' || mobileStr === 'YA' || mobileStr === '1' || rawMobile === true;
 
-  const rawDeviceId = row.DeviceID ?? row['Device ID'] ?? row['DeviceId'] ?? row.deviceId ?? row.Deviceid ?? '';
+  let rawDeviceId = row.DeviceID ?? row['Device ID'] ?? row['DeviceId'] ?? row.deviceId ?? row.Deviceid ?? '';
+  if ((rawDeviceId === undefined || rawDeviceId === '') && row._sheetHeaders && row._rawRow) {
+    const devIdColIdx = (row._sheetHeaders as string[]).findIndex(sh => {
+      const norm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return norm === 'deviceid' || norm.startsWith('deviceid');
+    });
+    if (devIdColIdx !== -1 && devIdColIdx < row._rawRow.length) {
+      rawDeviceId = row._rawRow[devIdColIdx];
+    }
+  }
   const deviceIdVal = String(rawDeviceId).trim();
 
   const rawRole = String(row.Role || row.role || '').trim().toUpperCase();
@@ -533,7 +552,7 @@ export interface GlobalAppConfigResponse {
 
 export async function fetchGlobalConfig(): Promise<GlobalAppConfigResponse> {
   try {
-    const res = await fetch('/api/config');
+    const res = await apiFetch('/api/config');
     if (res.ok) {
       const data = await res.json();
       if (data && data.success && data.spreadsheetId) {
@@ -577,7 +596,7 @@ export async function updateGlobalConfig(
 
   // 2. Persist to server config endpoint
   try {
-    const res = await fetch('/api/config', {
+    const res = await apiFetch('/api/config', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -1332,9 +1351,7 @@ export async function fetchActiveItemReviewHistories(token: string, spreadsheetI
   }
 
   try {
-    const res = await fetch(`/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    const res = await apiFetch(`/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}`);
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
@@ -1360,9 +1377,7 @@ export async function fetchHistoryForUid(token: string, spreadsheetId: string, u
   }
 
   try {
-    const res = await fetch(`/api/history?uid=${encodeURIComponent(uid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
+    const res = await apiFetch(`/api/history?uid=${encodeURIComponent(uid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`);
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
@@ -2329,7 +2344,7 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
 
   // Invalidate server on-demand history cache
   try {
-    fetch('/api/history/invalidate', { method: 'POST' }).catch(() => {});
+    apiFetch('/api/history/invalidate', { method: 'POST' }).catch(() => {});
   } catch {}
 }
 

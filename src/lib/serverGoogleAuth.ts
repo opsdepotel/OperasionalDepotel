@@ -52,7 +52,7 @@ export function getServerOAuthClient() {
  * or Option 2 (GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY).
  * Handles raw JSON, escaped quotes, Base64 strings, and literal '\n' characters from Vercel env.
  */
-export function parseServiceAccountCredentials(): { client_email?: string; private_key?: string } | null {
+export function parseServiceAccountCredentials(): { client_email?: string; private_key?: string; project_id?: string } | null {
   const serviceAccountJson = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   if (serviceAccountJson) {
     try {
@@ -80,7 +80,8 @@ export function parseServiceAccountCredentials(): { client_email?: string; priva
       if (credentials.client_email && pKey) {
         return {
           client_email: credentials.client_email,
-          private_key: pKey
+          private_key: pKey,
+          project_id: credentials.project_id
         };
       }
     } catch (err) {
@@ -202,8 +203,18 @@ export async function getServerAccessToken(): Promise<{
   return {
     token: null,
     type: 'none',
-    error: 'GOOGLE_REFRESH_TOKEN tidak valid atau telah kedaluwarsa (invalid_grant). Pastikan OAuth Client ID, Client Secret, dan Refresh Token yang dimasukkan dari Google OAuth Playground sudah cocok.'
+    error: 'Koneksi server Google Auth tidak tersedia. Pastikan variabel GOOGLE_SERVICE_ACCOUNT_JSON atau GOOGLE_REFRESH_TOKEN telah dikonfigurasi di server/Vercel.'
   };
+}
+
+/**
+ * Invalidates cached server tokens to force a fresh access token from Google.
+ */
+export function invalidateServerTokens(): void {
+  cachedAuthClient = null;
+  cachedTokenInfo = null;
+  cachedOAuthClient = null;
+  cachedOAuthTokenInfo = null;
 }
 
 /**

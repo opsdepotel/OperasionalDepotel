@@ -5,6 +5,7 @@
  */
 
 import { fetchServiceAccountToken } from './serviceAccountClient';
+import { apiFetch } from './apiClient';
 
 export const MASTER_DRIVE_FOLDER_ID = '1RZHDhcGEdrEu1S1OJh24Za1qkxfU-1kE';
 export const MASTER_ARCHIVE_FOLDER_NAME = '[ARCHIVE BACKUP] Foto Lama ops.depotel@gmail.com';
@@ -190,7 +191,7 @@ export async function ensureDepotelArchiveFolder(token: string): Promise<{ id: s
  * - Orphaned files in Drive not in database (~835)
  */
 export async function scanPhotoMigration(userToken?: string | null): Promise<MigrationScanResult> {
-  const res = await fetch('/api/google/photo-migration', {
+  const res = await apiFetch('/api/google/photo-migration', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -220,7 +221,7 @@ async function uploadFileBinaryDirectly(
   fileName: string,
   targetFolderId: string
 ): Promise<DirectCopyResult> {
-  const fileRes = await fetch(`/api/google/photo-file/${encodeURIComponent(fileId)}`);
+  const fileRes = await apiFetch(`/api/google/photo-file/${encodeURIComponent(fileId)}`);
   if (!fileRes.ok) {
     throw new Error(`Tidak dapat mengunduh foto sumber dari server (HTTP ${fileRes.status})`);
   }
@@ -396,7 +397,7 @@ export async function commitMigratedBatchToDatabase({
   batchMappings: Array<{ oldFileId: string; newFileId: string; newWebViewLink: string; fileName?: string }>;
   archiveFolderId: string;
 }): Promise<CommitBatchResult> {
-  const res = await fetch('/api/google/photo-migration', {
+  const res = await apiFetch('/api/google/photo-migration', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -426,7 +427,7 @@ export async function archiveOrphanedPhotos({
   archiveFolderId: string;
   userToken?: string;
 }): Promise<ArchiveOrphanedResult> {
-  const res = await fetch('/api/google/photo-migration', {
+  const res = await apiFetch('/api/google/photo-migration', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -486,7 +487,7 @@ export interface OwnershipAuditResult {
 }
 
 export async function verifyOwnershipAudit(): Promise<OwnershipAuditResult> {
-  const res = await fetch('/api/google/photo-migration', {
+  const res = await apiFetch('/api/google/photo-migration', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'verify-ownership' })
