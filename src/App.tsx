@@ -239,6 +239,122 @@ export const isPendingTransferRequest = (
   return false;
 };
 
+export const isRequestTransferred = (
+  req: BudgetRequest | null,
+  histories: ItemReviewHistory[] = []
+): boolean => {
+  if (!req) return false;
+
+  // 1. Cek atribut nominal transfer Finance pada objek pengajuan
+  if ((req.adminActionAmount || 0) > 0) return true;
+
+  // 2. Cek status utama pengajuan
+  if ([RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.CLOSED].includes(req.status)) {
+    return true;
+  }
+
+  // 3. Cek riwayat persetujuan/transfer dari ItemReviewHistory (Status = TRANSFERRED atau ActionType = APPROVAL_FINANCE)
+  return histories.some(h => {
+    const isMatchingUid = h.requestUid === req.id || h.itemUid === req.id;
+    if (!isMatchingUid) return false;
+
+    const actionTypeUpper = (h.actionType || '').toString().toUpperCase();
+    const statusUpper = (h.status || '').toString().toUpperCase();
+
+    // Abort jika log ini adalah aksi REVISI atau status REJECTED/DITOLAK
+    if (actionTypeUpper.includes('REVISI') || statusUpper === 'REJECTED' || statusUpper === 'REVISI' || statusUpper === 'DITOLAK') {
+      return false;
+    }
+
+    const isApprovalFinanceAction = actionTypeUpper === 'APPROVAL_FINANCE';
+    const isTransferredStatus = statusUpper === 'TRANSFERRED';
+
+    return isApprovalFinanceAction || isTransferredStatus;
+  });
+};
+
+export const canUserCancelRequest = (
+  req: BudgetRequest | null,
+  histories: ItemReviewHistory[] = [],
+  usageItems: UsageReportItem[] = []
+): boolean => {
+  if (!req) return false;
+
+  // Jika sudah CANCELLED atau CLOSED, tidak bisa dibatalkan
+  if (req.status === RequestStatus.CANCELLED || req.status === RequestStatus.CLOSED) {
+    return false;
+  }
+
+  // Jika dana sudah di-transfer oleh Finance, TIDAK BISA dibatalkan
+  if (isRequestTransferred(req, histories)) {
+    return false;
+  }
+
+  // KONDISI 3: Pengajuan berstatus REJECTED (baik oleh MANAGER maupun FINANCE) dan dalam kondisi belum di-Transfer FINANCE
+  if (req.status === RequestStatus.REJECTED) {
+    return true;
+  }
+
+  const isTalangan = req.id.startsWith('OPT-') ||
+                     req.tipePengajuan === 'DANA_TALANGAN' ||
+                     (req.keterangan || '').startsWith('[DANA TALANGAN]') ||
+                     req.category === 'TALANGAN';
+
+  if (isTalangan) {
+    // KONDISI 2: Dana Talangan yang tidak ada satu item Talangan yang sudah mendapatkan Review (Approval atau Rejection) Manager
+    const reqUsageItems = usageItems.filter(item => item.requestId === req.id);
+    const hasManagerItemReview = reqUsageItems.some(item => {
+      const statusMgr = (item.statusManager || '').toString().toUpperCase();
+      return statusMgr === 'APPROVED' || statusMgr === 'REJECTED' || statusMgr === 'DISETUJUI' || statusMgr === 'DITOLAK';
+    });
+
+    if (hasManagerItemReview) {
+      return false;
+    }
+
+    // Cek juga riwayat persetujuan di ItemReviewHistory untuk Talangan
+    const hasApprovalHistory = histories.some(h => {
+      if (h.requestUid !== req.id && h.itemUid !== req.id) return false;
+      const actionUpper = (h.actionType || '').toString().toUpperCase();
+      const roleUpper = (h.actorRole || '').toString().toUpperCase();
+      const statusUpper = (h.status || '').toString().toUpperCase();
+
+      return actionUpper === 'APPROVAL_MANAGER' ||
+             actionUpper === 'APPROVAL_FINANCE' ||
+             actionUpper === 'APPROVAL_DIREKTUR' ||
+             (roleUpper === 'MANAGER' && (statusUpper === 'APPROVED' || statusUpper === 'DISETUJUI')) ||
+             (roleUpper === 'FINANCE' && (statusUpper === 'APPROVED' || statusUpper === 'DISETUJUI'));
+    });
+
+    return !hasApprovalHistory;
+  }
+
+  // KONDISI 1: Pengajuan Biasa (OP-) - Boleh dibatalkan JIKA belum pernah ada Approval Manager/Finance
+  const hasApprovalHistory = histories.some(h => {
+    if (h.requestUid !== req.id && h.itemUid !== req.id) return false;
+    const actionUpper = (h.actionType || '').toString().toUpperCase();
+    const roleUpper = (h.actorRole || '').toString().toUpperCase();
+    const statusUpper = (h.status || '').toString().toUpperCase();
+
+    return actionUpper === 'APPROVAL_MANAGER' ||
+           actionUpper === 'APPROVAL_FINANCE' ||
+           actionUpper === 'APPROVAL_DIREKTUR' ||
+           (roleUpper === 'MANAGER' && (statusUpper === 'APPROVED' || statusUpper === 'DISETUJUI')) ||
+           (roleUpper === 'FINANCE' && (statusUpper === 'APPROVED' || statusUpper === 'DISETUJUI'));
+  });
+
+  if (hasApprovalHistory) {
+    return false;
+  }
+
+  // Jika statusnya telah disetujui (APPROVED, PARTIALLY_APPROVED, PENDING_PENGAJUAN_TRANSFER, etc.), tidak bisa dibatalkan
+  if ([RequestStatus.APPROVED, RequestStatus.PARTIALLY_APPROVED, RequestStatus.PENDING_PENGAJUAN_TRANSFER, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(req.status)) {
+    return false;
+  }
+
+  return true;
+};
+
 export default function App() {
   // Auth state
   const [isAuthChecking, setIsAuthChecking] = useState(true);
@@ -3584,6 +3700,17 @@ export default function App() {
 
   const handleCancelBudgetRequest = async (req: BudgetRequest) => {
     if (!token || !spreadsheetId) return;
+
+    if (!canUserCancelRequest(req, itemReviewHistories, usageItems)) {
+      if (isRequestTransferred(req, itemReviewHistories)) {
+        alert(`Pengajuan UID ${req.id} tidak dapat dibatalkan karena dana telah ditransfer oleh Finance.`);
+      } else {
+        alert(`Pengajuan UID ${req.id} tidak dapat dibatalkan sesuai dengan aturan pembatalan pengajuan.`);
+      }
+      setCancelConfirmReq(null);
+      return;
+    }
+
     setIsLoading(true);
     setLoadingStep('Membatalkan pengajuan dana...');
     try {
@@ -5150,27 +5277,28 @@ export default function App() {
                                       )}
 
                                       {req.status === RequestStatus.REJECTED && (
-                                        <div className="flex items-center gap-1.5">
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setEditingRequest(req);
-                                              setActiveView('new-request');
-                                            }}
-                                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
-                                          >
-                                            <Edit2 className="w-3.5 h-3.5" />
-                                            <span>Revisi</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => setCancelConfirmReq(req)}
-                                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
-                                          >
-                                            <XCircle className="w-3.5 h-3.5" />
-                                            <span>Batalkan</span>
-                                          </button>
-                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingRequest(req);
+                                            setActiveView('new-request');
+                                          }}
+                                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                          <span>Revisi</span>
+                                        </button>
+                                      )}
+
+                                      {canUserCancelRequest(req, itemReviewHistories, usageItems) && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setCancelConfirmReq(req)}
+                                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                        >
+                                          <XCircle className="w-3.5 h-3.5" />
+                                          <span>Batalkan</span>
+                                        </button>
                                       )}
                                     </>
                                   )}
@@ -5247,27 +5375,28 @@ export default function App() {
                                       )}
 
                                       {req.status === RequestStatus.REJECTED && (dashboardTab === 'SUBMISSION' || req.userEmail.toLowerCase() === (userProfile?.email || '').toLowerCase()) && (
-                                        <div className="flex items-center gap-1.5">
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              setEditingRequest(req);
-                                              setActiveView('new-request');
-                                            }}
-                                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
-                                          >
-                                            <Edit2 className="w-3.5 h-3.5" />
-                                            <span>Revisi</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => setCancelConfirmReq(req)}
-                                            className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
-                                          >
-                                            <XCircle className="w-3.5 h-3.5" />
-                                            <span>Batalkan</span>
-                                          </button>
-                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingRequest(req);
+                                            setActiveView('new-request');
+                                          }}
+                                          className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                          <span>Revisi</span>
+                                        </button>
+                                      )}
+
+                                      {(dashboardTab === 'SUBMISSION' || req.userEmail.toLowerCase() === (userProfile?.email || '').toLowerCase()) && canUserCancelRequest(req, itemReviewHistories, usageItems) && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setCancelConfirmReq(req)}
+                                          className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                        >
+                                          <XCircle className="w-3.5 h-3.5" />
+                                          <span>Batalkan</span>
+                                        </button>
                                       )}
                                     </>
                                   )}
@@ -5383,27 +5512,28 @@ export default function App() {
                                           )}
 
                                           {req.status === RequestStatus.REJECTED && (
-                                            <div className="flex items-center gap-1.5">
-                                              <button
-                                                type="button"
-                                                onClick={() => {
-                                                  setEditingRequest(req);
-                                                  setActiveView('new-request');
-                                                }}
-                                                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
-                                              >
-                                                <Edit2 className="w-3.5 h-3.5" />
-                                                <span>Revisi</span>
-                                              </button>
-                                              <button
-                                                type="button"
-                                                onClick={() => setCancelConfirmReq(req)}
-                                                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
-                                              >
-                                                <XCircle className="w-3.5 h-3.5" />
-                                                <span>Batalkan</span>
-                                              </button>
-                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setEditingRequest(req);
+                                                setActiveView('new-request');
+                                              }}
+                                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
+                                            >
+                                              <Edit2 className="w-3.5 h-3.5" />
+                                              <span>Revisi</span>
+                                            </button>
+                                          )}
+
+                                          {canUserCancelRequest(req, itemReviewHistories, usageItems) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setCancelConfirmReq(req)}
+                                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                            >
+                                              <XCircle className="w-3.5 h-3.5" />
+                                              <span>Batalkan</span>
+                                            </button>
                                           )}
                                         </>
                                       ) : (
@@ -5491,27 +5621,28 @@ export default function App() {
                                           )}
 
                                           {req.status === RequestStatus.REJECTED && (dashboardTab === 'SUBMISSION' || req.userEmail.toLowerCase() === (userProfile?.email || '').toLowerCase()) && (
-                                            <div className="flex items-center gap-1.5">
-                                              <button
-                                                type="button"
-                                                onClick={() => {
-                                                  setEditingRequest(req);
-                                                  setActiveView('new-request');
-                                                }}
-                                                className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
-                                              >
-                                                <Edit2 className="w-3.5 h-3.5" />
-                                                <span>Revisi</span>
-                                              </button>
-                                              <button
-                                                type="button"
-                                                onClick={() => setCancelConfirmReq(req)}
-                                                className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
-                                              >
-                                                <XCircle className="w-3.5 h-3.5" />
-                                                <span>Batalkan</span>
-                                              </button>
-                                            </div>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setEditingRequest(req);
+                                                setActiveView('new-request');
+                                              }}
+                                              className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shadow-amber-100"
+                                            >
+                                              <Edit2 className="w-3.5 h-3.5" />
+                                              <span>Revisi</span>
+                                            </button>
+                                          )}
+
+                                          {(dashboardTab === 'SUBMISSION' || req.userEmail.toLowerCase() === (userProfile?.email || '').toLowerCase()) && canUserCancelRequest(req, itemReviewHistories, usageItems) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setCancelConfirmReq(req)}
+                                              className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer border border-rose-200/60"
+                                            >
+                                              <XCircle className="w-3.5 h-3.5" />
+                                              <span>Batalkan</span>
+                                            </button>
                                           )}
                                         </>
                                       )}
@@ -5970,10 +6101,33 @@ export default function App() {
       {cancelConfirmReq && (
         <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-[2px] flex items-center justify-center p-4 z-[100] animate-fade-in overflow-y-auto">
           <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-100 space-y-4 animate-scale-up my-auto">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600">
-              <XCircle className="w-6 h-6" />
-            </div>
-            <div className="space-y-1.5">
+            {!canUserCancelRequest(cancelConfirmReq, itemReviewHistories, usageItems) ? (
+              <>
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-100 flex items-center justify-center text-amber-600">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div className="space-y-1.5">
+                  <h3 className="text-sm font-bold text-slate-800">Pengajuan Tidak Dapat Dibatalkan</h3>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Pengajuan anggaran <strong>UID {cancelConfirmReq.id}</strong> tidak dapat dibatalkan karena {isRequestTransferred(cancelConfirmReq, itemReviewHistories) ? `dana telah ditransfer oleh Finance (${formatIDR(cancelConfirmReq.adminActionAmount || cancelConfirmReq.jumlahPengajuan)})` : 'telah mendapatkan Review / Approval dari Manager / Finance'}.
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCancelConfirmReq(null)}
+                    className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition-all cursor-pointer shadow-sm"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-600">
+                  <XCircle className="w-6 h-6" />
+                </div>
+                <div className="space-y-1.5">
               <h3 className="text-sm font-bold text-slate-800">Batalkan Pengajuan UID {cancelConfirmReq.id}?</h3>
               <p className="text-xs text-slate-500 leading-relaxed">
                 Apakah Anda yakin ingin membatalkan pengajuan dana ini? Status pengajuan akan diubah secara permanen menjadi <strong>CANCELLED</strong> dan dikecualikan dari seluruh proses operasional aplikasi.
@@ -6007,6 +6161,8 @@ export default function App() {
                 Ya, Batalkan
               </button>
             </div>
+              </>
+            )}
           </div>
         </div>
       )}
