@@ -64,8 +64,8 @@ export function getFirebaseAuth(): Auth {
 
   // 2. Check for Service Account Credentials
   let credentials = parseServiceAccountCredentials();
-  if (credentials?.project_id) {
-    projectId = credentials.project_id;
+  if ((credentials as any)?.project_id) {
+    projectId = (credentials as any).project_id;
   }
 
   // Also check specific FIREBASE_SERVICE_ACCOUNT or FIREBASE_SERVICE_ACCOUNT_JSON env var if available
@@ -235,37 +235,78 @@ export async function requireFirebaseAuth(req: Request, res: Response, next: Nex
     });
   }
 
-  try {
-    const auth = getFirebaseAuth();
-    const decodedToken = await auth.verifyIdToken(idToken);
+  // 1. If token is a 3-part JWT, verify with Firebase Admin SDK
+  const isJwt = typeof idToken === 'string' && idToken.split('.').length === 3;
+  if (isJwt) {
+    try {
+      const auth = getFirebaseAuth();
+      const decodedToken = await auth.verifyIdToken(idToken);
 
-    const email = (decodedToken.email || '').toLowerCase().trim();
-    let role: Role | undefined = undefined;
+      const email = (decodedToken.email || '').toLowerCase().trim();
+      let role: Role | undefined = undefined;
 
-    // Check custom claims if already set on token
-    if (decodedToken.role && Object.values(Role).includes(decodedToken.role as Role)) {
-      role = decodedToken.role as Role;
-    } else if (decodedToken.admin === true) {
-      role = Role.ADMINISTRATOR;
+      // Check custom claims if already set on token
+      if (decodedToken.role && Object.values(Role).includes(decodedToken.role as Role)) {
+        role = decodedToken.role as Role;
+      } else if (decodedToken.admin === true) {
+        role = Role.ADMINISTRATOR;
+      }
+
+      req.user = {
+        uid: decodedToken.uid,
+        email,
+        role,
+        name: decodedToken.name || '',
+        picture: decodedToken.picture || '',
+        decodedToken
+      };
+
+      return next();
+    } catch (error: any) {
+      console.warn('[AuthMiddleware] Firebase verifyIdToken failed, trying Google OAuth token fallback:', error?.code || error?.message);
     }
-
-    req.user = {
-      uid: decodedToken.uid,
-      email,
-      role,
-      name: decodedToken.name || '',
-      picture: decodedToken.picture || '',
-      decodedToken
-    };
-
-    next();
-  } catch (error: any) {
-    console.warn('[AuthMiddleware] verifyIdToken failed:', error?.code || error?.message);
-    return res.status(401).json({
-      success: false,
-      error: 'Sesi autentikasi Firebase tidak valid atau telah kedaluwarsa. Silakan login kembali.'
-    });
   }
+
+  // 2. Fallback: Validate as Google OAuth Access Token via Google OAuth userinfo API
+  try {
+    const googleRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${idToken}` }
+    });
+
+    if (googleRes.ok) {
+      const userInfo: any = await googleRes.json();
+      const email = (userInfo.email || '').toLowerCase().trim();
+      if (email) {
+        const role = await resolveUserRole(email);
+        req.user = {
+          uid: userInfo.sub || userInfo.id || email,
+          email,
+          role,
+          name: userInfo.name || '',
+          picture: userInfo.picture || '',
+          decodedToken: {
+            uid: userInfo.sub || userInfo.id || email,
+            email,
+            auth_time: Math.floor(Date.now() / 1000),
+            iat: Math.floor(Date.now() / 1000),
+            exp: Math.floor(Date.now() / 1000) + 3600,
+            firebase: { identities: {}, sign_in_provider: 'google.com' },
+            iss: 'https://accounts.google.com',
+            sub: userInfo.sub || userInfo.id || email
+          } as DecodedIdToken
+        };
+
+        return next();
+      }
+    }
+  } catch (gErr: any) {
+    console.warn('[AuthMiddleware] Google OAuth token validation failed:', gErr?.message || gErr);
+  }
+
+  return res.status(401).json({
+    success: false,
+    error: 'Sesi autentikasi tidak valid atau telah kedaluwarsa. Silakan login kembali.'
+  });
 }
 
 /**

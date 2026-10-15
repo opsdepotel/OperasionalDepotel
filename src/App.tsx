@@ -862,7 +862,7 @@ export default function App() {
         const expired = isGoogleTokenExpired();
         if (expired) {
           try {
-            const saData = await fetchServiceAccountToken();
+            const saData = await fetchServiceAccountToken(true);
             if (saData && saData.token) {
               setToken(saData.token);
               return;
@@ -1846,6 +1846,8 @@ export default function App() {
     // 2. Validate credentials directly against live Google Sheets database
     setLoadingStep('Memverifikasi kredensial ke database Google Sheets...');
     let fetchedProfs: UserProfile[] | null = null;
+    let googleFetchFailed = false;
+    let serverDiagnosticError = '';
 
     if (currentToken) {
       try {
@@ -1856,7 +1858,40 @@ export default function App() {
 
         fetchedProfs = await fetchProfiles(currentToken, sheetId);
       } catch (err: any) {
-        console.warn('Google API validation attempt error:', err);
+        console.warn('Google API validation attempt initial error:', err);
+        googleFetchFailed = true;
+        serverDiagnosticError = err.message || '';
+      }
+    } else {
+      googleFetchFailed = true;
+    }
+
+    // Auto-recovery retry: If initial live fetch failed or returned empty profiles, force-refresh Service Account token
+    if (!fetchedProfs || fetchedProfs.length === 0 || googleFetchFailed) {
+      try {
+        console.log('[Login] Force-refreshing Service Account token from server for direct Google Sheets validation...');
+        const freshSa = await fetchServiceAccountToken(true);
+        if (freshSa && freshSa.token) {
+          currentToken = freshSa.token;
+          setToken(freshSa.token);
+          setNeedsAuth(false);
+          sheetId = spreadsheetId || SPREADSHEET_ID;
+          fetchedProfs = await fetchProfiles(freshSa.token, sheetId);
+          if (fetchedProfs && fetchedProfs.length > 0) {
+            googleFetchFailed = false;
+            serverDiagnosticError = '';
+          }
+        } else {
+          const saErr = localStorage.getItem('op_service_account_error');
+          if (saErr) {
+            serverDiagnosticError = saErr;
+          }
+        }
+      } catch (retryErr: any) {
+        console.warn('[Login] Service Account token force-refresh retry failed:', retryErr);
+        if (!serverDiagnosticError) {
+          serverDiagnosticError = retryErr.message || String(retryErr);
+        }
       }
     }
 
@@ -1869,7 +1904,7 @@ export default function App() {
 
     let candidateProfiles: UserProfile[];
     if (fetchedProfs && fetchedProfs.length > 0) {
-      // Live database data from Google Sheets is authoritative
+      // Live database data from Google Sheets is authoritative and contains live passwords
       candidateProfiles = fetchedProfs;
     } else {
       // Offline / fallback cache
@@ -1923,7 +1958,11 @@ export default function App() {
 
       handleAppLoginSuccess(finalUser);
     } else {
-      const errMsg = 'User ID atau Password salah. Silakan periksa kembali.';
+      let errMsg = 'User ID atau Password salah. Silakan periksa kembali.';
+      if (googleFetchFailed) {
+        const detail = serverDiagnosticError || localStorage.getItem('op_service_account_error') || '';
+        errMsg = `Gagal terhubung ke database Google Sheets${detail ? `: ${detail}` : ''}. Silakan periksa koneksi internet Anda, Environment Variables Vercel, atau hak akses (Share Editor) Service Account ke Google Sheets.`;
+      }
       setLoginRejectError(errMsg);
       onFormError(errMsg);
     }
@@ -2471,12 +2510,6 @@ export default function App() {
     if (!token || !spreadsheetId || !reviewBudgetReq) return;
     const isApprovedFull = approvedAmount === reviewBudgetReq.jumlahPengajuan;
     const isFinance = activeRole === Role.FINANCE || userProfile?.role === Role.FINANCE;
-
-    if (isFinance && (isRequestTransferred(reviewBudgetReq, itemReviewHistories) || (reviewBudgetReq.adminActionAmount || 0) > 0)) {
-      alert('Pengajuan ini telah memiliki riwayat transfer dari Finance dan tidak dapat ditinjau ulang anggarannya.');
-      setReviewBudgetReq(null);
-      return;
-    }
 
     const updated: BudgetRequest = isFinance ? {
       ...reviewBudgetReq,
@@ -5546,7 +5579,7 @@ export default function App() {
                                         <>
                                           {(req.status === RequestStatus.APPROVED || 
                                              req.status === RequestStatus.PARTIALLY_APPROVED) && (
-                                            isOpBiasaRequest(req) && !isFinanceApprovedOpRequest(req, itemReviewHistories) && !isRequestTransferred(req, itemReviewHistories) && (req.adminActionAmount || 0) === 0 ? (
+                                            isOpBiasaRequest(req) && !isFinanceApprovedOpRequest(req, itemReviewHistories) ? (
                                               <button
                                                 type="button"
                                                 onClick={() => setReviewBudgetReq(req)}

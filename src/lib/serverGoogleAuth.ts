@@ -52,7 +52,16 @@ export function getServerOAuthClient() {
  * or Option 2 (GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY).
  * Handles raw JSON, escaped quotes, Base64 strings, and literal '\n' characters from Vercel env.
  */
-export function parseServiceAccountCredentials(): { client_email?: string; private_key?: string; project_id?: string } | null {
+function formatPrivateKey(rawKey?: string): string {
+  if (!rawKey) return '';
+  let key = rawKey.trim();
+  while ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1).trim();
+  }
+  return key.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n').replace(/\r/g, '');
+}
+
+export function parseServiceAccountCredentials(): { client_email?: string; private_key?: string } | null {
   const serviceAccountJson = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   if (serviceAccountJson) {
     try {
@@ -72,16 +81,12 @@ export function parseServiceAccountCredentials(): { client_email?: string; priva
         ? JSON.parse(rawJson) 
         : rawJson;
       
-      let pKey = credentials.private_key || '';
-      if (pKey.includes('\\n')) {
-        pKey = pKey.replace(/\\n/g, '\n');
-      }
+      const pKey = formatPrivateKey(credentials.private_key);
 
       if (credentials.client_email && pKey) {
         return {
-          client_email: credentials.client_email,
-          private_key: pKey,
-          project_id: credentials.project_id
+          client_email: cleanEnvVal(credentials.client_email),
+          private_key: pKey
         };
       }
     } catch (err) {
@@ -90,14 +95,9 @@ export function parseServiceAccountCredentials(): { client_email?: string; priva
   }
 
   const clientEmail = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL);
-  let privateKey = cleanEnvVal(process.env.GOOGLE_PRIVATE_KEY);
+  const privateKey = formatPrivateKey(process.env.GOOGLE_PRIVATE_KEY);
 
   if (clientEmail && privateKey) {
-    // Handle escaped newlines in private key string if present
-    if (privateKey.includes('\\n')) {
-      privateKey = privateKey.replace(/\\n/g, '\n');
-    }
-
     return {
       client_email: clientEmail,
       private_key: privateKey
@@ -203,18 +203,8 @@ export async function getServerAccessToken(): Promise<{
   return {
     token: null,
     type: 'none',
-    error: 'Koneksi server Google Auth tidak tersedia. Pastikan variabel GOOGLE_SERVICE_ACCOUNT_JSON atau GOOGLE_REFRESH_TOKEN telah dikonfigurasi di server/Vercel.'
+    error: 'GOOGLE_REFRESH_TOKEN tidak valid atau telah kedaluwarsa (invalid_grant). Pastikan OAuth Client ID, Client Secret, dan Refresh Token yang dimasukkan dari Google OAuth Playground sudah cocok.'
   };
-}
-
-/**
- * Invalidates cached server tokens to force a fresh access token from Google.
- */
-export function invalidateServerTokens(): void {
-  cachedAuthClient = null;
-  cachedTokenInfo = null;
-  cachedOAuthClient = null;
-  cachedOAuthTokenInfo = null;
 }
 
 /**
@@ -277,5 +267,15 @@ export function getServiceAccountStatus() {
     isConfigured: Boolean(auth),
     serviceAccountEmail: credentials?.client_email || null
   };
+}
+
+/**
+ * Invalidates cached auth clients and token info, forcing a fresh token fetch on next request.
+ */
+export function invalidateServerTokens(): void {
+  cachedAuthClient = null;
+  cachedTokenInfo = null;
+  cachedOAuthClient = null;
+  cachedOAuthTokenInfo = null;
 }
 

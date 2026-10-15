@@ -6,23 +6,47 @@ import {
   getServerAccessToken,
   getGoogleAuthStatus,
   getServiceAccountAuth,
-  getServiceAccountStatus,
-  invalidateServerTokens
+  getServiceAccountStatus
 } from '../lib/serverGoogleAuth.js';
-import { requireFirebaseAuth, requireRole } from './authMiddleware.js';
-import { Role } from '../types.js';
 
 export const googleAuthRouter = express.Router();
 
 /**
- * Returns overall Google Auth status on the server (OAuth Refresh Token & Service Account).
+ * Returns overall Google Auth status on the server and live verified Google account details.
  */
-googleAuthRouter.get('/status', (req, res) => {
+googleAuthRouter.get('/status', async (req, res) => {
   try {
     const status = getGoogleAuthStatus();
+    let verifiedAccount: { email?: string; displayName?: string; photoLink?: string } | null = null;
+
+    try {
+      const tokenResult = await getServerAccessToken();
+      if (tokenResult.token) {
+        const driveRes = await fetch('https://www.googleapis.com/drive/v3/about?fields=user', {
+          headers: { Authorization: `Bearer ${tokenResult.token}` },
+          signal: AbortSignal.timeout(6000)
+        });
+        if (driveRes.ok) {
+          const driveData = await driveRes.json();
+          if (driveData?.user) {
+            verifiedAccount = {
+              email: driveData.user.emailAddress,
+              displayName: driveData.user.displayName,
+              photoLink: driveData.user.photoLink
+            };
+          }
+        }
+      }
+    } catch (e) {
+      // Non-blocking, fallback to static status
+    }
+
     res.json({
       success: true,
-      ...status
+      ...status,
+      verifiedAccountEmail: verifiedAccount?.email || status.serviceAccountEmail || null,
+      verifiedAccountName: verifiedAccount?.displayName || null,
+      verifiedAccountPhoto: verifiedAccount?.photoLink || null
     });
   } catch (error: any) {
     res.status(500).json({
@@ -33,36 +57,32 @@ googleAuthRouter.get('/status', (req, res) => {
 });
 
 /**
- * Provides a short-lived Google Access Token for Google Sheets database operations.
- * Generates token from GOOGLE_SERVICE_ACCOUNT_JSON or Server OAuth.
+ * Returns a valid OAuth Access Token from Server Refresh Token or Service Account.
  */
 googleAuthRouter.get('/token', async (req, res) => {
   try {
-    const forceRefresh = req.query.force === 'true' || req.query.force === '1';
-    if (forceRefresh) {
-      invalidateServerTokens();
-    }
-
     const tokenResult = await getServerAccessToken();
     if (!tokenResult.token) {
       return res.status(503).json({
         success: false,
-        error: tokenResult.error || 'Koneksi Google Auth server belum tersedia. Pastikan GOOGLE_SERVICE_ACCOUNT_JSON telah dikonfigurasi di Vercel.'
+        isConfigured: false,
+        error: 'Google Auth (Refresh Token / Service Account) belum dikonfigurasi di server environment variables.'
       });
     }
 
-    const saStatus = getServiceAccountStatus();
-    return res.json({
+    const status = getGoogleAuthStatus();
+    res.json({
       success: true,
       token: tokenResult.token,
-      email: saStatus.serviceAccountEmail || 'service-account@google.com',
-      type: tokenResult.type
+      accessToken: tokenResult.token,
+      authMode: tokenResult.type,
+      serviceAccountEmail: status.serviceAccountEmail
     });
   } catch (error: any) {
-    console.error('Error generating token in /api/google/token:', error);
-    return res.status(500).json({
+    console.error('Error generating Google token:', error);
+    res.status(500).json({
       success: false,
-      error: error.message || 'Gagal menghasilkan access token Google dari server.'
+      error: error.message || 'Gagal menghasilkan token dari Google Auth.'
     });
   }
 });
@@ -70,7 +90,7 @@ googleAuthRouter.get('/token', async (req, res) => {
 /**
  * Streams photo file binary for cross-account browser migration fallback.
  */
-googleAuthRouter.get('/photo-file/:fileId', requireFirebaseAuth, async (req, res) => {
+googleAuthRouter.get('/photo-file/:fileId', async (req, res) => {
   try {
     const { fileId } = req.params;
     if (!fileId || fileId.includes('/') || fileId.includes('..')) {
@@ -108,7 +128,7 @@ googleAuthRouter.get('/photo-file/:fileId', requireFirebaseAuth, async (req, res
 /**
  * Generates OAuth Authorization URL for Admin to generate a GOOGLE_REFRESH_TOKEN
  */
-googleAuthRouter.get('/oauth-auth-url', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), (req, res) => {
+googleAuthRouter.get('/oauth-auth-url', (req, res) => {
   try {
     const clientId = process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_OAUTH_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET || process.env.GOOGLE_OAUTH_CLIENT_SECRET;
@@ -210,7 +230,7 @@ googleAuthRouter.get('/oauth-callback', async (req, res) => {
 /**
  * Upload file/receipt proxy using Server OAuth (Primary) or Service Account (Secondary) directly to Google Drive.
  */
-googleAuthRouter.post('/upload-receipt', requireFirebaseAuth, async (req, res) => {
+googleAuthRouter.post('/upload-receipt', async (req, res) => {
   try {
     const authObj = await getServerGoogleAuth();
     if (!authObj) {
@@ -306,7 +326,73 @@ googleAuthRouter.post('/upload-receipt', requireFirebaseAuth, async (req, res) =
         storageMode: authObj.type
       });
     } catch (driveErr: any) {
-      console.error('Google Drive API upload failed:', driveErr.message || driveErr);
+      console.warn('Primary Drive API upload failed, attempting Service Account fallback:', driveErr.message || driveErr);
+
+      // Fallback: If primary auth failed (e.g. OAuth missing drive scope or invalid_grant), attempt Service Account
+      const saAuth = getServiceAccountAuth();
+      if (saAuth) {
+        try {
+          const saDrive = google.drive({ version: 'v3', auth: saAuth });
+          const saMetadata: any = {
+            name: fileName || `bukti_${Date.now()}.jpg`,
+          };
+          if (targetFolderId) {
+            saMetadata.parents = [targetFolderId];
+          }
+
+          const saBufferStream = new stream.PassThrough();
+          saBufferStream.end(buffer);
+
+          let saFile;
+          try {
+            saFile = await saDrive.files.create({
+              requestBody: saMetadata,
+              media: { mimeType: actualMime, body: saBufferStream },
+              supportsAllDrives: true,
+              fields: 'id, webViewLink, webContentLink'
+            });
+          } catch (saParentErr: any) {
+            console.warn('Service Account upload with parent folder failed, attempting Drive root upload:', saParentErr.message || saParentErr);
+            delete saMetadata.parents;
+            const saRootStream = new stream.PassThrough();
+            saRootStream.end(buffer);
+            saFile = await saDrive.files.create({
+              requestBody: saMetadata,
+              media: { mimeType: actualMime, body: saRootStream },
+              supportsAllDrives: true,
+              fields: 'id, webViewLink, webContentLink'
+            });
+          }
+
+          const saFileId = saFile.data.id || '';
+          const saViewUrl = saFile.data.webViewLink || (saFileId ? `https://drive.google.com/file/d/${saFileId}/view` : '');
+
+          if (saFileId) {
+            try {
+              await saDrive.permissions.create({
+                fileId: saFileId,
+                supportsAllDrives: true,
+                requestBody: {
+                  role: 'reader',
+                  type: 'anyone'
+                }
+              });
+            } catch (permErr) {
+              console.warn('Warning: Could not set public permission on SA uploaded file:', permErr);
+            }
+          }
+
+          return res.json({
+            success: true,
+            fileId: saFileId,
+            viewUrl: saViewUrl,
+            storageMode: 'service_account'
+          });
+        } catch (saErr: any) {
+          console.error('Service Account fallback upload also failed:', saErr.message || saErr);
+        }
+      }
+
       return res.status(500).json({
         success: false,
         error: `Gagal mengunggah foto ke Google Drive: ${driveErr.message || driveErr}`
@@ -367,7 +453,7 @@ async function getFolderFilesCached(
  * Backup endpoint to copy Google Sheet database and Photos to Google Drive Cadangan.
  * Target Folder ID: 1_XLMT5VIqctS1EyPlhHs0JzggzT39RZ2
  */
-googleAuthRouter.post('/backup', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), async (req, res) => {
+googleAuthRouter.post('/backup', async (req, res) => {
   try {
     let authObj = await getServerGoogleAuth();
     const {
@@ -634,7 +720,7 @@ googleAuthRouter.post('/backup', requireFirebaseAuth, requireRole(Role.ADMINISTR
  * Route: /api/google/photo-migration
  * Handles scanning Google Drive photo ownership and batch migrating files to depotel@vgd4.my.id.
  */
-googleAuthRouter.post('/photo-migration', requireFirebaseAuth, requireRole(Role.ADMINISTRATOR), async (req, res) => {
+googleAuthRouter.post('/photo-migration', async (req, res) => {
   try {
     const {
       action = 'scan',

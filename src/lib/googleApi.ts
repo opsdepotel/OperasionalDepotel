@@ -5,7 +5,6 @@
 
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from '../types';
 import { uploadReceiptViaServiceAccount, fetchServiceAccountToken, invalidateServiceAccountToken } from './serviceAccountClient';
-import { apiFetch } from './apiClient';
 
 const originalFetch = window.fetch;
 
@@ -316,29 +315,11 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
     'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
   ].includes(bbmStr);
 
-  let rawMobile = row.Mobile ?? row['Mobile (Boolean)'] ?? row['Mobile(Boolean)'] ?? row['Mobile'] ?? row['Mobile Device'] ?? row.mobile ?? '';
-  if ((rawMobile === undefined || rawMobile === '') && row._sheetHeaders && row._rawRow) {
-    const mobileColIdx = (row._sheetHeaders as string[]).findIndex(sh => {
-      const norm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return norm === 'mobile' || norm.startsWith('mobile');
-    });
-    if (mobileColIdx !== -1 && mobileColIdx < row._rawRow.length) {
-      rawMobile = row._rawRow[mobileColIdx];
-    }
-  }
+  const rawMobile = row.Mobile ?? row['Mobile(Boolean)'] ?? row['Mobile'] ?? row['Mobile Device'] ?? row.mobile ?? '';
   const mobileStr = String(rawMobile).trim().toUpperCase();
   const isMobile = mobileStr === 'TRUE' || mobileStr === 'YA' || mobileStr === '1' || rawMobile === true;
 
-  let rawDeviceId = row.DeviceID ?? row['Device ID'] ?? row['DeviceId'] ?? row.deviceId ?? row.Deviceid ?? '';
-  if ((rawDeviceId === undefined || rawDeviceId === '') && row._sheetHeaders && row._rawRow) {
-    const devIdColIdx = (row._sheetHeaders as string[]).findIndex(sh => {
-      const norm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return norm === 'deviceid' || norm.startsWith('deviceid');
-    });
-    if (devIdColIdx !== -1 && devIdColIdx < row._rawRow.length) {
-      rawDeviceId = row._rawRow[devIdColIdx];
-    }
-  }
+  const rawDeviceId = row.DeviceID ?? row['Device ID'] ?? row['DeviceId'] ?? row.deviceId ?? row.Deviceid ?? '';
   const deviceIdVal = String(rawDeviceId).trim();
 
   const rawRole = String(row.Role || row.role || '').trim().toUpperCase();
@@ -364,7 +345,17 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
 
   const rawEmail = String(row.Email || row.email || '').trim();
   const rawUserId = String(row.UserID || row.userId || row['User ID'] || row.User_ID || rawEmail || '').trim();
-  const rawPassword = String(row.Password || row.password || row.Pass || row.KataSandi || '').trim();
+  let rawPassword = String(row.Password || row.password || row.Pass || row.pass || row.KataSandi || row['Kata Sandi'] || row['KataSandi'] || row.katasandi || row['PASS'] || row['PASSWORD'] || row.Sandi || row['Sandi'] || '').trim();
+  if (!rawPassword && row._sheetHeaders && row._rawRow) {
+    const pwdColIdx = (row._sheetHeaders as string[]).findIndex(sh => {
+      const norm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return norm.includes('password') || norm.includes('pass') || norm.includes('katasandi') || norm.includes('sandi');
+    });
+    if (pwdColIdx !== -1 && pwdColIdx < row._rawRow.length && row._rawRow[pwdColIdx] !== undefined) {
+      rawPassword = String(row._rawRow[pwdColIdx]).trim();
+    }
+  }
+
   const rawNama = String(row.Nama || row.nama || row.Name || '').trim();
   const rawManagerEmail = String(row.ManagerEmail || row.managerEmail || row['Manager Email'] || '').trim();
   const rawDivisi = String(row.Divisi || row.divisi || '').trim();
@@ -552,7 +543,7 @@ export interface GlobalAppConfigResponse {
 
 export async function fetchGlobalConfig(): Promise<GlobalAppConfigResponse> {
   try {
-    const res = await apiFetch('/api/config');
+    const res = await fetch('/api/config');
     if (res.ok) {
       const data = await res.json();
       if (data && data.success && data.spreadsheetId) {
@@ -596,7 +587,7 @@ export async function updateGlobalConfig(
 
   // 2. Persist to server config endpoint
   try {
-    const res = await apiFetch('/api/config', {
+    const res = await fetch('/api/config', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -1270,9 +1261,18 @@ export async function fetchProfiles(token: string, spreadsheetId: string): Promi
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
-    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+    throw new Error('[HTTP 401] Token Google API expired atau tidak valid.');
   }
-  if (!res.ok) return [];
+  if (!res.ok) {
+    let errTxt = '';
+    try {
+      const errJson = await res.json();
+      errTxt = errJson.error?.message || JSON.stringify(errJson);
+    } catch {
+      errTxt = await res.text().catch(() => '');
+    }
+    throw new Error(`[Google Sheets HTTP ${res.status}] ${errTxt || res.statusText || 'Gagal membaca tabel Users'}`);
+  }
   const data = await res.json();
   return parseSheetRows<UserProfile>(USERS_HEADERS, data.values, mapToUserProfile);
 }
@@ -1351,7 +1351,9 @@ export async function fetchActiveItemReviewHistories(token: string, spreadsheetI
   }
 
   try {
-    const res = await apiFetch(`/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}`);
+    const res = await fetch(`/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
@@ -1377,7 +1379,9 @@ export async function fetchHistoryForUid(token: string, spreadsheetId: string, u
   }
 
   try {
-    const res = await apiFetch(`/api/history?uid=${encodeURIComponent(uid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`);
+    const res = await fetch(`/api/history?uid=${encodeURIComponent(uid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
@@ -2344,7 +2348,7 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
 
   // Invalidate server on-demand history cache
   try {
-    apiFetch('/api/history/invalidate', { method: 'POST' }).catch(() => {});
+    fetch('/api/history/invalidate', { method: 'POST' }).catch(() => {});
   } catch {}
 }
 

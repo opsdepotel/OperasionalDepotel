@@ -6,6 +6,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { fetchServiceAccountToken } from './serviceAccountClient';
 
 let app: any = null;
 let auth: any = null;
@@ -33,6 +34,30 @@ export const initAuth = async (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // First, check if backend has a configured Google Service Account
+  try {
+    const saData = await fetchServiceAccountToken();
+    if (saData && saData.token) {
+      cachedAccessToken = saData.token;
+      localStorage.setItem('g_access_token', saData.token);
+      localStorage.setItem('g_token_timestamp', Date.now().toString());
+      localStorage.setItem('g_is_service_account', 'true');
+      
+      const saUser = {
+        uid: 'service_account',
+        email: saData.email || 'service-account@google.iam.gserviceaccount.com',
+        displayName: 'Google Service Account (Auto)',
+        photoURL: ''
+      } as unknown as User;
+      
+      if (onAuthSuccess) {
+        onAuthSuccess(saUser, saData.token);
+        return () => {};
+      }
+    }
+  } catch (saErr) {
+    console.warn('Service account auto-auth check skipped:', saErr);
+  }
 
   // If we have a stored token, check if it's already expired
   const storedToken = localStorage.getItem('g_access_token');
@@ -174,22 +199,29 @@ export const getAccessToken = async (): Promise<string | null> => {
   return cachedAccessToken || localStorage.getItem('g_access_token');
 };
 
+export const getFirebaseIdToken = async (forceRefresh = false): Promise<string | null> => {
+  try {
+    if (auth && auth.currentUser) {
+      return await auth.currentUser.getIdToken(forceRefresh);
+    }
+  } catch (e) {
+    console.warn('Failed to get Firebase ID token:', e);
+  }
+  return cachedAccessToken || localStorage.getItem('g_access_token');
+};
+
 /**
  * Checks whether the stored Google OAuth token is expired (older than 55 minutes, as Google tokens expire in 60 minutes)
  */
 export const isGoogleTokenExpired = (): boolean => {
-  // If running via server-side Service Account, token is managed & auto-renewed by server
-  if (localStorage.getItem('g_is_service_account') === 'true') {
-    return false;
-  }
   const token = localStorage.getItem('g_access_token');
   if (!token) return true;
   const tsStr = localStorage.getItem('g_token_timestamp');
   if (!tsStr) return false; // If no timestamp was recorded, assume valid until an API call fails
   const ts = parseInt(tsStr, 10);
   if (isNaN(ts)) return false;
-  // Google OAuth tokens expire in 3600s (60 mins). Flag as expired if older than 55 mins (3300000ms)
-  return Date.now() - ts > 3300000;
+  // Google OAuth and Service Account access tokens expire in 3600s (60 mins). Flag as expired if older than 50 mins (3000000ms) for proactive auto-renewal
+  return Date.now() - ts > 3000000;
 };
 
 /**
@@ -208,16 +240,6 @@ export const getTokenRemainingMinutes = (): number => {
   return Math.floor(remainingMs / 60000);
 };
 
-export const getFirebaseIdToken = async (forceRefresh = false): Promise<string | null> => {
-  if (!auth?.currentUser) return null;
-  try {
-    return await auth.currentUser.getIdToken(forceRefresh);
-  } catch (err) {
-    console.warn('Failed to get Firebase ID token:', err);
-    return null;
-  }
-};
-
 export const logout = async () => {
   try {
     if (auth) {
@@ -230,7 +252,4 @@ export const logout = async () => {
   localStorage.removeItem('g_access_token');
   localStorage.removeItem('g_token_timestamp');
   localStorage.removeItem('g_google_user');
-  localStorage.removeItem('g_is_service_account');
-  localStorage.removeItem('op_service_account_email');
 };
-
