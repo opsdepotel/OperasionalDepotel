@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { AiRecaptureResult } from '../components/AiScreenRecaptureModal';
 import { UserActivity } from '../types';
 import { getAccessToken } from './firebase';
+import { apiFetch } from './apiClient';
 
 export interface AiRecapturePayload {
   imageBase64?: string;
@@ -336,7 +337,7 @@ export async function requestAiScreenRecapture(
   while (fetchAttempts < maxFetchAttempts) {
     try {
       fetchAttempts++;
-      const res = await fetch('/api/ai/check-screen-recapture', {
+      const res = await apiFetch('/api/ai/check-screen-recapture', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

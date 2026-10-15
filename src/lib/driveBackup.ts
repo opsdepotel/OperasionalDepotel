@@ -9,6 +9,7 @@
 import { SPREADSHEET_ID, DRIVE_FOLDER_ID } from './googleApi';
 import { fetchServiceAccountToken } from './serviceAccountClient';
 import { isGoogleTokenExpired } from './firebase';
+import { apiFetch } from './apiClient';
 
 export const BACKUP_TARGET_FOLDER_ID = '1_XLMT5VIqctS1EyPlhHs0JzggzT39RZ2';
 export const BACKUP_HISTORY_STORAGE_KEY = 'dioms_backup_history_v1';
@@ -165,7 +166,7 @@ export async function scanDriveBackup({
 
   // 1. Try server backend endpoint first
   try {
-    const res = await fetch('/api/google/backup', {
+    const res = await apiFetch('/api/google/backup', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -333,7 +334,7 @@ export async function executeDriveBackup({
   // 1. Attempt backend API first
   try {
     onProgress?.({ step: 'PROCESSING', percent: 15, detail: 'Mengirim perintah backup ke backend server...' });
-    const res = await fetch('/api/google/backup', {
+    const res = await apiFetch('/api/google/backup', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'

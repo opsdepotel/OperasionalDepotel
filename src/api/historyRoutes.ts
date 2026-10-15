@@ -1,7 +1,8 @@
 import express from 'express';
-import { google } from 'googleapis';
-import { getServerGoogleAuth, getServerAccessToken } from '../lib/serverGoogleAuth.js';
+import { getServerAccessToken } from '../lib/serverGoogleAuth.js';
 import { readServerConfig } from './expressApp.js';
+import { requireFirebaseAuth, requireRole, resolveUserRole } from './authMiddleware.js';
+import { Role } from '../types.js';
 
 export const historyRouter = express.Router();
 
@@ -9,6 +10,7 @@ interface CachedHistoryData {
   all: any[];
   active: any[];
   byUid: Map<string, any[]>;
+  uidToApplicantEmail: Map<string, string>;
   timestamp: number;
   spreadsheetId: string;
 }
@@ -20,17 +22,14 @@ export function invalidateHistoryCache(): void {
   cache = null;
 }
 
-async function getOrRefreshHistoryCache(spreadsheetId: string, force = false, clientToken?: string): Promise<CachedHistoryData> {
+async function getOrRefreshHistoryCache(spreadsheetId: string, force = false): Promise<CachedHistoryData> {
   const now = Date.now();
   if (!force && cache && cache.spreadsheetId === spreadsheetId && (now - cache.timestamp < CACHE_TTL_MS)) {
     return cache;
   }
 
-  let token = clientToken;
-  if (!token) {
-    const tokenRes = await getServerAccessToken();
-    token = tokenRes.token || undefined;
-  }
+  const tokenRes = await getServerAccessToken();
+  const token = tokenRes.token;
 
   if (!token) {
     throw new Error('Google Auth token tidak tersedia di server environment variables.');
@@ -59,19 +58,29 @@ async function getOrRefreshHistoryCache(spreadsheetId: string, force = false, cl
   const pengajuanRows = valueRanges[0]?.values || [];
   const historyRows = valueRanges[1]?.values || [];
 
-  // 1. Identify active (non-closed) UIDs
+  // 1. Identify active (non-closed) UIDs and map UID to applicant email
   const activeUids = new Set<string>();
+  const uidToApplicantEmail = new Map<string, string>();
+
   if (pengajuanRows.length > 1) {
     const headers = pengajuanRows[0].map(h => String(h).trim().toLowerCase());
     const uidIdx = headers.findIndex(h => h === 'uid' || h === 'id');
     const statusIdx = headers.findIndex(h => h === 'status');
+    const emailIdx = headers.findIndex(h => h === 'useremail' || h === 'email');
 
     for (let i = 1; i < pengajuanRows.length; i++) {
       const row = pengajuanRows[i];
-      const uid = String(uidIdx >= 0 ? row[uidIdx] || '' : '').trim().toUpperCase();
-      const st = String(statusIdx >= 0 ? row[statusIdx] || '' : '').trim().toUpperCase();
-      if (uid && st !== 'CLOSED') {
-        activeUids.add(uid);
+      const uid = String(uidIdx >= 0 ? row[uidIdx] || '' : row[0] || '').trim().toUpperCase();
+      const st = String(statusIdx >= 0 ? row[statusIdx] || '' : row[7] || '').trim().toUpperCase();
+      const applicantEmail = String(emailIdx >= 0 ? row[emailIdx] || '' : row[1] || '').trim().toLowerCase();
+
+      if (uid) {
+        if (st !== 'CLOSED') {
+          activeUids.add(uid);
+        }
+        if (applicantEmail) {
+          uidToApplicantEmail.set(uid, applicantEmail);
+        }
       }
     }
   }
@@ -151,6 +160,7 @@ async function getOrRefreshHistoryCache(spreadsheetId: string, force = false, cl
     all,
     active,
     byUid,
+    uidToApplicantEmail,
     timestamp: now,
     spreadsheetId
   };
@@ -165,19 +175,47 @@ async function getOrRefreshHistoryCache(spreadsheetId: string, force = false, cl
  *   - activeOnly: (boolean) If true or default when no uid is passed, returns history for active UIDs only.
  *   - all: (boolean) If true, returns all records.
  *   - forceRefresh: (boolean) Forces cache reload.
+ * 
+ * Authorization:
+ *   - Authenticated via Firebase ID Token.
+ *   - Role USER: Restricted to own requests or history where user was the actor.
+ *   - Privileged roles (MANAGER, FINANCE, DIREKTUR, ADMINISTRATOR): Full scope.
  */
-historyRouter.get('/', async (req, res) => {
+historyRouter.get('/', requireFirebaseAuth, async (req, res) => {
   try {
     const spreadsheetId = (req.query.spreadsheetId as string) || readServerConfig().spreadsheetId;
     const forceRefresh = req.query.forceRefresh === 'true';
     const targetUid = typeof req.query.uid === 'string' ? req.query.uid.trim() : '';
     const isAll = req.query.all === 'true';
-    const clientToken = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || (req.query.token as string);
 
-    const historyCache = await getOrRefreshHistoryCache(spreadsheetId, forceRefresh, clientToken);
+    const historyCache = await getOrRefreshHistoryCache(spreadsheetId, forceRefresh);
 
+    // Resolve user role securely on the server
+    if (!req.user!.role) {
+      req.user!.role = await resolveUserRole(req.user!.email);
+    }
+    const userRole = req.user!.role;
+    const userEmail = (req.user!.email || '').toLowerCase().trim();
+
+    // 1. Specific UID requested
     if (targetUid) {
       const records = historyCache.byUid.get(targetUid.toUpperCase()) || [];
+
+      // If USER role, enforce ownership check
+      if (userRole === Role.USER) {
+        const applicantEmail = historyCache.uidToApplicantEmail.get(targetUid.toUpperCase());
+        const isApplicant = applicantEmail === userEmail;
+        const isActor = records.some(r => (r.actorEmail || '').toLowerCase() === userEmail);
+
+        if (!isApplicant && !isActor) {
+          return res.status(403).json({
+            success: false,
+            error: 'Anda tidak memiliki akses untuk melihat riwayat pengajuan ini (HTTP 403 Forbidden).',
+            data: []
+          });
+        }
+      }
+
       return res.json({
         success: true,
         uid: targetUid,
@@ -186,27 +224,33 @@ historyRouter.get('/', async (req, res) => {
       });
     }
 
-    if (isAll) {
-      return res.json({
-        success: true,
-        count: historyCache.all.length,
-        all: true,
-        data: historyCache.all
+    // 2. Collection requested (activeOnly or all)
+    const baseRecords = isAll ? historyCache.all : historyCache.active;
+
+    // Filter by ownership if USER role
+    let filteredRecords = baseRecords;
+    if (userRole === Role.USER) {
+      filteredRecords = baseRecords.filter(r => {
+        const isActor = (r.actorEmail || '').toLowerCase() === userEmail;
+        const reqUid = (r.requestUid || '').toUpperCase();
+        const applicantEmail = historyCache.uidToApplicantEmail.get(reqUid);
+        const isApplicant = applicantEmail === userEmail;
+        return isActor || isApplicant;
       });
     }
 
-    // Default: Return active UIDs history only (~741 records instead of 12,382)
     return res.json({
       success: true,
-      count: historyCache.active.length,
-      activeOnly: true,
-      data: historyCache.active
+      count: filteredRecords.length,
+      activeOnly: !isAll,
+      all: isAll,
+      data: filteredRecords
     });
   } catch (error: any) {
     console.error('Error in /api/history:', error);
     return res.status(500).json({
       success: false,
-      error: error.message || 'Gagal memuat data ItemReviewHistory dari server.',
+      error: 'Gagal memuat data ItemReviewHistory dari server.',
       data: []
     });
   }
@@ -215,11 +259,17 @@ historyRouter.get('/', async (req, res) => {
 /**
  * POST /api/history/invalidate
  * Invalidates the in-memory cache so subsequent calls re-fetch the latest data.
+ * Restricted to privileged roles.
  */
-historyRouter.post('/invalidate', (req, res) => {
-  invalidateHistoryCache();
-  return res.json({
-    success: true,
-    message: 'History cache invalidated successfully.'
-  });
-});
+historyRouter.post(
+  '/invalidate',
+  requireFirebaseAuth,
+  requireRole(Role.ADMINISTRATOR, Role.MANAGER, Role.FINANCE, Role.DIREKTUR),
+  (req, res) => {
+    invalidateHistoryCache();
+    return res.json({
+      success: true,
+      message: 'History cache invalidated successfully.'
+    });
+  }
+);

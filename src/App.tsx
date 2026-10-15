@@ -298,7 +298,7 @@ export const canUserCancelRequest = (
   const isTalangan = req.id.startsWith('OPT-') ||
                      req.tipePengajuan === 'DANA_TALANGAN' ||
                      (req.keterangan || '').startsWith('[DANA TALANGAN]') ||
-                     req.category === 'TALANGAN';
+                     (req as any).category === 'TALANGAN';
 
   if (isTalangan) {
     // KONDISI 2: Dana Talangan yang tidak ada satu item Talangan yang sudah mendapatkan Review (Approval atau Rejection) Manager
@@ -2471,6 +2471,12 @@ export default function App() {
     if (!token || !spreadsheetId || !reviewBudgetReq) return;
     const isApprovedFull = approvedAmount === reviewBudgetReq.jumlahPengajuan;
     const isFinance = activeRole === Role.FINANCE || userProfile?.role === Role.FINANCE;
+
+    if (isFinance && (isRequestTransferred(reviewBudgetReq, itemReviewHistories) || (reviewBudgetReq.adminActionAmount || 0) > 0)) {
+      alert('Pengajuan ini telah memiliki riwayat transfer dari Finance dan tidak dapat ditinjau ulang anggarannya.');
+      setReviewBudgetReq(null);
+      return;
+    }
 
     const updated: BudgetRequest = isFinance ? {
       ...reviewBudgetReq,
@@ -5540,7 +5546,7 @@ export default function App() {
                                         <>
                                           {(req.status === RequestStatus.APPROVED || 
                                              req.status === RequestStatus.PARTIALLY_APPROVED) && (
-                                            isOpBiasaRequest(req) && !isFinanceApprovedOpRequest(req, itemReviewHistories) ? (
+                                            isOpBiasaRequest(req) && !isFinanceApprovedOpRequest(req, itemReviewHistories) && !isRequestTransferred(req, itemReviewHistories) && (req.adminActionAmount || 0) === 0 ? (
                                               <button
                                                 type="button"
                                                 onClick={() => setReviewBudgetReq(req)}
