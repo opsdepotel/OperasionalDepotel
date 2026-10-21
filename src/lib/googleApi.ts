@@ -5,6 +5,7 @@
 
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from '../types';
 import { uploadReceiptViaServiceAccount, fetchServiceAccountToken, invalidateServiceAccountToken } from './serviceAccountClient';
+import { getStoredSessionToken } from './sessionClient';
 
 const originalFetch = window.fetch;
 
@@ -362,7 +363,8 @@ function mapToUserProfile(row: Record<string, any>): UserProfile {
 
   const finalEmail = rawEmail;
   const finalUserId = rawUserId || (finalEmail ? finalEmail.split('@')[0] : '');
-  const finalPassword = rawPassword || '123456';
+  // Celah default '123456' dihapus. Password pengguna tidak dikirimkan ke browser pada pemanggilan profil.
+  const finalPassword = '';
 
   return {
     userId: finalUserId,
@@ -778,7 +780,7 @@ export function mergeUserProfiles(...sources: (UserProfile[] | null | undefined)
         const normalizedProfile: UserProfile = {
           ...u,
           userId: (u.userId || '').trim() || (cleanEmail ? cleanEmail.split('@')[0] : ''),
-          password: (u.password || '').trim() || '123456',
+          password: (u.password || '').trim(),
           email: (u.email || '').trim(),
           nama: (u.nama || '').trim(),
           managerEmail: (u.managerEmail || '').trim(),
@@ -792,31 +794,6 @@ export function mergeUserProfiles(...sources: (UserProfile[] | null | undefined)
   }
 
   return merged;
-}
-
-/**
- * Robust user credential matcher comparing input userId/email & password against candidate profiles.
- */
-export function findMatchingUser(
-  candidateProfiles: UserProfile[],
-  inputId: string,
-  inputPassword: string
-): UserProfile | undefined {
-  const cleanId = (inputId || '').trim().toLowerCase();
-  const cleanPassword = (inputPassword || '').trim();
-
-  if (!cleanId) return undefined;
-
-  return candidateProfiles.find(p => {
-    const pUserId = (p.userId || '').trim().toLowerCase();
-    const pEmail = (p.email || '').trim().toLowerCase();
-    const pPassword = (p.password || '').trim() || '123456';
-
-    const idMatches = (pUserId && pUserId === cleanId) || (pEmail && pEmail === cleanId);
-    const pwdMatches = pPassword === cleanPassword;
-
-    return idMatches && pwdMatches;
-  });
 }
 
 export const defaultRequests: BudgetRequest[] = [
@@ -1350,9 +1327,12 @@ export async function fetchActiveItemReviewHistories(token: string, spreadsheetI
     return getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
   }
 
+  const sessionToken = getStoredSessionToken();
+  const authToken = sessionToken || token;
+
   try {
     const res = await fetch(`/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${authToken}` }
     });
     if (res.ok) {
       const json = await res.json();
@@ -1378,9 +1358,12 @@ export async function fetchHistoryForUid(token: string, spreadsheetId: string, u
     return all.filter(h => h.requestUid === uid || h.itemUid === uid);
   }
 
+  const sessionToken = getStoredSessionToken();
+  const authToken = sessionToken || token;
+
   try {
     const res = await fetch(`/api/history?uid=${encodeURIComponent(uid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${authToken}` }
     });
     if (res.ok) {
       const json = await res.json();
@@ -1393,6 +1376,164 @@ export async function fetchHistoryForUid(token: string, spreadsheetId: string, u
   }
 
   return [];
+}
+
+/**
+ * In-memory client cache for full closed usage items
+ */
+const closedUsageItemsMemoryCache = new Map<string, UsageReportItem[]>();
+
+export function cacheClosedUsageItems(uid: string, items: UsageReportItem[]): void {
+  if (!uid) return;
+  closedUsageItemsMemoryCache.set(uid.toUpperCase().trim(), items);
+}
+
+export function getCachedClosedUsageItems(uid: string): UsageReportItem[] | undefined {
+  if (!uid) return undefined;
+  return closedUsageItemsMemoryCache.get(uid.toUpperCase().trim());
+}
+
+/**
+ * High-performance on-demand loader for a specific UID's usage report items (Laporan).
+ * Checks in-memory cache first (0ms), then queries the fast server endpoint /api/laporan?uid=...,
+ * and falls back to Google Sheets direct query if needed.
+ */
+export async function fetchUsageItemsForUid(
+  token: string,
+  spreadsheetId: string,
+  uid: string
+): Promise<UsageReportItem[]> {
+  if (!uid) return [];
+  const cleanUid = uid.trim().toUpperCase();
+
+  // 1. Check in-memory cache first (instant if already cached)
+  const cached = closedUsageItemsMemoryCache.get(cleanUid);
+  if (cached && cached.length > 0) {
+    return cached;
+  }
+
+  if (token === 'mock_demo_token') {
+    const all = getMockData<UsageReportItem[]>('mock_db_laporan', defaultUsageItems);
+    const filtered = all.filter(i => (i.requestId || '').toUpperCase() === cleanUid);
+    closedUsageItemsMemoryCache.set(cleanUid, filtered);
+    return filtered;
+  }
+
+  const sessionToken = getStoredSessionToken();
+  const authToken = sessionToken || token;
+
+  // 2. Fetch from backend /api/laporan endpoint
+  try {
+    const res = await fetch(`/api/laporan?uid=${encodeURIComponent(cleanUid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
+      headers: { Authorization: `Bearer ${authToken}` }
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        const items = json.data as UsageReportItem[];
+        closedUsageItemsMemoryCache.set(cleanUid, items);
+        return items;
+      }
+    }
+  } catch (err) {
+    console.warn(`[fetchUsageItemsForUid] /api/laporan?uid=${cleanUid} failed:`, err);
+  }
+
+  // 3. Fallback: Query Google Sheets directly
+  try {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const rows: any[][] = data.values || [];
+      const items = parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, rows, mapToUsageItem).filter(
+        i => (i.requestId || '').toUpperCase() === cleanUid
+      );
+      if (items.length > 0) {
+        closedUsageItemsMemoryCache.set(cleanUid, items);
+      }
+      return items;
+    }
+  } catch (sheetErr) {
+    console.warn(`[fetchUsageItemsForUid] Direct Sheets fallback failed:`, sheetErr);
+  }
+
+  return [];
+}
+
+/**
+ * Splits raw usage items into:
+ * 1. Full detail items for ACTIVE requests
+ * 2. Caches full closed items in `closedUsageItemsMemoryCache` for on-demand inspection
+ * 3. Compact 1-item summary per CLOSED request for 100% exact mathematical balance calculations
+ */
+export function splitAndSummarizeUsageItems(
+  requests: BudgetRequest[],
+  rawUsageItems: UsageReportItem[]
+): UsageReportItem[] {
+  const closedReqMap = new Map<string, BudgetRequest>();
+  for (const r of requests) {
+    if (r.status === RequestStatus.CLOSED) {
+      closedReqMap.set(r.id.toUpperCase().trim(), r);
+    }
+  }
+
+  const activeItems: UsageReportItem[] = [];
+  const closedItemsByReq = new Map<string, UsageReportItem[]>();
+
+  for (const item of rawUsageItems) {
+    const reqIdUpper = (item.requestId || '').toUpperCase().trim();
+    if (closedReqMap.has(reqIdUpper)) {
+      const list = closedItemsByReq.get(reqIdUpper) || [];
+      list.push(item);
+      closedItemsByReq.set(reqIdUpper, list);
+    } else {
+      activeItems.push(item);
+    }
+  }
+
+  // Populate memory cache for all closed requests so clicking any closed request is instant
+  for (const [reqIdUpper, items] of closedItemsByReq.entries()) {
+    closedUsageItemsMemoryCache.set(reqIdUpper, items);
+  }
+
+  // Create lightweight summary items for closed requests (1 per closed request with approved usage)
+  const closedSummaries: UsageReportItem[] = [];
+  for (const [reqIdUpper, items] of closedItemsByReq.entries()) {
+    const req = closedReqMap.get(reqIdUpper);
+    const approvedItems = items.filter(
+      i => (i.statusManager === ItemStatus.APPROVED || (i.statusManager as string) === 'APPROVED') &&
+           (i.statusAdmin === ItemStatus.APPROVED || (i.statusAdmin as string) === 'APPROVED')
+    );
+    const totalApproved = approvedItems.reduce((sum, i) => sum + (Number(i.nominal) || 0), 0);
+
+    const isBbm = (req?.id || '').startsWith('BBMDS') || 
+                  (req?.id || '').startsWith('BBM_DurenSawit') || 
+                  (req?.id || '').startsWith('TFDS') || 
+                  (req?.siteId || '').toUpperCase().includes('DUREN SAWIT');
+
+    if (totalApproved > 0) {
+      closedSummaries.push({
+        id: `summary_${reqIdUpper}`,
+        requestId: req?.id || reqIdUpper,
+        tanggalPenggunaan: req?.createdAt ? req.createdAt.split(',')[0].trim() : '',
+        nominal: totalApproved,
+        keterangan: isBbm ? '[BBM DUREN SAWIT] Ringkasan Laporan Selesai (CLOSED)' : 'Ringkasan Laporan Selesai (CLOSED)',
+        statusManager: ItemStatus.APPROVED,
+        managerComment: '',
+        statusAdmin: ItemStatus.APPROVED,
+        adminComment: '',
+        buktiFileId: '',
+        buktiUrl: '',
+        updatedAt: new Date().toISOString(),
+        timestamp: req?.createdAt || new Date().toISOString()
+      });
+    }
+  }
+
+  return [...activeItems, ...closedSummaries];
 }
 
 /**
@@ -1456,13 +1597,15 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
       const logRows = getValues('ResetDeviceLog');
 
       const requests = parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, reqRows, mapToBudgetRequest);
-      const usageItems = parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, usageRows, mapToUsageItem).filter(
+      const rawUsageItems = parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, usageRows, mapToUsageItem).filter(
         item => Boolean(item.id && item.id.trim() !== '' && item.requestId && item.requestId.trim() !== '')
       );
       const profiles = parseSheetRows<UserProfile>(USERS_HEADERS, userRows, mapToUserProfile);
       const sites = parseSitesRows(siteRows);
       const activities = parseSheetRows<UserActivity>(ACTIVITY_HEADERS, actRows, mapToUserActivity);
       const resetDeviceLogs = parseSheetRows<ResetDeviceLog>(RESET_DEVICE_LOG_HEADERS, logRows, mapToResetDeviceLog);
+
+      const usageItems = splitAndSummarizeUsageItems(requests, rawUsageItems);
 
       return {
         requests,
@@ -1492,9 +1635,11 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
     fetchActiveItemReviewHistories(token, spreadsheetId)
   ]);
 
+  const summarizedUsageItems = splitAndSummarizeUsageItems(allReqs, allItems);
+
   return {
     requests: allReqs,
-    usageItems: allItems,
+    usageItems: summarizedUsageItems,
     profiles: allProfs,
     sites: allSites,
     activities: allActs,
@@ -2419,7 +2564,7 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
     const updatedProfile = {
       ...profile,
       userId: profile.userId || (profile.email ? profile.email.split('@')[0] : `user_${Date.now()}`),
-      password: profile.password || '123456',
+      password: profile.password || '',
       aksesBBM: !!profile.aksesBBM,
       mobile: !!profile.mobile,
       deviceId: profile.deviceId || ''
@@ -2436,9 +2581,26 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
   const profiles = await fetchProfiles(token, spreadsheetId);
   const existingIdx = profiles.findIndex(p => p.email.toLowerCase() === profile.email.toLowerCase());
 
-    const rowData = objectToRow(USERS_HEADERS, {
+  let finalPassword = profile.password ? profile.password.trim() : '';
+  if (!finalPassword && existingIdx !== -1) {
+    try {
+      const sheetRowIdx = existingIdx + 2;
+      const cellRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!B${sheetRowIdx}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (cellRes.ok) {
+        const cellData = await cellRes.json();
+        finalPassword = (cellData.values?.[0]?.[0] || '').trim();
+      }
+    } catch (e) {
+      console.warn('Could not read existing password cell from sheet:', e);
+    }
+  }
+
+  const rowData = objectToRow(USERS_HEADERS, {
     UserID: profile.userId || (profile.email ? profile.email.split('@')[0] : `user_${Date.now()}`),
-    Password: profile.password || '123456',
+    Password: finalPassword,
     Nama: profile.nama || '',
     Email: profile.email,
     Role: profile.role,

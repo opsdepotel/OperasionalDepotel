@@ -66,10 +66,13 @@ export async function fetchServiceAccountToken(forceRefresh = false): Promise<{ 
         cachedServiceToken = validToken;
         cachedTokenExpiry = Date.now() + 3000 * 1000; // ~50 minutes
         if (typeof localStorage !== 'undefined') {
-          localStorage.setItem('g_access_token', validToken);
-          localStorage.setItem('g_token_timestamp', String(Date.now()));
-          localStorage.setItem('g_is_service_account', 'true');
-          localStorage.removeItem('op_service_account_error');
+          // In-Memory Token Model: purge any legacy access tokens from storage
+          try {
+            localStorage.removeItem('g_access_token');
+            localStorage.removeItem('g_token_timestamp');
+            localStorage.removeItem('g_is_service_account');
+            localStorage.removeItem('op_service_account_error');
+          } catch {}
           if (data.serviceAccountEmail) {
             localStorage.setItem('op_service_account_email', data.serviceAccountEmail);
           }

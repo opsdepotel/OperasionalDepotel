@@ -7,8 +7,9 @@ import React, { useState, useEffect } from 'react';
 import { UserProfile, Role } from '../types';
 import { User, Lock, LogIn, AlertCircle, Eye, EyeOff, ShieldCheck, ShieldAlert, X, RefreshCw, Smartphone, CheckCircle2, Globe, AlertTriangle } from 'lucide-react';
 import { validateDeviceAccessAndBind, getOrCreateDeviceId, getOrCreateDeviceIdAsync, getInAppBrowserInfo, detectPrivateBrowsing, InAppBrowserInfo, requestPersistentStorage } from '../lib/deviceUtils';
-import { mergeUserProfiles, findMatchingUser } from '../lib/googleApi';
+import { mergeUserProfiles } from '../lib/googleApi';
 import { DevicePermissionsStatus } from '../lib/devicePermissions';
+import { storeSessionToken } from '../lib/sessionClient';
 
 interface AppLoginFormProps {
   profiles: UserProfile[];
@@ -129,20 +130,32 @@ export const AppLoginForm: React.FC<AppLoginFormProps> = ({
         triggerError(msg);
       });
     } else {
-      // Find user by matching UserID/Email and Password against merged candidate profiles
-      const candidateProfiles = mergeUserProfiles(profiles);
-      const matched = findMatchingUser(candidateProfiles, userId, password);
-
-      if (matched) {
-        const deviceCheck = await validateDeviceAccessAndBind(matched, undefined, candidateProfiles);
-        if (!deviceCheck.success) {
-          triggerError(deviceCheck.errorMessage || 'Akses ditolak.');
-          return;
+      // Route through backend verification endpoint
+      try {
+        const resp = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: userId.trim(), password: password.trim() })
+        });
+        const data = await resp.json().catch(() => null);
+        if (resp.ok && data?.success && data?.user) {
+          const matched = data.user;
+          const candidateProfiles = mergeUserProfiles(profiles);
+          const deviceCheck = await validateDeviceAccessAndBind(matched, undefined, candidateProfiles);
+          if (!deviceCheck.success) {
+            triggerError(deviceCheck.errorMessage || 'Akses ditolak.');
+            return;
+          }
+          saveRememberMeState(userId, rememberMe);
+          if (data.sessionToken) {
+            storeSessionToken(data.sessionToken);
+          }
+          onLoginSuccess(deviceCheck.updatedUser || matched);
+        } else {
+          triggerError(data?.error || 'User ID atau Password salah. Silakan coba lagi.');
         }
-        saveRememberMeState(userId, rememberMe);
-        onLoginSuccess(deviceCheck.updatedUser || matched);
-      } else {
-        triggerError('User ID atau Password salah. Silakan coba lagi.');
+      } catch (err: any) {
+        triggerError('Gagal terhubung ke server login. Silakan periksa koneksi internet Anda.');
       }
     }
   };

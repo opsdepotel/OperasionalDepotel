@@ -44,13 +44,24 @@ self.addEventListener('fetch', (event) => {
 
           // Search all formData fields for any file object
           for (const [key, value] of formData.entries()) {
-            if (value && typeof value === 'object' && (value instanceof File || value.size > 0)) {
+            if (value && typeof value === 'object' && (value instanceof File || value instanceof Blob || (typeof value.size === 'number' && value.size > 0))) {
               file = value;
               break;
             }
           }
 
           if (file) {
+            // Read into independent Blob to prevent content URI lifecycle revocation on Android 10
+            let cleanBlob = file;
+            try {
+              if (typeof file.arrayBuffer === 'function') {
+                const buffer = await file.arrayBuffer();
+                cleanBlob = new Blob([buffer], { type: file.type || 'image/jpeg' });
+              }
+            } catch (bufErr) {
+              console.warn('[SW] arrayBuffer conversion fallback to original file:', bufErr);
+            }
+
             const db = await new Promise((resolve, reject) => {
               const req = indexedDB.open('DIOMS_SHARE_DB', 1);
               req.onupgradeneeded = (e) => {
@@ -65,19 +76,30 @@ self.addEventListener('fetch', (event) => {
 
             const record = {
               id: 'share_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
-              blob: file,
+              blob: cleanBlob,
               fileName: file.name || `shared_receipt_${Date.now()}.jpg`,
               mimeType: file.type || 'image/jpeg',
               timestamp: Date.now(),
             };
 
+            // Wait for full transaction commit (tx.oncomplete) before redirecting
             await new Promise((resolve, reject) => {
               const tx = db.transaction(['shared_receipts'], 'readwrite');
               const store = tx.objectStore('shared_receipts');
               const putReq = store.put(record);
-              putReq.onsuccess = () => resolve();
+              tx.oncomplete = () => resolve();
+              tx.onerror = () => reject(tx.error);
               putReq.onerror = () => reject(putReq.error);
             });
+
+            // Broadcast to any active client window
+            try {
+              if (typeof BroadcastChannel !== 'undefined') {
+                const bc = new BroadcastChannel('dioms_shared_receipt_channel');
+                bc.postMessage({ type: 'NEW_SHARED_RECEIPT', recordId: record.id });
+                bc.close();
+              }
+            } catch (bcErr) {}
           }
         } catch (err) {
           console.error('Service Worker Share Target handling error:', err);

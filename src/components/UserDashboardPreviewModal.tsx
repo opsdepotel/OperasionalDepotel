@@ -8,7 +8,7 @@ import { UserProfile, BudgetRequest, UsageReportItem, UserActivity, ItemReviewHi
 import { useBackHandler } from '../hooks/useBackHandler';
 import { DashboardStats } from './DashboardStats';
 import { ZoomableImage } from './ZoomableImage';
-import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
+import { parseNumericValue, formatDivisiSubDivisi, getCachedClosedUsageItems, fetchUsageItemsForUid, SPREADSHEET_ID } from '../lib/googleApi';
 import { X, Search, User, Smartphone, Fuel, Eye, LayoutDashboard, Filter, UserCheck, FileText, CheckCircle2, AlertTriangle, Clock, MapPin, Camera, ExternalLink, ShieldCheck, Lock, History, Coins, ArrowLeft, Image as ImageIcon } from 'lucide-react';
 
 interface UserDashboardPreviewModalProps {
@@ -20,6 +20,7 @@ interface UserDashboardPreviewModalProps {
   activities: UserActivity[];
   histories?: ItemReviewHistory[];
   sites?: SiteInfo[];
+  googleToken?: string;
 }
 
 export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps> = ({
@@ -30,7 +31,8 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
   usageItems = [],
   activities = [],
   histories = [],
-  sites = []
+  sites = [],
+  googleToken
 }) => {
   useBackHandler(isOpen, onClose, 'isUserDashboardPreviewModalOpen');
 
@@ -43,7 +45,29 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
 
   // State for Read-Only Request Detail Modal & Photo Zoom
   const [selectedDetailRequest, setSelectedDetailRequest] = useState<BudgetRequest | null>(null);
+  const [detailClosedItems, setDetailClosedItems] = useState<UsageReportItem[] | null>(null);
   const [previewPhoto, setPreviewPhoto] = useState<{ url: string; title: string } | null>(null);
+
+  useEffect(() => {
+    if (selectedDetailRequest && selectedDetailRequest.status === RequestStatus.CLOSED) {
+      const cached = getCachedClosedUsageItems(selectedDetailRequest.id);
+      if (cached && cached.length > 0) {
+        setDetailClosedItems(cached);
+        return;
+      }
+      fetchUsageItemsForUid(googleToken || '', SPREADSHEET_ID, selectedDetailRequest.id)
+        .then(items => {
+          if (items && items.length > 0) {
+            setDetailClosedItems(items);
+          }
+        })
+        .catch(err => {
+          console.warn('[UserDashboardPreviewModal] On-demand closed usage fetch failed:', err);
+        });
+    } else {
+      setDetailClosedItems(null);
+    }
+  }, [selectedDetailRequest, googleToken]);
 
   useBackHandler(!!selectedDetailRequest, () => setSelectedDetailRequest(null), 'selectedDetailRequestModal');
   useBackHandler(!!previewPhoto, () => setPreviewPhoto(null), 'previewPhotoModal');
@@ -579,8 +603,11 @@ export const UserDashboardPreviewModal: React.FC<UserDashboardPreviewModalProps>
                 {/* Requester Banner */}
                 {(() => {
                   const reqProfile = profiles.find(p => p.email.toLowerCase() === selectedDetailRequest.userEmail.toLowerCase());
-                  const reqUsage = usageItems.filter(u => u.requestId === selectedDetailRequest.id);
-                  const totalNota = reqUsage.reduce((sum, item) => sum + (item.totalHarga || 0), 0);
+                  const cachedClosed = (selectedDetailRequest.status === RequestStatus.CLOSED && detailClosedItems && detailClosedItems.length > 0)
+                    ? detailClosedItems
+                    : (selectedDetailRequest.status === RequestStatus.CLOSED ? getCachedClosedUsageItems(selectedDetailRequest.id) : null);
+                  const reqUsage = (cachedClosed && cachedClosed.length > 0) ? cachedClosed : usageItems.filter(u => u.requestId === selectedDetailRequest.id);
+                  const totalNota = reqUsage.reduce((sum, item) => sum + (item.nominal || (item as any).totalHarga || 0), 0);
                   const adminTransfer = selectedDetailRequest.adminActionAmount || 0;
                   const reqHistories = (histories || []).filter(h => h.requestId === selectedDetailRequest.id);
 

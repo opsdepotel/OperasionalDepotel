@@ -27,7 +27,9 @@ provider.addScope('https://www.googleapis.com/auth/drive');
 provider.addScope('https://www.googleapis.com/auth/drive.file');
 
 let isSigningIn = false;
+// In-Memory Token Storage: Tokens are held purely in memory to prevent XSS exposure via localStorage
 let cachedAccessToken: string | null = null;
+let cachedTokenTimestamp: number | null = null;
 
 // Initialize auth state listener. Call this on app load.
 export const initAuth = async (
@@ -39,17 +41,23 @@ export const initAuth = async (
     const saData = await fetchServiceAccountToken();
     if (saData && saData.token) {
       cachedAccessToken = saData.token;
-      localStorage.setItem('g_access_token', saData.token);
-      localStorage.setItem('g_token_timestamp', Date.now().toString());
-      localStorage.setItem('g_is_service_account', 'true');
-      
+      cachedTokenTimestamp = Date.now();
+
+      // Clean up legacy localStorage tokens
+      try {
+        localStorage.removeItem('g_access_token');
+        localStorage.removeItem('g_token_timestamp');
+        localStorage.removeItem('g_is_service_account');
+        localStorage.removeItem('g_user_oauth_token');
+      } catch {}
+
       const saUser = {
         uid: 'service_account',
         email: saData.email || 'service-account@google.iam.gserviceaccount.com',
         displayName: 'Google Service Account (Auto)',
         photoURL: ''
       } as unknown as User;
-      
+
       if (onAuthSuccess) {
         onAuthSuccess(saUser, saData.token);
         return () => {};
@@ -59,33 +67,23 @@ export const initAuth = async (
     console.warn('Service account auto-auth check skipped:', saErr);
   }
 
-  // If we have a stored token, check if it's already expired
-  const storedToken = localStorage.getItem('g_access_token');
-  if (storedToken) {
-    if (isGoogleTokenExpired()) {
-      cachedAccessToken = null;
-      localStorage.removeItem('g_access_token');
-      localStorage.removeItem('g_token_timestamp');
-    } else {
-      cachedAccessToken = storedToken;
-    }
+  // Check in-memory token status
+  if (cachedAccessToken && isGoogleTokenExpired()) {
+    cachedAccessToken = null;
+    cachedTokenTimestamp = null;
   }
 
   if (!auth) {
-    const backupToken = localStorage.getItem('g_access_token');
-    if (backupToken && !isGoogleTokenExpired()) {
-      cachedAccessToken = backupToken;
+    if (cachedAccessToken && !isGoogleTokenExpired()) {
       const storedUserJson = localStorage.getItem('g_google_user');
       let parsedUser: User | null = null;
       if (storedUserJson) {
         try {
           parsedUser = JSON.parse(storedUserJson) as User;
-        } catch (e) {
-          // ignore
-        }
+        } catch (e) {}
       }
       if (parsedUser && onAuthSuccess) {
-        onAuthSuccess(parsedUser, backupToken);
+        onAuthSuccess(parsedUser, cachedAccessToken);
         return () => {};
       }
     }
@@ -98,42 +96,37 @@ export const initAuth = async (
       if (cachedAccessToken && !isGoogleTokenExpired()) {
         if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
       } else {
-        // If we don't have the cached access token in memory or localStorage,
-        // we check if there's any stored token
-        const backupToken = localStorage.getItem('g_access_token');
-        if (backupToken && !isGoogleTokenExpired()) {
-          cachedAccessToken = backupToken;
-          if (onAuthSuccess) onAuthSuccess(user, backupToken);
-        } else {
-          cachedAccessToken = null;
-          localStorage.removeItem('g_access_token');
-          if (onAuthFailure) onAuthFailure();
-        }
+        // Silently fetch fresh Service Account token into memory
+        try {
+          const freshSa = await fetchServiceAccountToken(true);
+          if (freshSa && freshSa.token) {
+            cachedAccessToken = freshSa.token;
+            cachedTokenTimestamp = Date.now();
+            if (onAuthSuccess) onAuthSuccess(user, freshSa.token);
+            return;
+          }
+        } catch {}
+        cachedAccessToken = null;
+        cachedTokenTimestamp = null;
+        if (onAuthFailure) onAuthFailure();
       }
     } else {
-      // If there's no auth user, but we have a stored token, we can still use it!
-      // This is helpful if we want to bypass Google login completely for daily use.
-      const backupToken = localStorage.getItem('g_access_token');
-      if (backupToken && !isGoogleTokenExpired()) {
-        cachedAccessToken = backupToken;
-        // Mock a user object or retrieve from localStorage
+      if (cachedAccessToken && !isGoogleTokenExpired()) {
         const storedUserJson = localStorage.getItem('g_google_user');
         let parsedUser: User | null = null;
         if (storedUserJson) {
           try {
             parsedUser = JSON.parse(storedUserJson) as User;
-          } catch (e) {
-            // ignore
-          }
+          } catch (e) {}
         }
         if (parsedUser && onAuthSuccess) {
-          onAuthSuccess(parsedUser, backupToken);
+          onAuthSuccess(parsedUser, cachedAccessToken);
           return;
         }
       }
 
       cachedAccessToken = null;
-      localStorage.removeItem('g_access_token');
+      cachedTokenTimestamp = null;
       if (onAuthFailure) onAuthFailure();
     }
   });
@@ -153,18 +146,17 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
 
     cachedAccessToken = credential.accessToken;
-    const nowTs = Date.now().toString();
+    cachedTokenTimestamp = Date.now();
     try {
-      localStorage.setItem('g_access_token', cachedAccessToken);
-      localStorage.setItem('g_user_oauth_token', cachedAccessToken);
-      localStorage.setItem('g_user_oauth_email', result.user.email || '');
-      localStorage.setItem('g_token_timestamp', nowTs);
+      localStorage.removeItem('g_access_token');
+      localStorage.removeItem('g_user_oauth_token');
+      localStorage.removeItem('g_token_timestamp');
       localStorage.removeItem('g_is_service_account');
       window.dispatchEvent(new CustomEvent('google_user_token_updated', {
         detail: { token: cachedAccessToken, email: result.user.email }
       }));
       
-      // Serialize some of the user profile so we can restore it offline / on bypass
+      // Serialize minimal user profile for offline UI display
       const minimalUser = {
         uid: result.user.uid,
         email: result.user.email,
@@ -173,7 +165,7 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       };
       localStorage.setItem('g_google_user', JSON.stringify(minimalUser));
     } catch (storageErr) {
-      console.warn('Failed to cache token to localStorage:', storageErr);
+      console.warn('Failed to clean token storage:', storageErr);
     }
 
     return { user: result.user, accessToken: cachedAccessToken };
@@ -196,7 +188,19 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  return cachedAccessToken || localStorage.getItem('g_access_token');
+  if (cachedAccessToken && !isGoogleTokenExpired()) {
+    return cachedAccessToken;
+  }
+  // If not present in memory or expired, silently refresh from Service Account
+  try {
+    const sa = await fetchServiceAccountToken(true);
+    if (sa && sa.token) {
+      cachedAccessToken = sa.token;
+      cachedTokenTimestamp = Date.now();
+      return cachedAccessToken;
+    }
+  } catch {}
+  return cachedAccessToken;
 };
 
 export const getFirebaseIdToken = async (forceRefresh = false): Promise<string | null> => {
@@ -207,34 +211,25 @@ export const getFirebaseIdToken = async (forceRefresh = false): Promise<string |
   } catch (e) {
     console.warn('Failed to get Firebase ID token:', e);
   }
-  return cachedAccessToken || localStorage.getItem('g_access_token');
+  return cachedAccessToken;
 };
 
 /**
- * Checks whether the stored Google OAuth token is expired (older than 55 minutes, as Google tokens expire in 60 minutes)
+ * Checks whether the in-memory Google OAuth token is expired (older than 50 minutes, Google tokens expire in 60 minutes)
  */
 export const isGoogleTokenExpired = (): boolean => {
-  const token = localStorage.getItem('g_access_token');
-  if (!token) return true;
-  const tsStr = localStorage.getItem('g_token_timestamp');
-  if (!tsStr) return false; // If no timestamp was recorded, assume valid until an API call fails
-  const ts = parseInt(tsStr, 10);
-  if (isNaN(ts)) return false;
-  // Google OAuth and Service Account access tokens expire in 3600s (60 mins). Flag as expired if older than 50 mins (3000000ms) for proactive auto-renewal
-  return Date.now() - ts > 3000000;
+  if (!cachedAccessToken) return true;
+  if (!cachedTokenTimestamp) return false;
+  return Date.now() - cachedTokenTimestamp > 3000000;
 };
 
 /**
  * Gets the remaining valid time of the current Google OAuth token in minutes (0 to 60)
  */
 export const getTokenRemainingMinutes = (): number => {
-  const token = localStorage.getItem('g_access_token');
-  if (!token) return 0;
-  const tsStr = localStorage.getItem('g_token_timestamp');
-  if (!tsStr) return 60;
-  const ts = parseInt(tsStr, 10);
-  if (isNaN(ts)) return 60;
-  const elapsedMs = Date.now() - ts;
+  if (!cachedAccessToken) return 0;
+  if (!cachedTokenTimestamp) return 60;
+  const elapsedMs = Date.now() - cachedTokenTimestamp;
   const totalMs = 3600000; // 60 minutes
   const remainingMs = Math.max(0, totalMs - elapsedMs);
   return Math.floor(remainingMs / 60000);
@@ -249,7 +244,24 @@ export const logout = async () => {
     // Ignore signOut errors if we were not fully logged in to Firebase
   }
   cachedAccessToken = null;
-  localStorage.removeItem('g_access_token');
-  localStorage.removeItem('g_token_timestamp');
-  localStorage.removeItem('g_google_user');
+  cachedTokenTimestamp = null;
+  try {
+    localStorage.removeItem('g_access_token');
+    localStorage.removeItem('g_token_timestamp');
+    localStorage.removeItem('g_user_oauth_token');
+    localStorage.removeItem('g_is_service_account');
+    localStorage.removeItem('g_google_user');
+  } catch {}
+};
+
+/**
+ * Checks whether the active Google connection is from an authenticated personal Google account (Firebase OAuth),
+ * rather than the server-managed Service Account gateway.
+ */
+export const isPersonalGoogleSession = (): boolean => {
+  try {
+    return !!(auth && auth.currentUser && auth.currentUser.uid && auth.currentUser.uid !== 'service_account');
+  } catch {
+    return false;
+  }
 };

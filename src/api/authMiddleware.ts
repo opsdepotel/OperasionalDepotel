@@ -4,6 +4,7 @@ import { Request, Response, NextFunction } from 'express';
 import { Role } from '../types.js';
 import { parseServiceAccountCredentials, getServerAccessToken } from '../lib/serverGoogleAuth.js';
 import { readServerConfig } from './expressApp.js';
+import { verifySessionToken } from './sessionToken.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -235,7 +236,35 @@ export async function requireFirebaseAuth(req: Request, res: Response, next: Nex
     });
   }
 
-  // 1. If token is a 3-part JWT, verify with Firebase Admin SDK
+  // 1. Check if token is a Server-Signed Session Token (2-part HMAC-SHA256)
+  const isSessionToken = typeof idToken === 'string' && idToken.split('.').length === 2;
+  if (isSessionToken) {
+    const sessionRes = verifySessionToken(idToken);
+    if (sessionRes.valid && sessionRes.payload) {
+      const p = sessionRes.payload;
+      const email = (p.email || '').toLowerCase().trim();
+      req.user = {
+        uid: p.userId || email,
+        email,
+        role: p.role as Role,
+        name: p.userId || email,
+        picture: '',
+        decodedToken: {
+          uid: p.userId || email,
+          email,
+          auth_time: Math.floor(p.iat / 1000),
+          iat: Math.floor(p.iat / 1000),
+          exp: Math.floor(p.exp / 1000),
+          firebase: { identities: {}, sign_in_provider: 'dioms_session' },
+          iss: 'dioms_session',
+          sub: p.userId || email
+        } as DecodedIdToken
+      };
+      return next();
+    }
+  }
+
+  // 2. If token is a 3-part JWT, verify with Firebase Admin SDK
   const isJwt = typeof idToken === 'string' && idToken.split('.').length === 3;
   if (isJwt) {
     try {

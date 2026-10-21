@@ -3,14 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { UsageReportItem, ItemReviewHistory, Role, ItemStatus, formatTimestamp } from '../types';
 import { ZoomableImage } from './ZoomableImage';
+import { fetchHistoryForUid, SPREADSHEET_ID } from '../lib/googleApi';
 import {
   X, History, CheckCircle2, AlertTriangle, Edit3, PlusCircle,
-  FileText, Calendar, Coins, User, ArrowLeft, ExternalLink, Clock, MessageSquare, ShieldCheck
+  FileText, Calendar, Coins, User, ArrowLeft, ExternalLink, Clock, MessageSquare, ShieldCheck, Loader2
 } from 'lucide-react';
 
 interface ItemHistoryModalProps {
@@ -18,18 +19,57 @@ interface ItemHistoryModalProps {
   histories: ItemReviewHistory[];
   onClose: () => void;
   onPreviewDocument?: (doc: { url: string; fileId?: string; title?: string }) => void;
+  googleToken?: string;
+  spreadsheetId?: string;
 }
 
 export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
   item,
   histories,
   onClose,
-  onPreviewDocument
+  onPreviewDocument,
+  googleToken,
+  spreadsheetId
 }) => {
   useBackHandler(true, onClose, 'itemHistoryModal');
 
   const [previewDoc, setPreviewDoc] = useState<{ url: string; fileId?: string; title: string } | null>(null);
   useBackHandler(!!previewDoc, () => setPreviewDoc(null), 'itemHistory_previewDoc');
+
+  const [onDemandHistories, setOnDemandHistories] = useState<ItemReviewHistory[]>([]);
+  const [isLoadingOnDemand, setIsLoadingOnDemand] = useState(false);
+
+  useEffect(() => {
+    const targetUid = item.requestId || item.id;
+    if (!targetUid) return;
+
+    // Check if histories already has any entry matching targetUid
+    const hasHistoryInProps = histories.some(h => 
+      h.itemUid === item.id || 
+      h.requestUid === item.id || 
+      (item.requestId && (h.requestUid === item.requestId || h.itemUid === item.requestId))
+    );
+    if (hasHistoryInProps) return;
+
+    let isMounted = true;
+    setIsLoadingOnDemand(true);
+    fetchHistoryForUid(googleToken || '', spreadsheetId || SPREADSHEET_ID, targetUid)
+      .then(fetched => {
+        if (isMounted && fetched && fetched.length > 0) {
+          setOnDemandHistories(fetched);
+        }
+      })
+      .catch(err => {
+        console.warn('[ItemHistoryModal] On-demand history load failed:', err);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingOnDemand(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [item.id, item.requestId, histories, googleToken, spreadsheetId]);
 
   // Helper to robustly parse various date formats into milliseconds
   const parseTimestampToMs = (tsStr?: string): number => {
@@ -64,8 +104,15 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
     return 0;
   };
 
+  const combinedHistories = useMemo(() => {
+    if (onDemandHistories.length === 0) return histories;
+    const existingIds = new Set(histories.map(h => h.id));
+    const toAdd = onDemandHistories.filter(h => !existingIds.has(h.id));
+    return [...histories, ...toAdd];
+  }, [histories, onDemandHistories]);
+
   // Filter histories for this specific item or request and sort by newest timestamp first
-  const filteredHistories = histories
+  const filteredHistories = combinedHistories
     .filter(h => 
       h.itemUid === item.id || 
       h.requestUid === item.id || 
@@ -309,6 +356,13 @@ export const ItemHistoryModal: React.FC<ItemHistoryModalProps> = ({
 
         {/* Timeline Content */}
         <div className="p-4 overflow-y-auto flex-1 space-y-4">
+          {isLoadingOnDemand && (
+            <div className="flex items-center justify-center gap-2 py-3 px-4 bg-indigo-50/80 border border-indigo-150 rounded-xl text-indigo-700 text-xs font-semibold animate-pulse">
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
+              <span>Memuat riwayat persetujuan lengkap dari database...</span>
+            </div>
+          )}
+
           {itemHistories.length === 0 ? (
             <div className="text-center py-10 text-slate-400 text-xs space-y-2">
               <History className="w-8 h-8 mx-auto text-slate-300" />

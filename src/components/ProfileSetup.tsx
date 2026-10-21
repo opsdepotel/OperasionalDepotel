@@ -36,7 +36,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
 
   // Form states
   const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState('123456');
+  const [password, setPassword] = useState('');
   const [nama, setNama] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>(Role.USER);
@@ -97,7 +97,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setEditingProfile(p);
     setIsAddingNew(false);
     setUserId(p.userId || '');
-    setPassword(p.password || '123456');
+    setPassword('');
     setNama(p.nama || '');
     setEmail(p.email);
     setRole(p.role);
@@ -119,7 +119,7 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
     setEditingProfile(null);
     setIsAddingNew(true);
     setUserId('');
-    setPassword('123456');
+    setPassword('');
     setNama('');
     setEmail('');
     setRole(Role.USER);
@@ -191,8 +191,8 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
       setError('Format Email Pengguna tidak valid.');
       return;
     }
-    if (!password.trim()) {
-      setError('Password wajib diisi.');
+    if (isAddingNew && !password.trim()) {
+      setError('Password wajib diisi untuk pengguna baru.');
       return;
     }
 
@@ -376,18 +376,23 @@ export const ProfileSetup: React.FC<ProfileSetupProps> = ({
 
             {/* Password */}
             <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1">Password Login</label>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">
+                Password Login {isAddingNew && <span className="text-red-500">*</span>}
+              </label>
               <div className="relative">
                 <input
                   type="text"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="123456"
+                  placeholder={editingProfile ? "Kosongkan jika tidak ingin mengubah password" : "Minimal 4 karakter..."}
                   className="w-full pl-9 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none font-mono"
-                  required
+                  required={isAddingNew}
                 />
                 <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
               </div>
+              {editingProfile && (
+                <p className="text-[10px] text-slate-400 mt-1">Biarkan kosong jika kata sandi pengguna tidak ingin diubah.</p>
+              )}
             </div>
 
             {/* Role */}

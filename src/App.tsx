@@ -7,7 +7,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
-import { initAuth, logout, isGoogleTokenExpired } from './lib/firebase';
+import { initAuth, logout, isGoogleTokenExpired, isPersonalGoogleSession } from './lib/firebase';
 import { fetchServiceAccountToken } from './lib/serviceAccountClient';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
@@ -55,7 +55,6 @@ import {
   parseNumericValue,
   formatDivisiSubDivisi,
   mergeUserProfiles,
-  findMatchingUser,
   SPREADSHEET_ID,
   DRIVE_FOLDER_ID,
   fetchGlobalConfig
@@ -63,6 +62,14 @@ import {
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
 import { validateDeviceAccessAndBind, requestPersistentStorage, isMobileDevice, generateHardwareFingerprint, isCurrentDeviceValidForUserSync, getBrowserAgnosticHardwareSignature } from './lib/deviceUtils';
 import { safeSetItem, safeSetJson } from './lib/storage';
+import {
+  getStoredSessionToken,
+  storeSessionToken,
+  clearStoredSession,
+  decodeClientSessionPayload,
+  verifySessionWithServer,
+  LOGGED_IN_USER_KEY
+} from './lib/sessionClient';
 
 // Components
 import { Header } from './components/Header';
@@ -431,6 +438,44 @@ export default function App() {
     refreshOfflineQueues();
   }, []);
 
+  // Verify Server-Signed Session Token on initial application mount
+  useEffect(() => {
+    let isMounted = true;
+    const checkServerSession = async () => {
+      const token = getStoredSessionToken();
+      const savedUserId = localStorage.getItem(LOGGED_IN_USER_KEY) || sessionStorage.getItem(LOGGED_IN_USER_KEY);
+      if (!token && !savedUserId) return;
+
+      try {
+        const result = await verifySessionWithServer(spreadsheetId || undefined);
+        if (!isMounted) return;
+
+        if (result.success && result.user) {
+          setUserProfile(result.user);
+          setActiveRole(result.user.role);
+          if (result.sessionToken) {
+            storeSessionToken(result.sessionToken);
+          }
+        } else if (!result.isOffline) {
+          // If server rejected (tampered token, revoked user, or expired session), clear session safely
+          console.warn('[Session] Server rejected session token:', result.error);
+          setUserProfile(null);
+          clearStoredSession();
+          if (result.error) {
+            setLoginRejectError(result.error);
+          }
+        }
+      } catch (err) {
+        console.warn('[Session] Background session verification error:', err);
+      }
+    };
+
+    checkServerSession();
+    return () => {
+      isMounted = false;
+    };
+  }, [spreadsheetId]);
+
   // Data arrays
   const [requests, setRequests] = useState<BudgetRequest[]>(() => {
     try {
@@ -491,41 +536,62 @@ export default function App() {
   });
   const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
     try {
-      const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
-      if (savedUserId) {
-        const cachedProfsStr = localStorage.getItem('op_app_cached_profiles');
-        const cachedList = cachedProfsStr ? JSON.parse(cachedProfsStr) : [];
-        const candidateProfiles = mergeUserProfiles(cachedList);
-        const cleanSavedId = savedUserId.trim().toLowerCase();
-        const matched = candidateProfiles.find(
-          p => (p.userId || '').trim().toLowerCase() === cleanSavedId || (p.email || '').trim().toLowerCase() === cleanSavedId
-        );
-        if (matched) {
-          const isMobileUser =
-            matched.mobile === true ||
-            String(matched.mobile).trim().toUpperCase() === 'TRUE' ||
-            String(matched.mobile).trim().toUpperCase() === 'YA' ||
-            String(matched.mobile).trim() === '1';
+      const sessionToken = getStoredSessionToken();
+      const savedUserId = localStorage.getItem(LOGGED_IN_USER_KEY) || sessionStorage.getItem(LOGGED_IN_USER_KEY);
 
-          if (isMobileUser) {
-            if (!isMobileDevice()) {
-              localStorage.removeItem('op_app_logged_in_user_id');
-              sessionStorage.removeItem('op_app_logged_in_user_id');
-              return null;
-            }
-            if (matched.deviceId && matched.deviceId.trim()) {
-              if (!isCurrentDeviceValidForUserSync(matched)) {
-                localStorage.removeItem('op_app_logged_in_user_id');
-                sessionStorage.removeItem('op_app_logged_in_user_id');
-                return null;
-              }
-            }
-          }
-          return matched;
+      if (!sessionToken && !savedUserId) {
+        return null;
+      }
+
+      // Check client-side expiration if token is present
+      if (sessionToken) {
+        const payload = decodeClientSessionPayload(sessionToken);
+        if (payload && Date.now() > payload.exp) {
+          clearStoredSession();
+          return null;
         }
       }
+
+      // Pre-load from cache for instant initial rendering while server verification runs
+      const cachedProfsStr = localStorage.getItem('op_app_cached_profiles');
+      const cachedList = cachedProfsStr ? JSON.parse(cachedProfsStr) : [];
+      const candidateProfiles = mergeUserProfiles(cachedList);
+
+      const tokenPayload = sessionToken ? decodeClientSessionPayload(sessionToken) : null;
+      const targetIdentifier = tokenPayload
+        ? (tokenPayload.userId || tokenPayload.email || savedUserId || '')
+        : (savedUserId || '');
+
+      const cleanSavedId = (targetIdentifier || '').trim().toLowerCase();
+      if (!cleanSavedId) return null;
+
+      const matched = candidateProfiles.find(
+        p => (p.userId || '').trim().toLowerCase() === cleanSavedId || (p.email || '').trim().toLowerCase() === cleanSavedId
+      );
+
+      if (matched) {
+        const isMobileUser =
+          matched.mobile === true ||
+          String(matched.mobile).trim().toUpperCase() === 'TRUE' ||
+          String(matched.mobile).trim().toUpperCase() === 'YA' ||
+          String(matched.mobile).trim() === '1';
+
+        if (isMobileUser) {
+          if (!isMobileDevice()) {
+            clearStoredSession();
+            return null;
+          }
+          if (matched.deviceId && matched.deviceId.trim()) {
+            if (!isCurrentDeviceValidForUserSync(matched)) {
+              clearStoredSession();
+              return null;
+            }
+          }
+        }
+        return matched;
+      }
     } catch (e) {
-      console.warn('Gagal memuat sesi user profile dari localStorage:', e);
+      console.warn('Gagal memuat sesi awal dari storage:', e);
     }
     return null;
   });
@@ -575,7 +641,7 @@ export default function App() {
     if (!cleanUid) return;
 
     try {
-      const activeToken = token || localStorage.getItem('g_access_token') || '';
+      const activeToken = token || '';
       const activeSheetId = spreadsheetId || SPREADSHEET_ID;
       const records = await fetchHistoryForUid(activeToken, activeSheetId, cleanUid);
       if (records && records.length > 0) {
@@ -763,12 +829,30 @@ export default function App() {
   // Check for received shared receipts from IndexedDB
   useEffect(() => {
     let isMounted = true;
+    let broadcastChannel: BroadcastChannel | null = null;
+
     const checkSharedReceipts = async () => {
       try {
-        if (typeof window !== 'undefined' && window.location.search.includes('shared_receipt=1')) {
+        const isRedirectFromShare = typeof window !== 'undefined' && window.location.search.includes('shared_receipt=1');
+
+        let record = await getLatestSharedReceipt();
+
+        // If opened via share target redirect and no record found yet, poll up to 5 times (total ~2s)
+        // to handle slower eMMC storage write completion on older devices like Android 10
+        if (!record && isRedirectFromShare && isMounted) {
+          const delays = [200, 300, 400, 500, 600];
+          for (const delay of delays) {
+            await new Promise(r => setTimeout(r, delay));
+            if (!isMounted) return;
+            record = await getLatestSharedReceipt();
+            if (record) break;
+          }
+        }
+
+        if (isRedirectFromShare && typeof window !== 'undefined') {
           window.history.replaceState({}, '', window.location.pathname);
         }
-        const record = await getLatestSharedReceipt();
+
         if (!isMounted) return;
 
         if (record) {
@@ -811,15 +895,35 @@ export default function App() {
       checkSharedReceipts();
     };
     window.addEventListener('focus', handleFocus);
+
+    // Listen for immediate Service Worker broadcast channel notifications
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        broadcastChannel = new BroadcastChannel('dioms_shared_receipt_channel');
+        broadcastChannel.onmessage = (event) => {
+          if (event.data?.type === 'NEW_SHARED_RECEIPT') {
+            checkSharedReceipts();
+          }
+        };
+      }
+    } catch (bcErr) {}
+
     return () => {
       isMounted = false;
       window.removeEventListener('focus', handleFocus);
+      if (broadcastChannel) {
+        try {
+          broadcastChannel.close();
+        } catch (e) {}
+      }
     };
   }, [userProfile, activeRole]);
 
   // Trigger loading & initialization
   useEffect(() => {
     let isMounted = true;
+    let unsubscribeAuth: (() => void) | undefined;
+
     const safetyTimer = setTimeout(() => {
       if (isMounted) setIsAuthChecking(false);
     }, 4000);
@@ -839,11 +943,24 @@ export default function App() {
         setNeedsAuth(true);
         setIsAuthChecking(false);
       }
-    );
+    )
+      .then((unsub) => {
+        if (!isMounted) {
+          if (typeof unsub === 'function') unsub();
+        } else {
+          unsubscribeAuth = unsub;
+        }
+      })
+      .catch((err) => {
+        console.warn('[initAuth] Error inisialisasi listener auth:', err);
+      });
 
     return () => {
       isMounted = false;
       clearTimeout(safetyTimer);
+      if (typeof unsubscribeAuth === 'function') {
+        unsubscribeAuth();
+      }
     };
   }, []);
 
@@ -1168,8 +1285,10 @@ export default function App() {
       }
 
       // If the user is already logged in or has a saved session, keep their active session and update with the latest data
-      const savedUserId = localStorage.getItem('op_app_logged_in_user_id') || sessionStorage.getItem('op_app_logged_in_user_id');
-      const cleanSavedId = (savedUserId || '').trim().toLowerCase();
+      const token = getStoredSessionToken();
+      const decoded = token ? decodeClientSessionPayload(token) : null;
+      const targetUserId = decoded ? (decoded.userId || decoded.email) : (localStorage.getItem(LOGGED_IN_USER_KEY) || sessionStorage.getItem(LOGGED_IN_USER_KEY));
+      const cleanSavedId = (targetUserId || '').trim().toLowerCase();
 
       let activeLoggedInProfile: UserProfile | null = null;
 
@@ -1195,15 +1314,13 @@ export default function App() {
 
           if (isMobileUser) {
             if (!isMobileDevice()) {
-              localStorage.removeItem('op_app_logged_in_user_id');
-              sessionStorage.removeItem('op_app_logged_in_user_id');
+              clearStoredSession();
               setLoginRejectError('Akses Ditolak: Akun Anda dikonfigurasi wajib menggunakan perangkat mobile.');
               return null;
             }
             if (updatedProfile.deviceId && updatedProfile.deviceId.trim()) {
               if (!isCurrentDeviceValidForUserSync(updatedProfile)) {
-                localStorage.removeItem('op_app_logged_in_user_id');
-                sessionStorage.removeItem('op_app_logged_in_user_id');
+                clearStoredSession();
                 setLoginRejectError(`Akses Ditolak: Akun Anda telah terikat pada perangkat lain (ID: ${updatedProfile.deviceId}).`);
                 return null;
               }
@@ -1749,17 +1866,45 @@ export default function App() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('op_app_logged_in_user_id');
-    sessionStorage.removeItem('op_app_logged_in_user_id');
+  const handleLogout = async () => {
+    // 1. Clear DIOMS user session (Server-Signed Token & Local identity)
+    clearStoredSession();
     setUserProfile(null);
+
+    // 2. Clear volatile user-specific state & form memory
+    setSelectedRequest(null);
+    setEditingRequest(null);
+    setPendingSharedRecord(null);
+    setLoginRejectError(null);
+    setError(null);
     setActiveView('dashboard');
+
+    // 3. Smart Hybrid Logout: If user logged in using personal Google OAuth, sign out from Google as well
+    if (isPersonalGoogleSession()) {
+      try {
+        await logout();
+        setUser(null);
+        setToken(null);
+        // Silently restore company Service Account gateway if configured on server
+        initAuth(
+          (saUser, saToken) => {
+            setUser(saUser);
+            setToken(saToken);
+            setNeedsAuth(false);
+          },
+          () => {
+            setNeedsAuth(true);
+          }
+        ).catch(() => {});
+      } catch (err) {
+        console.warn('[handleLogout] Error signing out personal Google session:', err);
+      }
+    }
   };
 
   const handleResetGoogleConnection = async () => {
     await logout();
-    localStorage.removeItem('op_app_logged_in_user_id');
-    sessionStorage.removeItem('op_app_logged_in_user_id');
+    clearStoredSession();
     setUser(null);
     setToken(null);
     setNeedsAuth(true);
@@ -1772,13 +1917,16 @@ export default function App() {
     setActiveView('dashboard');
   };
 
-  const handleAppLoginSuccess = async (profile: UserProfile) => {
+  const handleAppLoginSuccess = async (profile: UserProfile, sessionToken?: string) => {
     setUserProfile(profile);
+    if (sessionToken) {
+      storeSessionToken(sessionToken);
+    }
     const identifier = (profile.userId && profile.userId.trim()) || (profile.email && profile.email.trim());
     if (identifier) {
-      safeSetItem('op_app_logged_in_user_id', identifier);
+      safeSetItem(LOGGED_IN_USER_KEY, identifier);
       try {
-        sessionStorage.setItem('op_app_logged_in_user_id', identifier);
+        sessionStorage.setItem(LOGGED_IN_USER_KEY, identifier);
       } catch (e) {}
     }
     safeSetJson('op_app_cached_profiles', profiles.map(p => 
@@ -1819,105 +1967,84 @@ export default function App() {
     onFormError: (msg: string) => void
   ) => {
     setError(null);
-    let currentToken = token;
-
     setIsLoading(true);
-    setLoadingStep('Menghubungkan ke database Google Sheets...');
+    setLoadingStep('Memverifikasi kredensial ke server...');
 
-    // 1. If token is missing, fetch Service Account token
-    if (!currentToken) {
-      try {
-        const saData = await fetchServiceAccountToken();
-        if (saData && saData.token) {
-          currentToken = saData.token;
-          setToken(saData.token);
-          setNeedsAuth(false);
-        }
-      } catch (err: any) {
-        console.warn('Service Account fetch token error:', err);
-      }
-    }
-
-    let sheetId = spreadsheetId || SPREADSHEET_ID;
-    if (!spreadsheetId) {
-      setSpreadsheetId(sheetId);
-    }
-
-    // 2. Validate credentials directly against live Google Sheets database
-    setLoadingStep('Memverifikasi kredensial ke database Google Sheets...');
-    let fetchedProfs: UserProfile[] | null = null;
-    let googleFetchFailed = false;
-    let serverDiagnosticError = '';
-
-    if (currentToken) {
-      try {
-        if (!driveFolderId) {
-          const folderId = await findOrCreateFolder(currentToken);
-          setDriveFolderId(folderId);
-        }
-
-        fetchedProfs = await fetchProfiles(currentToken, sheetId);
-      } catch (err: any) {
-        console.warn('Google API validation attempt initial error:', err);
-        googleFetchFailed = true;
-        serverDiagnosticError = err.message || '';
-      }
-    } else {
-      googleFetchFailed = true;
-    }
-
-    // Auto-recovery retry: If initial live fetch failed or returned empty profiles, force-refresh Service Account token
-    if (!fetchedProfs || fetchedProfs.length === 0 || googleFetchFailed) {
-      try {
-        console.log('[Login] Force-refreshing Service Account token from server for direct Google Sheets validation...');
-        const freshSa = await fetchServiceAccountToken(true);
-        if (freshSa && freshSa.token) {
-          currentToken = freshSa.token;
-          setToken(freshSa.token);
-          setNeedsAuth(false);
-          sheetId = spreadsheetId || SPREADSHEET_ID;
-          fetchedProfs = await fetchProfiles(freshSa.token, sheetId);
-          if (fetchedProfs && fetchedProfs.length > 0) {
-            googleFetchFailed = false;
-            serverDiagnosticError = '';
-          }
-        } else {
-          const saErr = localStorage.getItem('op_service_account_error');
-          if (saErr) {
-            serverDiagnosticError = saErr;
-          }
-        }
-      } catch (retryErr: any) {
-        console.warn('[Login] Service Account token force-refresh retry failed:', retryErr);
-        if (!serverDiagnosticError) {
-          serverDiagnosticError = retryErr.message || String(retryErr);
-        }
-      }
-    }
-
-    // 3. Build candidate profiles list: Live Google Sheets profiles take absolute precedence!
-    let cachedProfsList: UserProfile[] = [];
     try {
-      const cachedStr = localStorage.getItem('op_app_cached_profiles');
-      if (cachedStr) cachedProfsList = JSON.parse(cachedStr);
-    } catch {}
+      // 1. Verify credentials securely via backend /api/auth/login
+      // Passwords of other users are never sent to or stored in the browser
+      let authData: any = null;
+      try {
+        const authResp = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: userId.trim(),
+            password: password.trim(),
+            spreadsheetId: spreadsheetId || SPREADSHEET_ID
+          })
+        });
+        authData = await authResp.json().catch(() => null);
 
-    let candidateProfiles: UserProfile[];
-    if (fetchedProfs && fetchedProfs.length > 0) {
-      // Live database data from Google Sheets is authoritative and contains live passwords
-      candidateProfiles = fetchedProfs;
-    } else {
-      // Offline / fallback cache
-      candidateProfiles = mergeUserProfiles(profiles, cachedProfsList);
-    }
+        if (!authResp.ok || !authData || !authData.success || !authData.user) {
+          const errMsg = authData?.error || 'User ID atau Password salah. Silakan periksa kembali.';
+          setLoginRejectError(errMsg);
+          onFormError(errMsg);
+          return;
+        }
+      } catch (networkErr: any) {
+        console.warn('[Login] Network error connecting to /api/auth/login:', networkErr);
+        const errMsg = 'Gagal terhubung ke server login. Silakan periksa koneksi internet Anda atau coba beberapa saat lagi.';
+        setLoginRejectError(errMsg);
+        onFormError(errMsg);
+        return;
+      }
 
-    setProfiles(candidateProfiles);
-    safeSetJson('op_app_cached_profiles', candidateProfiles);
+      const matched: UserProfile = authData.user;
 
-    // 4. Match credentials against candidate profiles
-    const matched = findMatchingUser(candidateProfiles, userId, password);
+      // 2. Ensure Google Auth token is available for Drive & Sheets operations
+      setLoadingStep('Menyiapkan otentikasi Google...');
+      let currentToken = token;
+      if (!currentToken) {
+        try {
+          const saData = await fetchServiceAccountToken();
+          if (saData && saData.token) {
+            currentToken = saData.token;
+            setToken(saData.token);
+            setNeedsAuth(false);
+          }
+        } catch (err: any) {
+          console.warn('Service Account fetch token error on login:', err);
+        }
+      }
 
-    if (matched) {
+      let sheetId = spreadsheetId || SPREADSHEET_ID;
+      if (!spreadsheetId) {
+        setSpreadsheetId(sheetId);
+      }
+
+      // 3. Resolve candidate profiles for multi-device conflict detection (without passwords)
+      let cachedProfsList: UserProfile[] = [];
+      try {
+        const cachedStr = localStorage.getItem('op_app_cached_profiles');
+        if (cachedStr) cachedProfsList = JSON.parse(cachedStr);
+      } catch {}
+
+      let candidateProfiles = profiles && profiles.length > 0 ? profiles : cachedProfsList;
+      if (currentToken && sheetId && candidateProfiles.length === 0) {
+        try {
+          const fetchedProfs = await fetchProfiles(currentToken, sheetId);
+          if (fetchedProfs && fetchedProfs.length > 0) {
+            candidateProfiles = fetchedProfs;
+            setProfiles(candidateProfiles);
+            safeSetJson('op_app_cached_profiles', candidateProfiles);
+          }
+        } catch (profErr) {
+          console.warn('Background profiles fetch on login warning:', profErr);
+        }
+      }
+
+      // 4. Validate Device Access & Device Binding
       const deviceCheck = await validateDeviceAccessAndBind(
         matched,
         currentToken && sheetId
@@ -1936,17 +2063,16 @@ export default function App() {
         const errMsg = deviceCheck.errorMessage || 'Akses ditolak.';
         setLoginRejectError(errMsg);
         onFormError(errMsg);
-        setIsLoading(false);
-        setLoadingStep('');
         return;
       }
 
       const finalUser = deviceCheck.updatedUser || matched;
-      if (deviceCheck.updatedUser) {
-        const updatedProfs = candidateProfiles.map(p => p.email.toLowerCase() === finalUser.email.toLowerCase() ? finalUser : p);
-        setProfiles(updatedProfs);
-        safeSetJson('op_app_cached_profiles', updatedProfs);
+      const updatedProfs = candidateProfiles.map(p => p.email.toLowerCase() === finalUser.email.toLowerCase() ? finalUser : p);
+      if (!updatedProfs.some(p => p.email.toLowerCase() === finalUser.email.toLowerCase())) {
+        updatedProfs.push(finalUser);
       }
+      setProfiles(updatedProfs);
+      safeSetJson('op_app_cached_profiles', updatedProfs);
 
       if (currentToken && sheetId) {
         try {
@@ -1956,19 +2082,16 @@ export default function App() {
         }
       }
 
-      handleAppLoginSuccess(finalUser);
-    } else {
-      let errMsg = 'User ID atau Password salah. Silakan periksa kembali.';
-      if (googleFetchFailed) {
-        const detail = serverDiagnosticError || localStorage.getItem('op_service_account_error') || '';
-        errMsg = `Gagal terhubung ke database Google Sheets${detail ? `: ${detail}` : ''}. Silakan periksa koneksi internet Anda, Environment Variables Vercel, atau hak akses (Share Editor) Service Account ke Google Sheets.`;
-      }
+      handleAppLoginSuccess(finalUser, authData?.sessionToken);
+    } catch (unexpectedErr: any) {
+      console.error('[Login] Uncaught error during login flow:', unexpectedErr);
+      const errMsg = unexpectedErr?.message || 'Terjadi kesalahan sistem saat memproses login. Silakan coba beberapa saat lagi.';
       setLoginRejectError(errMsg);
       onFormError(errMsg);
+    } finally {
+      setIsLoading(false);
+      setLoadingStep('');
     }
-
-    setIsLoading(false);
-    setLoadingStep('');
   };
 
   // Profile Save
@@ -5876,6 +5999,7 @@ export default function App() {
         activities={activities}
         histories={itemReviewHistories}
         sites={sites}
+        googleToken={token || ''}
       />
 
       {/* Modal Popup Preview Logo DIOMS */}
@@ -5927,6 +6051,8 @@ export default function App() {
         <ItemHistoryModal
           item={requestHistoryModalItem}
           histories={itemReviewHistories}
+          googleToken={token || ''}
+          spreadsheetId={SPREADSHEET_ID}
           onClose={() => setRequestHistoryModalItem(null)}
           onPreviewDocument={setPreviewDocument}
         />

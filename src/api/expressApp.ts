@@ -7,6 +7,8 @@ import { google } from 'googleapis';
 import { googleAuthRouter } from './googleRoutes.js';
 import { pushRouter } from './pushRoutes.js';
 import { historyRouter } from './historyRoutes.js';
+import { usageRouter } from './usageRoutes.js';
+import { authRouter } from './authRoutes.js';
 import { getServiceAccountAuth } from '../lib/serverGoogleAuth.js';
 
 dotenv.config({ override: true });
@@ -273,6 +275,10 @@ expressApp.post('/api/google/config', handlePostConfig);
 expressApp.get('/config', handleGetConfig);
 expressApp.post('/config', handlePostConfig);
 
+// Authentication Endpoints (/api/auth/login)
+expressApp.use('/api/auth', authRouter);
+expressApp.use('/auth', authRouter);
+
 // Google Service Account & Drive Proxy Endpoints
 expressApp.use('/api/google', googleAuthRouter);
 expressApp.use('/google', googleAuthRouter);
@@ -281,6 +287,10 @@ expressApp.use('/google', googleAuthRouter);
 expressApp.use('/api/history', historyRouter);
 expressApp.use('/history', historyRouter);
 expressApp.use('/api/google/history', historyRouter);
+
+// On-Demand Usage Report Items API Endpoints (/api/laporan)
+expressApp.use('/api/laporan', usageRouter);
+expressApp.use('/laporan', usageRouter);
 
 // Web Push Notifications Endpoints (VAPID)
 expressApp.use('/api/push', pushRouter);

@@ -38,7 +38,7 @@
       "files": [
         {
           "name": "bukti_transfer",
-          "accept": ["image/*"]
+          "accept": ["image/*", ".jpg", ".jpeg", ".png", ".webp", "image/jpeg", "image/png", "image/webp"]
         }
       ]
     }

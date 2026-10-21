@@ -10,7 +10,7 @@ import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteIn
 import { ItemHistoryModal } from './ItemHistoryModal';
 import { ZoomableImage } from './ZoomableImage';
 import { FormProgressOverlay } from './FormProgressOverlay';
-import { uploadReceiptFile, parseNumericValue } from '../lib/googleApi';
+import { uploadReceiptFile, parseNumericValue, getCachedClosedUsageItems, fetchUsageItemsForUid, SPREADSHEET_ID } from '../lib/googleApi';
 import { OfflineUsageItem } from '../lib/offlineReportStorage';
 import {
   Plus, Calendar, Coins, FileText, UploadCloud, AlertCircle, CheckCircle2,
@@ -144,7 +144,49 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       isOfflineDraft: true
     } as any));
 
-  const currentItems = [...items.filter(item => item.requestId === request.id), ...offlineMapped];
+  const [closedDetailItems, setClosedDetailItems] = useState<UsageReportItem[] | null>(() => {
+    if (request.status === RequestStatus.CLOSED) {
+      const cached = getCachedClosedUsageItems(request.id);
+      if (cached && cached.length > 0) return cached;
+    }
+    return null;
+  });
+  const [isLoadingClosedItems, setIsLoadingClosedItems] = useState(false);
+
+  useEffect(() => {
+    if (request.status === RequestStatus.CLOSED) {
+      const cached = getCachedClosedUsageItems(request.id);
+      if (cached && cached.length > 0) {
+        setClosedDetailItems(cached);
+        return;
+      }
+
+      let isMounted = true;
+      setIsLoadingClosedItems(true);
+      fetchUsageItemsForUid(googleToken, SPREADSHEET_ID, request.id)
+        .then(fetched => {
+          if (isMounted && fetched && fetched.length > 0) {
+            setClosedDetailItems(fetched);
+          }
+        })
+        .catch(err => {
+          console.warn('[UsageReportForm] Failed to load on-demand closed items:', err);
+        })
+        .finally(() => {
+          if (isMounted) setIsLoadingClosedItems(false);
+        });
+
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [request.id, request.status, googleToken]);
+
+  const baseItems = (request.status === RequestStatus.CLOSED && closedDetailItems && closedDetailItems.length > 0)
+    ? closedDetailItems
+    : items.filter(item => item.requestId === request.id);
+
+  const currentItems = [...baseItems, ...offlineMapped];
 
   // Check if the user associated with this UID request has BBM Duren Sawit access and Mobile mandatory setting
   const requesterProfile = profiles.find(p => p.email.toLowerCase() === request.userEmail.toLowerCase());
@@ -819,6 +861,13 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 )}
               </button>
             )}
+          </div>
+        )}
+
+        {isLoadingClosedItems && (
+          <div className="flex items-center gap-2 p-3 bg-indigo-50/80 border border-indigo-150 rounded-2xl text-indigo-700 text-xs font-semibold animate-pulse">
+            <Loader2 className="w-4 h-4 animate-spin text-indigo-600 shrink-0" />
+            <span>Memuat rincian nota & bukti transaksi lengkap untuk UID CLOSED ini...</span>
           </div>
         )}
 
@@ -2097,6 +2146,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
         <ItemHistoryModal
           item={historyModalItem}
           histories={histories}
+          googleToken={googleToken}
+          spreadsheetId={SPREADSHEET_ID}
           onClose={() => setHistoryModalItem(null)}
           onPreviewDocument={(doc) => {
             setPreviewItem({
