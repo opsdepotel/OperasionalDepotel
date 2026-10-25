@@ -9,8 +9,11 @@ import {
   FileText, 
   ArrowLeft,
   Users,
-  Coins
+  Coins,
+  Download
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus } from '../types';
 import { useBackHandler } from '../hooks/useBackHandler';
 
@@ -86,7 +89,7 @@ export function getReportedUnclosedRequests(
 
 /**
  * Validates whether a User Murni is blocked from submitting new requests.
- * Rule: If User Murni has > 2 UIDs that are already transferred and not reported at all, submission is blocked.
+ * Rule: If User Murni has > 1 UIDs that are already transferred and not reported at all (maksimal 1 UID), submission is blocked.
  */
 export function checkUserMurniSubmissionStatus(
   userProfile: UserProfile | null | undefined,
@@ -102,7 +105,7 @@ export function checkUserMurniSubmissionStatus(
   }
 
   const unreportedUids = getUnreportedTransferredRequests(userProfile.email, requests, usageItems);
-  const isBlocked = unreportedUids.length > 2;
+  const isBlocked = unreportedUids.length > 1;
 
   return {
     isBlocked,
@@ -232,7 +235,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
       );
       const managerName = managerProfile?.nama || (managerProfile as any)?.name || p.managerEmail || '-';
 
-      const isBlocked = unreported.length > 2;
+      const isBlocked = unreported.length > 1;
 
       return {
         profile: p,
@@ -289,6 +292,363 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
     ) || null;
   }, [selectedDetailUserEmail, usersWithStats]);
 
+  const [isExporting, setIsExporting] = useState(false);
+
+  // Export PDF untuk Ringkasan Seluruh Data Monitoring UID User Murni
+  const handleExportSummaryPDF = () => {
+    setIsExporting(true);
+    try {
+      const doc = new jsPDF('landscape', 'mm', 'a4');
+      const now = new Date();
+      const nowStr = now.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
+
+      // Title & Header
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text('LAPORAN MONITORING UID USER MURNI', 14, 15);
+
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 116, 139); // slate-500
+      doc.text('Pengawasan Status UID Ditransfer & Batas Toleransi Pelaporan Nota Pemakaian (Role USER)', 14, 20);
+      doc.text(`Dicetak Pada: ${nowStr} | Oleh: ${currentRole || 'ADMIN'}`, 283, 20, { align: 'right' });
+
+      // Summary Card Box
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(14, 24, 269, 14, 2, 2, 'FD');
+
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(71, 85, 105);
+
+      // Stat 1: Total User Murni
+      doc.text('Total User Murni', 20, 29);
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${totalUserMurni} User`, 20, 35);
+
+      // Stat 2: User Dibatasi (> 1 UID)
+      doc.setFontSize(8);
+      doc.setTextColor(190, 18, 60);
+      doc.text('User Dibatasi (> 1 UID)', 75, 29);
+      doc.setFontSize(11);
+      doc.text(`${blockedUsersCount} User`, 75, 35);
+
+      // Stat 3: User Normal (<= 1 UID)
+      doc.setFontSize(8);
+      doc.setTextColor(4, 120, 87);
+      doc.text('User Normal', 135, 29);
+      doc.setFontSize(11);
+      doc.text(`${totalUserMurni - blockedUsersCount} User`, 135, 35);
+
+      // Stat 4: Total UID Belum Lapor
+      doc.setFontSize(8);
+      doc.setTextColor(180, 83, 9);
+      doc.text('Total UID Belum Lapor', 185, 29);
+      doc.setFontSize(11);
+      doc.text(`${totalUnreportedUids} UID`, 185, 35);
+
+      // Stat 5: UID Belum Closed
+      doc.setFontSize(8);
+      doc.setTextColor(67, 56, 202);
+      doc.text('UID Belum Closed', 240, 29);
+      doc.setFontSize(11);
+      doc.text(`${totalReportedUnclosedUids} UID`, 240, 35);
+
+      // Table Data
+      let totalDanaBelumLaporSemua = 0;
+
+      const tableRows = filteredUsers.map((item, index) => {
+        const danaBelumLapor = item.unreportedList.reduce(
+          (sum, r) => sum + (Number(r.adminActionAmount) || Number(r.jumlahPengajuan) || 0),
+          0
+        );
+        totalDanaBelumLaporSemua += danaBelumLapor;
+
+        const uidListStr = item.unreportedList.length > 0
+          ? item.unreportedList.map(u => u.id).join(', ')
+          : '-';
+
+        const userDisplay = `${item.profile.nama || (item.profile as any)?.name || 'User'}\n${item.profile.email}`;
+        const divisi = item.profile.divisi || '-';
+        const statusLabel = item.isBlocked ? 'DIBATASI (> 1 UID)' : 'DAPAT MENGAJUKAN';
+
+        return [
+          index + 1,
+          userDisplay,
+          divisi,
+          item.managerName || '-',
+          `${item.unreportedCount} UID\n(${uidListStr})`,
+          formatIDR(danaBelumLapor),
+          `${item.reportedUnclosedCount} UID`,
+          statusLabel
+        ];
+      });
+
+      autoTable(doc, {
+        startY: 42,
+        head: [[
+          'No',
+          'Nama & Email User Murni',
+          'Divisi',
+          'Atasan (Manager)',
+          'UID Belum Dilaporkan (0 Nota)',
+          'Dana Belum Lapor (Rp)',
+          'Belum Closed',
+          'Status Pengajuan'
+        ]],
+        body: tableRows,
+        theme: 'grid',
+        headStyles: {
+          fillColor: [15, 23, 42],
+          textColor: [255, 255, 255],
+          fontSize: 8,
+          fontStyle: 'bold',
+          halign: 'center',
+          valign: 'middle'
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          textColor: [51, 65, 85],
+          valign: 'middle'
+        },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 10 },
+          1: { cellWidth: 50, fontStyle: 'bold' },
+          2: { cellWidth: 26 },
+          3: { cellWidth: 34 },
+          4: { cellWidth: 55, fontSize: 7 },
+          5: { halign: 'right', fontStyle: 'bold', cellWidth: 32 },
+          6: { halign: 'center', cellWidth: 26 },
+          7: { halign: 'center', fontStyle: 'bold', cellWidth: 36 }
+        },
+        didParseCell: (data) => {
+          if (data.section === 'body' && data.column.index === 7) {
+            if (data.cell.raw === 'DIBATASI (> 1 UID)') {
+              data.cell.styles.textColor = [190, 18, 60];
+              data.cell.styles.fillColor = [255, 241, 242];
+            } else {
+              data.cell.styles.textColor = [4, 120, 87];
+              data.cell.styles.fillColor = [236, 253, 245];
+            }
+          }
+        },
+        foot: [[
+          { content: 'TOTAL KESELURUHAN (DATA TERFILTER)', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          { content: formatIDR(totalDanaBelumLaporSemua), styles: { halign: 'right', fontStyle: 'bold', textColor: [190, 18, 60], fillColor: [241, 245, 249] } },
+          { content: `${totalReportedUnclosedUids} UID`, styles: { halign: 'center', fontStyle: 'bold', fillColor: [241, 245, 249] } },
+          { content: `${blockedUsersCount} Dibatasi`, styles: { halign: 'center', fontStyle: 'bold', textColor: [190, 18, 60], fillColor: [241, 245, 249] } }
+        ]],
+        margin: { left: 14, right: 14 },
+        didDrawPage: (data) => {
+          const pageCount = typeof (doc as any).getNumberOfPages === 'function' 
+            ? (doc as any).getNumberOfPages() 
+            : ((doc as any).internal?.getNumberOfPages ? (doc as any).internal.getNumberOfPages() : 1);
+          doc.setFontSize(7.5);
+          doc.setFont('helvetica', 'normal');
+          doc.setTextColor(148, 163, 184);
+          doc.text(
+            '* Aturan Sistem: User Murni (Role USER) maksimal memiliki 1 UID belum lapor (pada UID ke-2 otomatis diblokir dari membuat pengajuan baru).',
+            14,
+            202
+          );
+          doc.text(
+            `Halaman ${data.pageNumber} dari ${pageCount}`,
+            283,
+            202,
+            { align: 'right' }
+          );
+        }
+      });
+
+      const filterSuffix = filterTab !== 'ALL' ? `_${filterTab}` : '';
+      doc.save(`Laporan_Monitoring_UID_User_Murni${filterSuffix}_${now.toISOString().slice(0, 10)}.pdf`);
+    } catch (err) {
+      console.error('Gagal membuat PDF Monitoring UID:', err);
+      alert('Terjadi kesalahan saat mengekspor PDF. Silakan coba kembali.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Export PDF untuk Rincian Satu User Murni Tertentu
+  const handleExportUserDetailPDF = (userItem: typeof usersWithStats[0]) => {
+    try {
+      const doc = new jsPDF('portrait', 'mm', 'a4');
+      const now = new Date();
+      const nowStr = now.toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
+      const userName = userItem.profile.nama || (userItem.profile as any)?.name || 'User';
+      const userEmail = userItem.profile.email;
+
+      // Title & Header
+      doc.setFontSize(13);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 23, 42);
+      doc.text('RINCIAN UID AKTIF USER MURNI', 14, 15);
+
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(100, 116, 139);
+      doc.text('Pengawasan Status Pengajuan, Riwayat Transfer & Pelaporan Nota Pemakaian', 14, 20);
+      doc.text(`Dicetak: ${nowStr}`, 196, 20, { align: 'right' });
+
+      // User Profile Box
+      doc.setDrawColor(226, 232, 240);
+      doc.setFillColor(248, 250, 252);
+      doc.roundedRect(14, 24, 182, 22, 2, 2, 'FD');
+
+      doc.setFontSize(8.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(15, 23, 42);
+      doc.text(`Nama: ${userName}`, 18, 30);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Email: ${userEmail}`, 18, 35);
+      doc.text(`Divisi: ${userItem.profile.divisi || '-'}`, 18, 40);
+
+      doc.text(`Atasan (Manager): ${userItem.managerName}`, 105, 30);
+      doc.text(`Status: ${userItem.isBlocked ? 'DIBATASI (> 1 UID BELUM LAPOR)' : 'DAPAT MENGAJUKAN'}`, 105, 35);
+      const totalDanaUnreported = userItem.unreportedList.reduce(
+        (sum, r) => sum + (Number(r.adminActionAmount) || Number(r.jumlahPengajuan) || 0),
+        0
+      );
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(190, 18, 60);
+      doc.text(`Dana Belum Lapor: ${formatIDR(totalDanaUnreported)}`, 105, 40);
+
+      let currentY = 51;
+
+      // Section 1: UID Belum Dilaporkan (0 Nota)
+      doc.setFontSize(9.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(190, 18, 60);
+      doc.text(`1. UID Sudah Ditransfer Namun Belum Ada Laporan (${userItem.unreportedCount} UID)`, 14, currentY);
+
+      const rowsUnreported = userItem.unreportedList.map((req, idx) => [
+        idx + 1,
+        req.id,
+        formatTransferDate(req),
+        `${(req as any).siteName || req.siteId || '-'}\n${req.keterangan || '-'}`,
+        formatIDR(req.adminActionAmount || req.jumlahPengajuan || 0),
+        'BELUM LAPOR (0 NOTA)'
+      ]);
+
+      if (rowsUnreported.length === 0) {
+        currentY += 4;
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(100, 116, 139);
+        doc.text('Tidak ada UID yang belum dilaporkan. Seluruh dana yang ditransfer sudah memiliki nota.', 14, currentY + 3);
+        currentY += 12;
+      } else {
+        autoTable(doc, {
+          startY: currentY + 3,
+          head: [['No', 'UID Pengajuan', 'Tgl Transfer', 'Site & Keterangan', 'Nominal Ditransfer', 'Status']],
+          body: rowsUnreported,
+          theme: 'grid',
+          headStyles: {
+            fillColor: [190, 18, 60],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: 'bold',
+            halign: 'center'
+          },
+          bodyStyles: {
+            fontSize: 7.5,
+            textColor: [51, 65, 85]
+          },
+          columnStyles: {
+            0: { halign: 'center', cellWidth: 8 },
+            1: { cellWidth: 32, fontStyle: 'bold' },
+            2: { halign: 'center', cellWidth: 22 },
+            3: { cellWidth: 55 },
+            4: { halign: 'right', fontStyle: 'bold', cellWidth: 30 },
+            5: { halign: 'center', fontStyle: 'bold', cellWidth: 35, textColor: [190, 18, 60] }
+          },
+          margin: { left: 14, right: 14 }
+        });
+        currentY = (doc as any).lastAutoTable.finalY + 10;
+      }
+
+      // Section 2: UID Dilaporkan Belum Closed
+      doc.setFontSize(9.5);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(67, 56, 202);
+      doc.text(`2. UID Sudah Dilaporkan Namun Belum Closed (${userItem.reportedUnclosedCount} UID)`, 14, currentY);
+
+      const rowsReported = userItem.reportedUnclosedList.map((req, idx) => [
+        idx + 1,
+        req.id,
+        formatTransferDate(req),
+        `${(req as any).siteName || req.siteId || '-'}\n${req.keterangan || '-'}`,
+        formatIDR(req.adminActionAmount || req.jumlahPengajuan || 0),
+        req.status
+      ]);
+
+      if (rowsReported.length === 0) {
+        currentY += 4;
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'italic');
+        doc.setTextColor(100, 116, 139);
+        doc.text('Tidak ada UID yang sedang dalam proses reviu laporan.', 14, currentY + 3);
+      } else {
+        autoTable(doc, {
+          startY: currentY + 3,
+          head: [['No', 'UID Pengajuan', 'Tgl Transfer', 'Site & Keterangan', 'Nominal', 'Status Reviu']],
+          body: rowsReported,
+          theme: 'grid',
+          headStyles: {
+            fillColor: [67, 56, 202],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: 'bold',
+            halign: 'center'
+          },
+          bodyStyles: {
+            fontSize: 7.5,
+            textColor: [51, 65, 85]
+          },
+          columnStyles: {
+            0: { halign: 'center', cellWidth: 8 },
+            1: { cellWidth: 32, fontStyle: 'bold' },
+            2: { halign: 'center', cellWidth: 22 },
+            3: { cellWidth: 55 },
+            4: { halign: 'right', fontStyle: 'bold', cellWidth: 30 },
+            5: { halign: 'center', fontStyle: 'bold', cellWidth: 35 }
+          },
+          margin: { left: 14, right: 14 },
+          didDrawPage: (data) => {
+            const pageCount = typeof (doc as any).getNumberOfPages === 'function' 
+              ? (doc as any).getNumberOfPages() 
+              : ((doc as any).internal?.getNumberOfPages ? (doc as any).internal.getNumberOfPages() : 1);
+            doc.setFontSize(7.5);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(148, 163, 184);
+            doc.text(
+              '* Sistem Pembatasan: Maksimal 1 UID belum dilaporkan (pada UID ke-2 pengajuan baru otomatis diblokir).',
+              14,
+              287
+            );
+            doc.text(
+              `Halaman ${data.pageNumber} dari ${pageCount}`,
+              196,
+              287,
+              { align: 'right' }
+            );
+          }
+        });
+      }
+
+      const cleanEmail = userEmail.replace(/[^a-zA-Z0-9]/g, '_');
+      doc.save(`Rincian_UID_${cleanEmail}_${now.toISOString().slice(0, 10)}.pdf`);
+    } catch (err) {
+      console.error('Gagal membuat PDF Rincian UID User:', err);
+      alert('Terjadi kesalahan saat mengekspor PDF rincian user. Silakan coba kembali.');
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -304,6 +664,16 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
           <span>Kembali ke Dashboard</span>
         </button>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleExportSummaryPDF}
+            disabled={isExporting}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-xs cursor-pointer border border-emerald-500/30 active:scale-95 disabled:opacity-50"
+            title="Export Rekap Monitoring UID ke PDF"
+          >
+            <Download className="w-3.5 h-3.5" />
+            <span>Export PDF</span>
+          </button>
           <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2.5 py-1 rounded-full flex items-center gap-1">
             <ShieldAlert className="w-3.5 h-3.5 text-indigo-600" />
             <span>Monitoring Mode</span>
@@ -327,7 +697,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                   Monitoring UID User Murni
                 </h3>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/30 text-rose-200 border border-rose-400/40">
-                  Batas &gt; 2 UID
+                  Batas &gt; 1 UID
                 </span>
               </div>
               <p className="text-[11px] text-slate-300/90 truncate mt-0.5">
@@ -335,15 +705,28 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors cursor-pointer shrink-0 ml-2 border border-white/10"
-            title="Kembali ke Dashboard"
-          >
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Kembali</span>
-          </button>
+          <div className="flex items-center gap-2 shrink-0 ml-2">
+            <button
+              type="button"
+              onClick={handleExportSummaryPDF}
+              disabled={isExporting}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-sm cursor-pointer shrink-0 border border-emerald-400/30 active:scale-95 disabled:opacity-50"
+              title="Export Tabel Monitoring UID ke PDF"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Export PDF</span>
+              <span className="sm:hidden">PDF</span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors cursor-pointer shrink-0 border border-white/10"
+              title="Kembali ke Dashboard"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Kembali</span>
+            </button>
+          </div>
         </div>
 
         {/* Overview Stats Cards */}
@@ -364,7 +747,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-xl font-black font-display text-rose-700">{blockedUsersCount}</span>
-              <span className="text-xs text-rose-500 font-medium truncate">User (&gt; 2 UID)</span>
+              <span className="text-xs text-rose-500 font-medium truncate">User (&gt; 1 UID)</span>
             </div>
           </div>
 
@@ -538,7 +921,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                         {item.isBlocked ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
                             <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                            <span>Dibatasi (&gt; 2 UID)</span>
+                            <span>Dibatasi (&gt; 1 UID)</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -573,7 +956,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
 
         {/* Footer Info */}
         <div className="p-3.5 bg-slate-50 border-t border-slate-200 text-center text-[11px] text-slate-500 shrink-0">
-          * Aturan Pembatasan: User Murni (Role USER) yang memiliki &gt; 2 UID berstatus sudah ditransfer namun belum dilaporkan sama sekali, otomatis diblokir dari membuat Pengajuan Operasional maupun Dana Talangan.
+          * Aturan Pembatasan: User Murni (Role USER) yang memiliki &gt; 1 UID berstatus sudah ditransfer namun belum dilaporkan sama sekali, otomatis diblokir dari membuat Pengajuan Operasional maupun Dana Talangan.
         </div>
       </div>
 
@@ -602,14 +985,26 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setSelectedDetailUserEmail(null)}
-                className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white flex items-center justify-center transition-all cursor-pointer border border-white/10 shrink-0"
-                title="Tutup Modal"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => selectedDetailUser && handleExportUserDetailPDF(selectedDetailUser)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all shadow-sm cursor-pointer border border-emerald-400/30 active:scale-95"
+                  title="Export Rincian UID User Ini ke PDF"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Export PDF</span>
+                  <span className="sm:hidden">PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDetailUserEmail(null)}
+                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white flex items-center justify-center transition-all cursor-pointer border border-white/10 shrink-0"
+                  title="Tutup Modal"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Body */}
@@ -627,7 +1022,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                     {selectedDetailUser.isBlocked ? (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1">
                         <AlertTriangle className="w-3 h-3 text-rose-600" />
-                        <span>Dibatasi (&gt; 2 UID)</span>
+                        <span>Dibatasi (&gt; 1 UID)</span>
                       </span>
                     ) : (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
@@ -732,15 +1127,25 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
             {/* Modal Footer */}
             <div className="p-3.5 sm:p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
               <p className="text-[10px] text-slate-400 leading-tight">
-                * User Murni dengan &gt; 2 UID belum dilaporkan otomatis dibatasi dari pengajuan baru.
+                * User Murni dengan &gt; 1 UID belum dilaporkan otomatis dibatasi dari pengajuan baru.
               </p>
-              <button
-                type="button"
-                onClick={() => setSelectedDetailUserEmail(null)}
-                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs active:scale-95"
-              >
-                Tutup
-              </button>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => selectedDetailUser && handleExportUserDetailPDF(selectedDetailUser)}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export PDF</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedDetailUserEmail(null)}
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-xs active:scale-95"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           </div>
         </div>,

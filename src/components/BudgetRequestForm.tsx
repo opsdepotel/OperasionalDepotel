@@ -62,7 +62,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
 }) => {
   const todayStr = getTodayDateStr();
 
-  // Status pembatasan pengajuan bagi User Murni (> 2 UID belum dilaporkan)
+  // Status pembatasan pengajuan bagi User Murni (> 1 UID belum dilaporkan)
   const userMurniStatus = useMemo(() => {
     return checkUserMurniSubmissionStatus(userProfile, requests, usageItems);
   }, [userProfile, requests, usageItems]);
@@ -267,7 +267,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       finalAmount = initialRequest ? parseNumericValue(jumlahPengajuan) : talanganAmount;
     }
 
-    // Enforcement: User Murni Pembatasan UID Belum Dilaporkan (> 2 UID)
+    // Enforcement: User Murni Pembatasan UID Belum Dilaporkan (> 1 UID)
     if (userMurniStatus.isBlocked && !initialRequest) {
       setError(
         `Pengajuan Dibatasi: Anda memiliki ${userMurniStatus.count} UID yang sudah ditransfer namun belum dilaporkan sama sekali. Sesuai aturan sistem, Anda tidak dapat membuat Pengajuan Operasional maupun Dana Talangan baru hingga laporan diselesaikan.`
@@ -410,7 +410,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           </div>
         )}
 
-        {/* Banner Peringatan Pembatasan UID Belum Dilaporkan (> 2 UID) */}
+        {/* Banner Peringatan Pembatasan UID Belum Dilaporkan (> 1 UID) */}
         {userMurniStatus.isBlocked && !initialRequest && (
           <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 rounded-2xl p-4 text-xs space-y-2 shadow-xs animate-slide-up">
             <div className="flex items-start gap-2.5">
@@ -420,7 +420,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                   Pengajuan Dibatasi ({userMurniStatus.count} UID Belum Dilaporkan)
                 </h4>
                 <p className="text-[11px] text-rose-800 mt-1 leading-relaxed">
-                  Anda memiliki <strong>{userMurniStatus.count} UID</strong> yang sudah ditransfer oleh Finance namun belum dilaporkan sama sekali. Sesuai aturan sistem, User Murni tidak dapat melakukan Pengajuan Operasional maupun Dana Talangan jika memiliki lebih dari 2 UID yang belum dilaporkan.
+                  Anda memiliki <strong>{userMurniStatus.count} UID</strong> yang sudah ditransfer oleh Finance namun belum dilaporkan sama sekali. Sesuai aturan sistem, User Murni tidak dapat melakukan Pengajuan Operasional maupun Dana Talangan jika memiliki lebih dari 1 UID yang belum dilaporkan (maksimal 1 UID tanpa laporan; pada UID ke-2 otomatis diblokir).
                 </p>
               </div>
             </div>

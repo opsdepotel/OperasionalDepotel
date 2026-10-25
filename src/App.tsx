@@ -1348,12 +1348,9 @@ export default function App() {
           const currentDevId = (profToBind.deviceId || '').trim();
           const isDevIdEmpty = !currentDevId;
           const isLegacyFormat = currentDevId && !currentDevId.toLowerCase().startsWith('dev-uuid-');
-          const parts = currentDevId.toLowerCase().split('-');
-          const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
-          const needsHwSigUpgrade = currentDevId.toLowerCase().startsWith('dev-uuid-') && (parts.length < 4 || parts[2].length !== 8 || parts[2] !== currentHwSig);
 
-          // Trigger Seamless Background Auto-Bind when DeviceID in DB is empty OR needs format/signature upgrade
-          if (isDevIdEmpty || ((isLegacyFormat || needsHwSigUpgrade) && isCurrentDeviceValidForUserSync(profToBind))) {
+          // Trigger Seamless Background Auto-Bind ONLY when DeviceID in DB is empty OR is legacy format (DEV-MOB-)
+          if (isDevIdEmpty || (isLegacyFormat && isCurrentDeviceValidForUserSync(profToBind))) {
             validateDeviceAccessAndBind(
               profToBind,
               async (boundProfile) => {
@@ -6333,7 +6330,7 @@ export default function App() {
       )}
 
       {/* Device Permissions Modal (Notifikasi, Lokasi/GPS, Kamera) */}
-      {/* Modal Peringatan Pemblokiran User Murni (> 2 UID Belum Dilaporkan) */}
+      {/* Modal Peringatan Pemblokiran User Murni (> 1 UID Belum Dilaporkan) */}
       {userMurniBlockedModalInfo.isOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-fade-in">
           <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 text-center space-y-4 animate-scale-up">
@@ -6363,7 +6360,7 @@ export default function App() {
             </div>
 
             <p className="text-[11px] text-slate-500 leading-relaxed font-medium">
-              Sesuai aturan sistem, User Murni hanya dapat membuat pengajuan baru jika memiliki maksimal 2 UID belum dilaporkan (tidak lebih dari 2 UID). Harap buka menu laporan dan unggah nota pemakaian untuk UID di atas terlebih dahulu.
+              Sesuai aturan sistem, User Murni hanya dapat membuat pengajuan baru jika memiliki maksimal 1 UID belum dilaporkan (tidak lebih dari 1 UID; pada UID ke-2 otomatis diblokir). Harap buka menu laporan dan unggah nota pemakaian untuk UID di atas terlebih dahulu.
             </p>
 
             <button

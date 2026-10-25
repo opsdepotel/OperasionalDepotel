@@ -182,7 +182,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     userMurniProfiles.forEach(p => {
       const unreported = getUnreportedTransferredRequests(p.email, requests, usageItems);
       totalUnreportedCount += unreported.length;
-      if (unreported.length > 2) {
+      if (unreported.length > 1) {
         blockedCount++;
       }
     });
@@ -1775,7 +1775,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 </div>
                 <h4 className="font-display font-bold text-xs text-slate-800 mt-1">Daftar UID Belum Dilaporkan User Murni</h4>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  Pengawasan UID yang sudah ditransfer dan pemblokiran pengajuan (&gt; 2 UID).
+                  Pengawasan UID yang sudah ditransfer dan pemblokiran pengajuan (&gt; 1 UID).
                 </p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
@@ -2321,7 +2321,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   {userMurniMonitoringStats.totalUnreportedCount} <span className="text-xs text-slate-400 font-normal">UID Belum Lapor</span>
                 </span>
                 <p className="text-[11px] font-bold text-rose-600 mt-0.5">
-                  {userMurniMonitoringStats.blockedCount} User Murni memiliki &gt; 2 UID belum dilaporkan
+                  {userMurniMonitoringStats.blockedCount} User Murni memiliki &gt; 1 UID belum dilaporkan
                 </p>
               </div>
               <div className="w-11 h-11 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
@@ -2605,7 +2605,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 font-medium mt-1">
-                Daftar status UID yang sudah ditransfer dan belum dilaporkan sama sekali (&gt; 2 UID diblokir).
+                Daftar status UID yang sudah ditransfer dan belum dilaporkan sama sekali (&gt; 1 UID diblokir).
               </p>
             </div>
           </div>
@@ -4003,7 +4003,7 @@ User Agent: ${navigator.userAgent}`;
                   <span className="text-xs text-slate-500 font-medium">UID Belum Dilaporkan</span>
                 </div>
                 <p className="text-[10px] text-rose-600 font-medium mt-0.5">
-                  {userMurniMonitoringStats.blockedCount} User Murni memiliki &gt; 2 UID belum dilaporkan (pengajuan diblokir)
+                  {userMurniMonitoringStats.blockedCount} User Murni memiliki &gt; 1 UID belum dilaporkan (pengajuan diblokir)
                 </p>
               </div>
               <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 shadow-sm">

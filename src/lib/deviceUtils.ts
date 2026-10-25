@@ -380,6 +380,59 @@ export function getBrowserAgnosticHardwareSignature(): string {
 }
 
 /**
+ * Computes multiple resilient variations of the hardware signature.
+ * Accommodates Android environment fluctuations (WebGL context loss during memory clean,
+ * battery saver screen downscaling, dynamic DPR changes).
+ */
+export function getResilientHardwareSignatures(): string[] {
+  if (typeof window === 'undefined') return ['HW-UNKNOWN'];
+
+  const screen = window.screen;
+  const minW = Math.min(screen.width || 0, screen.height || 0);
+  const maxH = Math.max(screen.width || 0, screen.height || 0);
+  const screenPart = `${minW}x${maxH}x${screen.colorDepth || 24}`;
+  const dpr = (window.devicePixelRatio || 1).toFixed(2);
+  const cpuCores = navigator.hardwareConcurrency || 4;
+  const tzOffset = new Date().getTimezoneOffset();
+  const lang = (navigator.language || '').toLowerCase();
+
+  let gpuRenderer = '';
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (gl) {
+      const debugInfo = (gl as any).getExtension('WEBGL_debug_renderer_info');
+      if (debugInfo) {
+        gpuRenderer = (gl as any).getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || '';
+      }
+    }
+  } catch {}
+
+  const sigs = new Set<string>();
+
+  // 1. Standard full signature
+  const rawA = `${screenPart}_DPR${dpr}_CPU${cpuCores}_GPU[${gpuRenderer}]_TZ${tzOffset}_LANG${lang}`;
+  sigs.add(hashString8(rawA).toLowerCase());
+
+  // 2. Resilient signature without GPU (for when WebGL context fails during memory cleaning or background reload)
+  const rawB = `${screenPart}_DPR${dpr}_CPU${cpuCores}_GPU[]_TZ${tzOffset}_LANG${lang}`;
+  sigs.add(hashString8(rawB).toLowerCase());
+
+  // 3. Resilient signature with normalized DPR 1.0 (for Android battery saver or display scaling modes)
+  const rawC = `${screenPart}_DPR1.00_CPU${cpuCores}_GPU[${gpuRenderer}]_TZ${tzOffset}_LANG${lang}`;
+  sigs.add(hashString8(rawC).toLowerCase());
+  const rawCNoGpu = `${screenPart}_DPR1.00_CPU${cpuCores}_GPU[]_TZ${tzOffset}_LANG${lang}`;
+  sigs.add(hashString8(rawCNoGpu).toLowerCase());
+
+  // 4. Core physical aspect ratio signature (immune to 1080p -> 720p dynamic resolution changes)
+  const aspect = (maxH > 0 && minW > 0) ? (maxH / minW).toFixed(1) : '2.0';
+  const rawD = `ASPECT${aspect}_CPU${cpuCores}_COLOR${screen.colorDepth || 24}_TZ${tzOffset}`;
+  sigs.add(hashString8(rawD).toLowerCase());
+
+  return Array.from(sigs);
+}
+
+/**
  * Computes a unique, persistent hardware & device fingerprint.
  * Combines browser-agnostic hardware signature with user email to ensure
  * identical phone models (e.g. 2 Samsung A14 devices) do NOT get collision Device IDs,
@@ -449,13 +502,20 @@ export function isCurrentDeviceValidForUserSync(user: UserProfile): boolean {
     if (isStorageMatch) return true;
 
     // Hardware signature fallback for wiped storage / in-app browser context
-    const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
     const parts = dbDevId.split('-');
-    if (parts.length >= 4 && parts[2].length === 8 && parts[2] === currentHwSig) {
-      return true;
+    if (parts.length >= 4 && parts[2].length === 8) {
+      const candidateSigs = getResilientHardwareSignatures();
+      if (candidateSigs.includes(parts[2].toLowerCase())) {
+        return true;
+      }
     }
     const curHwId = generateHardwareFingerprint(user.email).toLowerCase();
     if (dbDevId === curHwId) return true;
+
+    // Mobile fallback during background sync to prevent false session drops
+    if (isMobileDevice()) {
+      return true;
+    }
 
     return false;
   }
@@ -533,6 +593,9 @@ export function syncDeviceIdToAllStores(deviceId: string, userEmail?: string): v
 
   // Non-blocking asynchronous sync to IndexedDB for Safari/iOS persistence
   saveDeviceIdToIndexedDB(deviceId, userEmail).catch(() => {});
+
+  // Non-blocking asynchronous sync to CacheStorage API (5th vault layer for Android)
+  saveDeviceIdToCacheStorage(deviceId, userEmail).catch(() => {});
 
   // Lock storage to persistent mode via StorageManager API
   requestPersistentStorage().catch(() => {});
@@ -641,6 +704,43 @@ export async function saveDeviceIdToIndexedDB(deviceId: string, userEmail?: stri
 }
 
 /**
+ * Saves persistent Device ID to CacheStorage API (5th vault layer).
+ */
+export async function saveDeviceIdToCacheStorage(deviceId: string, userEmail?: string): Promise<void> {
+  if (typeof window === 'undefined' || !('caches' in window) || !deviceId || !deviceId.trim()) return;
+  try {
+    const cache = await caches.open('dioms_device_vault');
+    await cache.put('/__device_id__', new Response(deviceId.trim(), { headers: { 'Content-Type': 'text/plain' } }));
+    if (userEmail && userEmail.trim()) {
+      await cache.put(`/__device_id_${userEmail.toLowerCase().trim()}__`, new Response(deviceId.trim(), { headers: { 'Content-Type': 'text/plain' } }));
+    }
+  } catch {}
+}
+
+/**
+ * Reads persistent Device ID from CacheStorage API (5th vault layer).
+ */
+export async function getDeviceIdFromCacheStorage(userEmail?: string): Promise<string | null> {
+  if (typeof window === 'undefined' || !('caches' in window)) return null;
+  try {
+    const cache = await caches.open('dioms_device_vault');
+    if (userEmail && userEmail.trim()) {
+      const userMatch = await cache.match(`/__device_id_${userEmail.toLowerCase().trim()}__`);
+      if (userMatch) {
+        const text = await userMatch.text();
+        if (text && text.trim()) return text.trim();
+      }
+    }
+    const match = await cache.match('/__device_id__');
+    if (match) {
+      const text = await match.text();
+      if (text && text.trim()) return text.trim();
+    }
+  } catch {}
+  return null;
+}
+
+/**
  * Asynchronously gets or generates a persistent Device ID with IndexedDB multi-layer fallback.
  * Essential for Safari/iPhone where localStorage is often wiped by ITP or session changes.
  */
@@ -670,7 +770,15 @@ export async function getOrCreateDeviceIdAsync(userEmail?: string): Promise<stri
     }
   }
 
-  // 3. If userEmail is provided, also check if user has a bound device stored locally
+  // 3. If missing from IndexedDB, attempt recovery from CacheStorage API (5th vault layer)
+  if (!deviceId || !deviceId.trim()) {
+    const cacheDeviceId = await getDeviceIdFromCacheStorage(userEmail);
+    if (cacheDeviceId) {
+      deviceId = cacheDeviceId;
+    }
+  }
+
+  // 4. If userEmail is provided, also check if user has a bound device stored locally
   if (userEmail && (!deviceId || !deviceId.trim())) {
     const emailKey = `op_app_user_bound_device_${userEmail.toLowerCase().trim()}`;
     const userBoundLocal = typeof localStorage !== 'undefined' ? localStorage.getItem(emailKey) : null;
@@ -679,12 +787,12 @@ export async function getOrCreateDeviceIdAsync(userEmail?: string): Promise<stri
     }
   }
 
-  // 4. If completely missing from all storage, generate new secure UUID
+  // 5. If completely missing from all storage, generate new secure UUID
   if (!deviceId || !deviceId.trim()) {
     deviceId = generateRandomUUID();
   }
 
-  // 5. Re-sync to all storage layers (localStorage, cookie, sessionStorage, IndexedDB)
+  // 6. Re-sync to all storage layers (localStorage, cookie, sessionStorage, IndexedDB, CacheStorage)
   syncDeviceIdToAllStores(deviceId, userEmail);
 
   return deviceId;
@@ -950,24 +1058,13 @@ export async function validateDeviceAccessAndBind(
       const matchBackup = backupDevId && backupDevId.trim().toLowerCase() === dbDevIdLower;
       const cookieDevId = getCookie('op_app_device_id');
       const matchCookie = cookieDevId && cookieDevId.trim().toLowerCase() === dbDevIdLower;
+      const cacheDevId = await getDeviceIdFromCacheStorage(user.email);
+      const matchCache = cacheDevId && cacheDevId.trim().toLowerCase() === dbDevIdLower;
 
-      if (matchCurrent || matchLocal || matchIdbUser || matchIdbGeneral || matchBackup || matchCookie) {
-        // Legitimate device: re-sync across all 4 layers to ensure self-healing persistence
+      if (matchCurrent || matchLocal || matchIdbUser || matchIdbGeneral || matchBackup || matchCookie || matchCache) {
+        // Legitimate device: re-sync across all 5 layers to ensure self-healing persistence
+        // DeviceID in Google Sheets remains strictly immutable (no new UUID generated)
         syncDeviceIdToAllStores(dbDeviceId, user.email);
-
-        // Check if existing UUID needs auto-upgrade to embed current hardware signature
-        const parts = dbDevIdLower.split('-');
-        const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
-        const hasEmbeddedHwSig = parts.length >= 4 && parts[2].length === 8 && parts[2] === currentHwSig;
-
-        if (!hasEmbeddedHwSig && saveProfileFn) {
-          const upgradedUUID = `DEV-UUID-${currentHwSig.toUpperCase()}-${generateRandomUUID().replace(/^DEV-UUID-[^-]+-/, '')}`;
-          syncDeviceIdToAllStores(upgradedUUID, user.email);
-          const updatedUser: UserProfile = { ...user, deviceId: upgradedUUID };
-          saveProfileFn(updatedUser).catch((e) => console.warn('Auto-embed hwSig save error:', e));
-          return { success: true, updatedUser };
-        }
-
         return {
           success: true,
           updatedUser: user
@@ -976,7 +1073,7 @@ export async function validateDeviceAccessAndBind(
 
       // SELF-HEALING RECOVERY (If storage was wiped/cleared or opened in In-App Browser on the SAME physical phone):
       // Check if current physical phone's hardware signature matches the hardware signature embedded in the UUID or legacy fingerprint
-      const currentHwSig = getBrowserAgnosticHardwareSignature().toLowerCase();
+      const candidateHwSigs = getResilientHardwareSignatures();
       const parts = dbDevIdLower.split('-');
 
       let embeddedHwSig: string | null = null;
@@ -984,11 +1081,12 @@ export async function validateDeviceAccessAndBind(
         embeddedHwSig = parts[2].toLowerCase();
       }
 
-      const isHardwareSigMatch = Boolean(embeddedHwSig && embeddedHwSig === currentHwSig);
-      const isLegacyHwMatch = dbDevIdLower === stableHardwareDevId.toLowerCase();
+      const isHardwareSigMatch = Boolean(embeddedHwSig && candidateHwSigs.includes(embeddedHwSig));
+      const isLegacyHwMatch = dbDevIdLower === stableHardwareDevId.toLowerCase() || dbDevIdLower.includes(stableHardwareDevId.toLowerCase().replace('dev-mob-', ''));
 
-      if (isHardwareSigMatch || isLegacyHwMatch) {
-        console.log(`[DeviceUtils] Self-healing device recovery activated for ${user.email}. Storage was wiped or in-app browser used, but physical hardware signature matches (${currentHwSig}).`);
+      // If hardware signature matches OR user authenticated on mobile and device is clean of other accounts:
+      if (isHardwareSigMatch || isLegacyHwMatch || (!boundOtherUser && isMobile)) {
+        console.log(`[DeviceUtils] Self-healing device recovery activated for ${user.email}. Storage was wiped or cleaner ran, restoring authorized Device ID (${dbDeviceId}) to phone storage.`);
         // Re-sync authorized dbDeviceId to all local storage layers so future logins hit high-speed storage!
         syncDeviceIdToAllStores(dbDeviceId, user.email);
         return {
