@@ -211,9 +211,11 @@ export function parseNumericValue(val: any): number {
   const str = String(val).trim();
   if (!str) return 0;
 
-  if (/^\d+$/.test(str)) {
+  if (/^-?\d+$/.test(str)) {
     return parseInt(str, 10);
   }
+
+  const isNegative = str.includes('-') || (str.startsWith('(') && str.endsWith(')'));
 
   let cleaned = str.replace(/Rp\.?/gi, '').trim();
   if (cleaned.includes(',') && cleaned.includes('.')) {
@@ -238,7 +240,8 @@ export function parseNumericValue(val: any): number {
     }
   }
   const parsed = parseInt(cleaned.replace(/[^0-9]/g, ''), 10);
-  return isNaN(parsed) ? 0 : parsed;
+  const num = isNaN(parsed) ? 0 : parsed;
+  return isNegative ? -num : num;
 }
 
 // Map row map to BudgetRequest
