@@ -3005,13 +3005,21 @@ export default function App() {
       if (isTalangan) {
         const reqItems = updatedUsageItems.filter(i => i.requestId === targetReq.id);
         const totalNominal = reqItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+        let nextStatus = targetReq.status;
+        if (targetReq.status === RequestStatus.TRANSFERRED) {
+          nextStatus = RequestStatus.REPORTING;
+        } else if (targetReq.status === RequestStatus.REVIEW_ADMIN || targetReq.status === RequestStatus.REVIEW_MANAGER) {
+          nextStatus = RequestStatus.REVIEW_MANAGER;
+        }
         updatedReq = {
           ...targetReq,
           jumlahPengajuan: totalNominal,
-          status: targetReq.status === RequestStatus.TRANSFERRED ? RequestStatus.REPORTING : targetReq.status
+          status: nextStatus
         };
       } else if (targetReq.status === RequestStatus.TRANSFERRED) {
         updatedReq = { ...targetReq, status: RequestStatus.REPORTING };
+      } else if (targetReq.status === RequestStatus.REVIEW_ADMIN || targetReq.status === RequestStatus.REVIEW_MANAGER) {
+        updatedReq = { ...targetReq, status: RequestStatus.REVIEW_MANAGER };
       }
     }
 
@@ -3079,13 +3087,21 @@ export default function App() {
       if (isTalangan) {
         const reqItems = updatedUsageItems.filter(i => i.requestId === targetReq.id);
         const totalNominal = reqItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+        let nextStatus = targetReq.status;
+        if (targetReq.status === RequestStatus.TRANSFERRED) {
+          nextStatus = RequestStatus.REPORTING;
+        } else if (targetReq.status === RequestStatus.REVIEW_ADMIN || targetReq.status === RequestStatus.REVIEW_MANAGER) {
+          nextStatus = RequestStatus.REVIEW_MANAGER;
+        }
         updatedReq = {
           ...targetReq,
           jumlahPengajuan: totalNominal,
-          status: targetReq.status === RequestStatus.TRANSFERRED ? RequestStatus.REPORTING : targetReq.status
+          status: nextStatus
         };
       } else if (targetReq.status === RequestStatus.TRANSFERRED) {
         updatedReq = { ...targetReq, status: RequestStatus.REPORTING };
+      } else if (targetReq.status === RequestStatus.REVIEW_ADMIN || targetReq.status === RequestStatus.REVIEW_MANAGER) {
+        updatedReq = { ...targetReq, status: RequestStatus.REVIEW_MANAGER };
       }
     }
 
