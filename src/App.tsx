@@ -4450,6 +4450,7 @@ export default function App() {
             userProfile={userProfile}
             requests={requests}
             usageItems={usageItems}
+            activities={activities}
             onRefreshOfflineQueues={refreshOfflineQueues}
             profiles={profiles}
           />

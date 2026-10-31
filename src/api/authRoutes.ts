@@ -13,12 +13,27 @@ function normalizeHeader(h: string): string {
   return (h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// Server-side In-Memory Cache for Users sheet (reduces Vercel CPU Time & Google Sheets API load)
+interface UsersSheetCache {
+  spreadsheetId: string;
+  timestamp: number;
+  values: any[][];
+}
+let usersSheetCache: UsersSheetCache | null = null;
+const USERS_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes TTL
+
+/**
+ * Helper to invalidate Users sheet cache manually (e.g. when profiles are updated)
+ */
+export function invalidateUsersSheetCache() {
+  usersSheetCache = null;
+}
+
 /**
  * Backend Login Verification Endpoint: /api/auth/login
  * 
  * Verifies credentials directly on the server against Google Sheets (Users tab).
- * This ensures the client browser never receives or stores plaintext passwords
- * or credentials of other user accounts.
+ * Uses a short 3-minute in-memory cache to minimize Vercel CPU execution time and network wait time.
  */
 authRouter.post('/login', async (req, res) => {
   try {
@@ -41,49 +56,71 @@ authRouter.post('/login', async (req, res) => {
     const cleanInputId = userId.trim().toLowerCase();
     const cleanInputPassword = password.trim();
 
-    // 1. Obtain Server Google Access Token (Refresh Token / Service Account)
-    const tokenResult = await getServerAccessToken();
-    const token = tokenResult.token;
-    if (!token) {
-      return res.status(503).json({
-        success: false,
-        error: 'Google Auth token tidak tersedia di server. Pastikan Service Account atau OAuth telah dikonfigurasi.'
-      });
-    }
-
-    // 2. Resolve Spreadsheet ID
+    // 1. Resolve Spreadsheet ID
     const config = readServerConfig();
     const spreadsheetId = (customSheetId && typeof customSheetId === 'string' && customSheetId.trim())
       ? customSheetId.trim()
       : config.spreadsheetId;
 
-    // 3. Fetch Users sheet rows from Google Sheets
-    const sheetRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`
+    let values: any[][] = [];
+
+    // 2. Check In-Memory Cache first (0ms CPU Execution time if warm cache)
+    const now = Date.now();
+    if (
+      usersSheetCache &&
+      usersSheetCache.spreadsheetId === spreadsheetId &&
+      now - usersSheetCache.timestamp < USERS_CACHE_TTL_MS &&
+      usersSheetCache.values.length >= 2
+    ) {
+      values = usersSheetCache.values;
+    } else {
+      // Obtain Server Google Access Token (Refresh Token / Service Account)
+      const tokenResult = await getServerAccessToken();
+      const token = tokenResult.token;
+      if (!token) {
+        return res.status(503).json({
+          success: false,
+          error: 'Google Auth token tidak tersedia di server. Pastikan Service Account atau OAuth telah dikonfigurasi.'
+        });
+      }
+
+      // Fetch Users sheet rows from Google Sheets
+      const sheetRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
         }
-      }
-    );
+      );
 
-    if (!sheetRes.ok) {
-      let errTxt = '';
-      try {
-        const errJson = await sheetRes.json();
-        errTxt = errJson.error?.message || JSON.stringify(errJson);
-      } catch {
-        errTxt = await sheetRes.text().catch(() => '');
+      if (!sheetRes.ok) {
+        let errTxt = '';
+        try {
+          const errJson = await sheetRes.json();
+          errTxt = errJson.error?.message || JSON.stringify(errJson);
+        } catch {
+          errTxt = await sheetRes.text().catch(() => '');
+        }
+        console.error('[AuthLogin] Error reading Users sheet:', sheetRes.status, errTxt);
+        return res.status(502).json({
+          success: false,
+          error: 'Database operasional Google Sheets sedang tidak dapat dijangkau. Silakan periksa koneksi internet atau hubungi Administrator.'
+        });
       }
-      console.error('[AuthLogin] Error reading Users sheet:', sheetRes.status, errTxt);
-      return res.status(502).json({
-        success: false,
-        error: 'Database operasional Google Sheets sedang tidak dapat dijangkau. Silakan periksa koneksi internet atau hubungi Administrator.'
-      });
+
+      const sheetData = await sheetRes.json();
+      values = sheetData.values || [];
+
+      // Update in-memory cache for subsequent login attempts
+      if (values.length >= 2) {
+        usersSheetCache = {
+          spreadsheetId,
+          timestamp: now,
+          values
+        };
+      }
     }
-
-    const sheetData = await sheetRes.json();
-    const values: any[][] = sheetData.values || [];
 
     if (values.length < 2) {
       return res.status(401).json({

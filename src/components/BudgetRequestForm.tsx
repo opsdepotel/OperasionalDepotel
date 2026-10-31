@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useRef, useMemo } from 'react';
-import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, ItemStatus, formatTimestamp, Role } from '../types';
+import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, UserActivity, ItemStatus, formatTimestamp, Role } from '../types';
 import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
 import { FormProgressOverlay } from './FormProgressOverlay';
 import { checkUserMurniSubmissionStatus } from './UserUidMonitoringModal';
@@ -29,6 +29,7 @@ interface BudgetRequestFormProps {
   managerName?: string;
   requests?: BudgetRequest[];
   usageItems?: UsageReportItem[];
+  activities?: UserActivity[];
 }
 
 // Helper to get today's date in local Jakarta timezone
@@ -58,7 +59,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   profiles = [],
   managerName,
   requests = [],
-  usageItems = []
+  usageItems = [],
+  activities = []
 }) => {
   const todayStr = getTodayDateStr();
 
@@ -722,6 +724,25 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                   />
                   <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 </div>
+                {/* Informative Activity Check Indicator (Opsi 1) */}
+                {itemTanggal && (() => {
+                  const applicantEmail = (userEmail || userProfile?.email || '').trim().toLowerCase();
+                  const matchedActs = (activities || []).filter(a =>
+                    a.userEmail && a.userEmail.trim().toLowerCase() === applicantEmail && a.tanggal === itemTanggal
+                  );
+                  const hasAct = matchedActs.length > 0;
+                  return hasAct ? (
+                    <div className="mt-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50/80 border border-emerald-200/60 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>Ditemukan {matchedActs.length} Laporan Kegiatan Harian (Activity Log) Anda pada tanggal ini.</span>
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 text-[10px] font-medium text-amber-800 bg-amber-50/80 border border-amber-200/80 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>Belum ada Laporan Kegiatan Harian (Activity Log) atas nama Anda pada tanggal ini.</span>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Nominal Item */}

@@ -61,7 +61,13 @@ function formatPrivateKey(rawKey?: string): string {
   return key.replace(/\\\\n/g, '\n').replace(/\\n/g, '\n').replace(/\r/g, '');
 }
 
+let cachedParsedCredentials: { client_email?: string; private_key?: string } | null = null;
+
 export function parseServiceAccountCredentials(): { client_email?: string; private_key?: string } | null {
+  if (cachedParsedCredentials) {
+    return cachedParsedCredentials;
+  }
+
   const serviceAccountJson = cleanEnvVal(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
   if (serviceAccountJson) {
     try {
@@ -84,10 +90,11 @@ export function parseServiceAccountCredentials(): { client_email?: string; priva
       const pKey = formatPrivateKey(credentials.private_key);
 
       if (credentials.client_email && pKey) {
-        return {
+        cachedParsedCredentials = {
           client_email: cleanEnvVal(credentials.client_email),
           private_key: pKey
         };
+        return cachedParsedCredentials;
       }
     } catch (err) {
       console.error('Failed to parse GOOGLE_SERVICE_ACCOUNT_JSON:', err);
@@ -98,10 +105,11 @@ export function parseServiceAccountCredentials(): { client_email?: string; priva
   const privateKey = formatPrivateKey(process.env.GOOGLE_PRIVATE_KEY);
 
   if (clientEmail && privateKey) {
-    return {
+    cachedParsedCredentials = {
       client_email: clientEmail,
       private_key: privateKey
     };
+    return cachedParsedCredentials;
   }
 
   return null;

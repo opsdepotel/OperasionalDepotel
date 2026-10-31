@@ -1424,6 +1424,25 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   />
                   <Calendar className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 </div>
+                {/* Informative Activity Check Indicator (Opsi 1) */}
+                {tanggal && (() => {
+                  const applicantEmail = (request.userEmail || userProfile?.email || '').trim().toLowerCase();
+                  const matchedActs = (activities || []).filter(a =>
+                    a.userEmail && a.userEmail.trim().toLowerCase() === applicantEmail && a.tanggal === tanggal
+                  );
+                  const hasAct = matchedActs.length > 0;
+                  return hasAct ? (
+                    <div className="mt-1.5 text-[10px] font-semibold text-emerald-700 bg-emerald-50/80 border border-emerald-200/60 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>Ditemukan {matchedActs.length} Laporan Kegiatan Harian (Activity Log) Anda pada tanggal ini.</span>
+                    </div>
+                  ) : (
+                    <div className="mt-1.5 text-[10px] font-medium text-amber-800 bg-amber-50/80 border border-amber-200/80 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>Belum ada Laporan Kegiatan Harian (Activity Log) atas nama Anda pada tanggal ini.</span>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Nominal */}
