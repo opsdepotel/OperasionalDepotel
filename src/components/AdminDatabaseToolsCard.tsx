@@ -17,7 +17,8 @@ import {
   AlertTriangle,
   Info,
   X,
-  Server
+  Server,
+  FileText
 } from 'lucide-react';
 import { AdminBackupCard } from './AdminBackupCard';
 import {
@@ -52,6 +53,7 @@ export const AdminDatabaseToolsCard: React.FC<AdminDatabaseToolsCardProps> = ({
   // Modal States
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [isSwitchModalOpen, setIsSwitchModalOpen] = useState(false);
+  const [isStatusInfoModalOpen, setIsStatusInfoModalOpen] = useState(false);
 
   // Server Config State
   const [serverConfig, setServerConfig] = useState<GlobalAppConfigResponse | null>(null);
@@ -220,6 +222,16 @@ export const AdminDatabaseToolsCard: React.FC<AdminDatabaseToolsCardProps> = ({
           >
             <ArrowRightLeft className="w-3.5 h-3.5" />
             <span>Switch Database</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setIsStatusInfoModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all cursor-pointer border border-blue-300/80 bg-blue-50 text-blue-800 hover:bg-blue-600 hover:text-white hover:border-blue-600 shadow-2xs"
+            id="badge-tools-db-status-ref"
+          >
+            <FileText className="w-3.5 h-3.5" />
+            <span>Referensi Status UID</span>
           </button>
         </div>
       </div>
@@ -631,6 +643,136 @@ export const AdminDatabaseToolsCard: React.FC<AdminDatabaseToolsCardProps> = ({
                       <span>Ya, Alihkan Database Sekarang</span>
                     </>
                   )}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {/* Form Modal Referensi Status UID Database (Khusus Informasi Administrator) */}
+      {isStatusInfoModalOpen &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[100000] flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs overflow-y-auto animate-fade-in"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setIsStatusInfoModalOpen(false);
+              }
+            }}
+          >
+            <div
+              className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] my-auto animate-in fade-in zoom-in-95 duration-150"
+              id="admin-status-uid-info-modal"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-blue-700 to-indigo-800 p-4 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <FileText className="w-5 h-5 text-blue-200 shrink-0" />
+                  <div>
+                    <h3 className="font-bold text-sm">Referensi Status UID Database (Aturan Approval)</h3>
+                    <p className="text-[10px] text-blue-200">Panduan Kode Status UID di Google Sheets (Khusus Administrator)</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setIsStatusInfoModalOpen(false)}
+                  className="text-white/80 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Content Body */}
+              <div className="p-5 space-y-4 overflow-y-auto text-slate-700 text-xs">
+                <div className="p-3 rounded-2xl bg-blue-50/80 border border-blue-200 text-blue-900 flex items-start gap-2.5">
+                  <Info className="w-4 h-4 text-blue-700 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block text-xs">Catatan Administrator:</span>
+                    <p className="text-[11px] leading-relaxed">
+                      Form ini hanya untuk rujukan informasi saja agar Administrator dapat memeriksa kesesuaian nilai kolom <strong>Status</strong> pada sheet <strong>Pengajuan</strong> di Google Sheets sesuai dengan alur perubahan approval.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Table Reference */}
+                <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-2xs">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-100 border-b border-slate-200 text-slate-700 font-bold uppercase text-[10px] tracking-wider">
+                        <th className="p-2.5 w-1/3">Tahapan / Alur Kerja</th>
+                        <th className="p-2.5 w-1/3 text-blue-700 font-mono">Kode Status di Sheet</th>
+                        <th className="p-2.5 w-1/3">Keterangan / Akses Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-[11px]">
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">1. User Submit Pengajuan (OP-)</td>
+                        <td className="p-2.5 font-mono font-bold text-amber-700">PENDING_APPROVAL</td>
+                        <td className="p-2.5 text-slate-600">Menunggu Review & Persetujuan Manager / Atasan.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">2. Review Manager (Disetujui)</td>
+                        <td className="p-2.5 font-mono font-bold text-blue-700">APPROVED / PARTIALLY_APPROVED</td>
+                        <td className="p-2.5 text-slate-600">Disetujui Penuh / Sebagian oleh Manager. Siap diproses Finance.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">3. Review Finance (Disetujui)</td>
+                        <td className="p-2.5 font-mono font-bold text-indigo-700">PENDING_PENGAJUAN_TRANSFER</td>
+                        <td className="p-2.5 text-slate-600">Siap diproses transfer dana operasional oleh Finance.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">4. Transfer Penuh oleh Finance</td>
+                        <td className="p-2.5 font-mono font-bold text-emerald-700">TRANSFERRED</td>
+                        <td className="p-2.5 text-slate-600">Dana ditransfer 100% ("SUDAH DITRANSFER"). User dapat mulai melapor.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">5. Transfer Parsial / Sebagian</td>
+                        <td className="p-2.5 font-mono font-bold text-amber-700">TRANSFER_BERTAHAP</td>
+                        <td className="p-2.5 text-slate-600">Transfer bertahap/sebagian. User dapat mulai melapor tahap 1.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">6. User Submit Laporan Nota</td>
+                        <td className="p-2.5 font-mono font-bold text-amber-700">REVIEW_MANAGER</td>
+                        <td className="p-2.5 text-slate-600">Nota dikirim / ditambah. Menunggu peninjauan ulang Manager.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">7. Manager Setujui Nota</td>
+                        <td className="p-2.5 font-mono font-bold text-indigo-700">REVIEW_ADMIN</td>
+                        <td className="p-2.5 text-slate-600">Nota disetujui Manager. Menunggu verifikasi akhir Finance.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">8. Lapor Dana Talangan (OPT-)</td>
+                        <td className="p-2.5 font-mono font-bold text-amber-700">REPORTING</td>
+                        <td className="p-2.5 text-slate-600">Laporan Dana Talangan Pribadi aktif / dalam pelaporan.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">9. Penutupan Laporan (Closing)</td>
+                        <td className="p-2.5 font-mono font-bold text-slate-800">CLOSED</td>
+                        <td className="p-2.5 text-slate-600">Transaksi selesai & resmi ditutup oleh Finance.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">10. Penolakan / Revisi</td>
+                        <td className="p-2.5 font-mono font-bold text-rose-700">REJECTED</td>
+                        <td className="p-2.5 text-slate-600">Pengajuan/Transfer ditolak / diminta perbaikan.</td>
+                      </tr>
+                      <tr className="hover:bg-slate-50/80 transition-colors">
+                        <td className="p-2.5 font-semibold text-slate-800">11. Pembatalan Pemohon</td>
+                        <td className="p-2.5 font-mono font-bold text-slate-500">CANCELLED</td>
+                        <td className="p-2.5 text-slate-600">Dibatalkan secara mandiri oleh pemohon.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
+                <button
+                  type="button"
+                  onClick={() => setIsStatusInfoModalOpen(false)}
+                  className="px-5 py-2 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-xs transition-all shadow-md cursor-pointer"
+                >
+                  Tutup Informasi
                 </button>
               </div>
             </div>

@@ -44,6 +44,7 @@ import {
   verifyTokenAccountEmail
 } from '../lib/photoMigration';
 import { googleSignIn } from '../lib/firebase';
+import { requestGoogleAccessTokenClientSide } from '../lib/googleClientAuth';
 
 interface AdminPhotoMigrationCardProps {
   token?: string | null;
@@ -170,11 +171,68 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
     };
   }, []);
 
+  const [showManualTokenInput, setShowManualTokenInput] = useState(false);
+  const [manualTokenVal, setManualTokenVal] = useState('');
+  const [isVerifyingManualToken, setIsVerifyingManualToken] = useState(false);
+
+  const handleApplyManualToken = async () => {
+    if (!manualTokenVal.trim()) return;
+    setIsVerifyingManualToken(true);
+    addLog('Memverifikasi access token manual...', 'info');
+    try {
+      const cleanTok = manualTokenVal.trim();
+      const info = await verifyTokenAccountEmail(cleanTok);
+      if (info) {
+        activeTokenRef.current = cleanTok;
+        setTokenAccountEmail(info.email);
+        setIsTokenDepotel(info.isDepotel);
+        try {
+          localStorage.setItem('g_user_oauth_token', cleanTok);
+          window.dispatchEvent(
+            new CustomEvent('google_user_token_updated', {
+              detail: { token: cleanTok, email: info.email }
+            })
+          );
+        } catch {}
+
+        if (info.isDepotel) {
+          addLog(`Token valid! Akun sah terverifikasi: ${info.email}. Siap menduplikasi foto.`, 'success');
+          setShowManualTokenInput(false);
+        } else {
+          addLog(`Peringatan: Token terhubung ke '${info.email}', bukan 'depotel@vgd4.my.id'.`, 'warn');
+        }
+      } else {
+        addLog('Token tidak valid atau tidak memiliki izin Google Drive/Sheets.', 'error');
+      }
+    } catch (err: any) {
+      addLog(`Gagal memverifikasi token: ${err?.message || err}`, 'error');
+    } finally {
+      setIsVerifyingManualToken(false);
+    }
+  };
+
   const handleConnectDepotelAccount = async () => {
     setIsConnectingAccount(true);
-    addLog('Membuka dialog Login Google. Silakan pilih akun depotel@vgd4.my.id...', 'info');
+    addLog('Membuka dialog Login Google (Client-Side GIS)...', 'info');
     try {
-      const res = await googleSignIn();
+      let res: any = null;
+      // Step A: In AI Studio & browser SPAs, use client-side GIS token client directly.
+      // GIS does NOT use a backend client secret, completely avoiding invalid_client errors.
+      try {
+        const gisRes = await requestGoogleAccessTokenClientSide('depotel@vgd4.my.id');
+        res = {
+          accessToken: gisRes.accessToken,
+          user: gisRes.user
+        };
+      } catch (gisErr: any) {
+        const msg = String(gisErr?.message || '');
+        if (msg.includes('dibatalkan') || msg.includes('ditutup') || msg.includes('popup-closed')) {
+          throw gisErr;
+        }
+        console.warn('GIS client-side login fallback to Firebase auth:', gisErr);
+        res = await googleSignIn();
+      }
+
       if (res && res.accessToken) {
         activeTokenRef.current = res.accessToken;
         const email = String(res.user?.email || '').trim().toLowerCase();
@@ -188,8 +246,18 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
         }
       }
     } catch (err: any) {
-      if (err?.code !== 'auth/popup-closed-by-user') {
-        addLog(`Gagal login Google: ${err?.message || err}`, 'error');
+      const errStr = String(err?.message || err || '');
+      if (
+        err?.code !== 'auth/popup-closed-by-user' &&
+        !errStr.includes('dibatalkan') &&
+        !errStr.includes('ditutup')
+      ) {
+        if (errStr.includes('invalid_client') || errStr.includes('client secret is invalid') || err?.code === 'auth/invalid-credential') {
+          addLog('Client Secret di Firebase Console belum cocok. Anda dapat menginput token manual lewat tombol "Input Token Manual" di bawah.', 'error');
+          setShowManualTokenInput(true);
+        } else {
+          addLog(`Gagal login Google: ${errStr}`, 'error');
+        }
       }
     } finally {
       setIsConnectingAccount(false);
@@ -1131,20 +1199,50 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
                     </select>
 
                     {isTokenDepotel !== true && (
-                      <button
-                        type="button"
-                        disabled={isConnectingAccount || isRunning}
-                        onClick={handleConnectDepotelAccount}
-                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                        title="Otentikasi Google sebagai depotel@vgd4.my.id"
-                      >
-                        {isConnectingAccount ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <LogIn className="w-3.5 h-3.5" />
-                        )}
-                        <span>Login depotel@vgd4.my.id</span>
-                      </button>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={isConnectingAccount || isRunning}
+                          onClick={handleConnectDepotelAccount}
+                          className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                          title="Otentikasi Google langsung (Google Identity Services)"
+                        >
+                          {isConnectingAccount ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <LogIn className="w-3.5 h-3.5" />
+                          )}
+                          <span>Login depotel@vgd4.my.id</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowManualTokenInput(!showManualTokenInput)}
+                          className="px-2 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-[11px] font-semibold transition-all cursor-pointer"
+                          title="Input Access Token OAuth manual jika diperlukan"
+                        >
+                          {showManualTokenInput ? 'Tutup Token' : 'Token Manual'}
+                        </button>
+                      </div>
+                    )}
+
+                    {showManualTokenInput && isTokenDepotel !== true && (
+                      <div className="w-full flex items-center gap-2 pt-1 pb-1">
+                        <input
+                          type="password"
+                          placeholder="Tempel Google Access Token (ya29...)"
+                          value={manualTokenVal}
+                          onChange={(e) => setManualTokenVal(e.target.value)}
+                          className="flex-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded-xl text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                        <button
+                          type="button"
+                          disabled={isVerifyingManualToken || !manualTokenVal.trim()}
+                          onClick={handleApplyManualToken}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shrink-0"
+                        >
+                          {isVerifyingManualToken ? 'Memeriksa...' : 'Terapkan'}
+                        </button>
+                      </div>
                     )}
 
                     {isRunning ? (

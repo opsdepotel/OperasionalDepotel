@@ -392,10 +392,17 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [loginRejectError, setLoginRejectError] = useState<string | null>(null);
 
-  // Sync Global Server Database Config across all users
+  // Sync Global Server Database Config across all users (Optimized for Vercel Hobby serverless quota)
   useEffect(() => {
     let isMounted = true;
-    const syncServerConfig = async () => {
+    let lastSyncTime = Date.now();
+
+    const syncServerConfig = async (force = false) => {
+      const now = Date.now();
+      // Throttle: avoid redundant hits if called recently (less than 60s) unless forced on initial load
+      if (!force && now - lastSyncTime < 60000) return;
+      lastSyncTime = now;
+
       try {
         const cfg = await fetchGlobalConfig();
         if (isMounted && cfg.spreadsheetId) {
@@ -406,11 +413,34 @@ export default function App() {
         console.warn('Gagal sinkronisasi server database config:', err);
       }
     };
-    syncServerConfig();
-    const interval = setInterval(syncServerConfig, 60000);
+
+    // 1. Initial check on mount
+    syncServerConfig(true);
+
+    // 2. Efficient interval: Check every 10 minutes instead of every 60 seconds (90% CPU saving)
+    const interval = setInterval(() => {
+      syncServerConfig();
+    }, 10 * 60 * 1000);
+
+    // 3. Smart on-focus revalidation: If user refocuses the app after being away for > 5 minutes
+    const handleWindowFocus = () => {
+      if (Date.now() - lastSyncTime >= 5 * 60 * 1000) {
+        syncServerConfig();
+      }
+    };
+    window.addEventListener('focus', handleWindowFocus);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncTime >= 5 * 60 * 1000) {
+        syncServerConfig();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 

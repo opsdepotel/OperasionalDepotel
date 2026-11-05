@@ -226,6 +226,14 @@ expressApp.get('/api/health', (req, res) => {
 const handleGetConfig = (req: express.Request, res: express.Response) => {
   try {
     const config = readServerConfig();
+    // Vercel Edge CDN optimization: Cache response for 5 minutes (s-maxage=300),
+    // stale-while-revalidate for 10 minutes (600s). Allows instant Edge CDN serving with 0ms CPU.
+    const isBypass = req.query.force === '1' || req.headers['cache-control']?.includes('no-cache');
+    if (isBypass) {
+      res.setHeader('Cache-Control', 'no-store, max-age=0');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=600');
+    }
     res.json({
       success: true,
       ...config

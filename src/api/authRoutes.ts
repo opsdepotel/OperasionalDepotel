@@ -337,33 +337,52 @@ authRouter.post('/verify-session', async (req, res) => {
       ? customSheetId.trim()
       : config.spreadsheetId;
 
-    // 3. Fetch Users sheet
-    const sheetRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
+    // 3. Fetch Users sheet (Check in-memory cache first to minimize Vercel CPU execution time)
+    const now = Date.now();
+    let values: any[][] = [];
+    if (
+      usersSheetCache &&
+      usersSheetCache.spreadsheetId === spreadsheetId &&
+      now - usersSheetCache.timestamp < USERS_CACHE_TTL_MS &&
+      usersSheetCache.values.length >= 2
+    ) {
+      values = usersSheetCache.values;
+    } else {
+      const sheetRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
 
-    if (!sheetRes.ok) {
-      if (verifiedPayload) {
-        return res.json({
-          success: true,
-          user: {
-            userId: verifiedPayload.userId,
-            email: verifiedPayload.email,
-            role: verifiedPayload.role,
-            deviceId: verifiedPayload.deviceId
-          },
-          sessionToken
+      if (!sheetRes.ok) {
+        if (verifiedPayload) {
+          return res.json({
+            success: true,
+            user: {
+              userId: verifiedPayload.userId,
+              email: verifiedPayload.email,
+              role: verifiedPayload.role,
+              deviceId: verifiedPayload.deviceId
+            },
+            sessionToken
+          });
+        }
+        return res.status(502).json({
+          success: false,
+          error: 'Database operasional Google Sheets sedang tidak dapat dijangkau. Silakan coba beberapa saat lagi.'
         });
       }
-      return res.status(502).json({
-        success: false,
-        error: 'Database operasional Google Sheets sedang tidak dapat dijangkau. Silakan coba beberapa saat lagi.'
-      });
+
+      const sheetData = await sheetRes.json();
+      values = sheetData.values || [];
+      if (values.length >= 2) {
+        usersSheetCache = {
+          spreadsheetId,
+          timestamp: now,
+          values
+        };
+      }
     }
 
-    const sheetData = await sheetRes.json();
-    const values: any[][] = sheetData.values || [];
     if (values.length < 2) {
       return res.status(401).json({
         success: false,

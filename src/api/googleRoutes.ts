@@ -408,7 +408,7 @@ googleAuthRouter.post('/upload-receipt', async (req, res) => {
 });
 
 interface FolderCacheEntry {
-  files: Array<{ id: string; name: string }>;
+  files: Array<{ id: string; name: string; mimeType?: string }>;
   timestamp: number;
 }
 const folderFilesCache = new Map<string, FolderCacheEntry>();
@@ -418,23 +418,23 @@ async function getFolderFilesCached(
   drive: any,
   folderId: string,
   forceRefresh = false
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<Array<{ id: string; name: string; mimeType?: string }>> {
   const now = Date.now();
   const cached = folderFilesCache.get(folderId);
   if (!forceRefresh && cached && now - cached.timestamp < CACHE_TTL_MS) {
     return cached.files;
   }
 
-  const files: Array<{ id: string; name: string }> = [];
+  const files: Array<{ id: string; name: string; mimeType?: string }> = [];
   let pageToken: string | undefined = undefined;
   do {
     const listRes: any = await drive.files.list({
-      q: `'${folderId}' in parents and trashed = false`,
+      q: `'${folderId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
       pageSize: 1000,
       pageToken,
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
-      fields: 'nextPageToken, files(id, name)'
+      fields: 'nextPageToken, files(id, name, mimeType)'
     });
     const batch = (listRes.data.files as any[]) || [];
     files.push(...batch);
@@ -519,8 +519,8 @@ googleAuthRouter.post('/backup', async (req, res) => {
     }
 
     // List files in source and target folders only if needed (for scan or when copying photos)
-    let sourceFiles: Array<{ id: string; name: string }> = [];
-    let existingFilesInBackup: Array<{ id: string; name: string }> = [];
+    let sourceFiles: Array<{ id: string; name: string; mimeType?: string }> = [];
+    let existingFilesInBackup: Array<{ id: string; name: string; mimeType?: string }> = [];
 
     if (action === 'scan' || copyPhotos) {
       try {
@@ -609,34 +609,97 @@ googleAuthRouter.post('/backup', async (req, res) => {
         const chunk = photosToProcess.slice(i, i + chunkSize);
         await Promise.all(
           chunk.map(async (photo) => {
+            // Skip folders or system directories if present
+            if (photo.mimeType === 'application/vnd.google-apps.folder') {
+              return;
+            }
+
             try {
-              const copiedPhoto = await drive.files.copy({
-                fileId: photo.id,
-                requestBody: {
-                  name: photo.name,
-                  parents: [targetBackupFolderId],
-                  description: `Salinan cadangan dari berkas ${photo.id}`
-                },
-                supportsAllDrives: true,
-                fields: 'id, name'
-              });
-              copiedPhotosCount++;
-              if (copiedPhoto.data.id && photo.name) {
-                backupFilesByName.set(photo.name, copiedPhoto.data.id);
-                const targetCache = folderFilesCache.get(targetBackupFolderId);
-                if (targetCache && Array.isArray(targetCache.files)) {
-                  targetCache.files.push({ id: copiedPhoto.data.id, name: photo.name });
+              let newFileId: string | null = null;
+
+              // Attempt 1: Direct drive.files.copy (fastest, preserves metadata)
+              try {
+                const copiedPhoto = await drive.files.copy({
+                  fileId: photo.id,
+                  requestBody: {
+                    name: photo.name,
+                    parents: [targetBackupFolderId],
+                    description: `Salinan cadangan dari berkas ${photo.id}`
+                  },
+                  supportsAllDrives: true,
+                  fields: 'id, name'
+                });
+                newFileId = copiedPhoto.data.id || null;
+              } catch (copyErr: any) {
+                const errMsg = copyErr?.response?.data?.error?.message || copyErr?.message || '';
+                const isRestrictedOrNotCopyable =
+                  errMsg.includes('cannot be copied') ||
+                  copyErr?.status === 403 ||
+                  copyErr?.code === 403;
+
+                if (isRestrictedOrNotCopyable) {
+                  // Attempt 2: Fallback to downloading media binary stream and uploading directly
+                  // This overcomes permissions where viewers/service accounts cannot call files.copy
+                  try {
+                    const meta = await drive.files.get({
+                      fileId: photo.id,
+                      fields: 'id, name, mimeType',
+                      supportsAllDrives: true
+                    }).catch(() => null);
+
+                    const mimeType = meta?.data?.mimeType || photo.mimeType || 'image/jpeg';
+                    const targetName = photo.name || meta?.data?.name || `bukti_${photo.id}.jpg`;
+
+                    const mediaStream = await drive.files.get(
+                      { fileId: photo.id, alt: 'media', supportsAllDrives: true },
+                      { responseType: 'stream' }
+                    );
+
+                    const created = await drive.files.create({
+                      requestBody: {
+                        name: targetName,
+                        parents: [targetBackupFolderId],
+                        description: `Salinan cadangan media dari berkas ${photo.id}`
+                      },
+                      media: {
+                        mimeType,
+                        body: mediaStream.data
+                      },
+                      supportsAllDrives: true,
+                      fields: 'id, name'
+                    });
+
+                    newFileId = created.data.id || null;
+                  } catch (streamErr: any) {
+                    throw new Error(`Fallback unduh & unggah gagal: ${streamErr?.response?.data?.error?.message || streamErr?.message || errMsg}`);
+                  }
+                } else {
+                  throw copyErr;
                 }
               }
-            } catch (photoCopyErr) {
+
+              if (newFileId) {
+                copiedPhotosCount++;
+                if (photo.name) {
+                  backupFilesByName.set(photo.name, newFileId);
+                  const targetCache = folderFilesCache.get(targetBackupFolderId);
+                  if (targetCache && Array.isArray(targetCache.files)) {
+                    targetCache.files.push({ id: newFileId, name: photo.name });
+                  }
+                }
+              } else {
+                failedPhotosCount++;
+              }
+            } catch (photoCopyErr: any) {
               failedPhotosCount++;
-              console.warn(`Gagal menyalin foto ${photo.name}:`, photoCopyErr);
+              const cleanErr = photoCopyErr?.response?.data?.error?.message || photoCopyErr?.message || 'Gagal menyalin';
+              console.warn(`Peringatan backup foto (${photo.name || photo.id}): ${cleanErr}`);
             }
           })
         );
       }
       details.push(
-        `Menyalin foto bukti: ${copiedPhotosCount} berhasil, ${alreadyPresentCount} dilewati (sudah ada)${failedPhotosCount > 0 ? `, ${failedPhotosCount} gagal` : ''}.${remainingToCopy > 0 ? ` Masih ada ${remainingToCopy} foto antrean berikutnya.` : ''}`
+        `Menyalin foto bukti: ${copiedPhotosCount} berhasil, ${alreadyPresentCount} dilewati (sudah ada)${failedPhotosCount > 0 ? `, ${failedPhotosCount} gagal/dilewati` : ''}.${remainingToCopy > 0 ? ` Masih ada ${remainingToCopy} foto antrean berikutnya.` : ''}`
       );
     } else if (copyPhotos) {
       details.push(`Semua foto bukti (${sourceFiles.length} berkas) sudah lengkap ada di Google Drive cadangan.`);

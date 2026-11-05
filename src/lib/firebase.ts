@@ -7,6 +7,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { fetchServiceAccountToken } from './serviceAccountClient';
+import { requestGoogleAccessTokenClientSide } from './googleClientAuth';
 
 let app: any = null;
 let auth: any = null;
@@ -178,9 +179,35 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 
     if (isUserCancelled) {
       console.log('Google sign-in popup was closed/cancelled by user.');
-    } else {
-      console.error('Sign in error:', error);
+      throw error;
     }
+
+    const errStr = String(error?.message || error || '');
+    const isClientSecretError =
+      error?.code === 'auth/invalid-credential' ||
+      errStr.includes('invalid_client') ||
+      errStr.includes('client secret is invalid');
+
+    if (isClientSecretError) {
+      console.warn('Firebase Client Secret mismatch in AI Studio. Auto-falling back to client-side Google Identity Services (GIS)...');
+      try {
+        const gisResult = await requestGoogleAccessTokenClientSide();
+        cachedAccessToken = gisResult.accessToken;
+        cachedTokenTimestamp = Date.now();
+        const fallbackUser = {
+          uid: gisResult.user.sub || 'gis_user',
+          email: gisResult.user.email,
+          displayName: gisResult.user.name || gisResult.user.email,
+          photoURL: gisResult.user.picture || ''
+        } as unknown as User;
+        return { user: fallbackUser, accessToken: cachedAccessToken };
+      } catch (gisErr: any) {
+        console.error('Client-side GIS error:', gisErr);
+        throw gisErr;
+      }
+    }
+
+    console.error('Sign in error:', error);
     throw error;
   } finally {
     isSigningIn = false;

@@ -1,4 +1,5 @@
 import { getFirebaseIdToken } from './firebase';
+import { getStoredSessionToken } from './sessionClient';
 
 export class ApiError extends Error {
   status: number;
@@ -14,7 +15,7 @@ export class ApiError extends Error {
 
 /**
  * Universal authenticated fetch helper.
- * Automatically injects the Firebase ID Token into Authorization: Bearer header.
+ * Automatically injects the Firebase ID Token or Server HMAC Session Token into Authorization: Bearer header.
  * Intercepts HTTP 401 (re-authentication needed) and HTTP 403 (unauthorized role).
  */
 export async function apiFetch(
@@ -23,15 +24,17 @@ export async function apiFetch(
 ): Promise<Response> {
   const headers = new Headers(init?.headers || {});
 
-  // If Authorization header not explicitly set, fetch and attach Firebase ID Token
+  // If Authorization header not explicitly set, fetch and attach active token
   if (!headers.has('Authorization')) {
     try {
-      const idToken = await getFirebaseIdToken();
-      if (idToken) {
-        headers.set('Authorization', `Bearer ${idToken}`);
+      const sessionToken = getStoredSessionToken();
+      const firebaseToken = await getFirebaseIdToken();
+      const tokenToUse = sessionToken || firebaseToken;
+      if (tokenToUse) {
+        headers.set('Authorization', `Bearer ${tokenToUse}`);
       }
     } catch (e) {
-      console.warn('[apiFetch] Could not retrieve Firebase ID token:', e);
+      console.warn('[apiFetch] Could not retrieve auth token:', e);
     }
   }
 

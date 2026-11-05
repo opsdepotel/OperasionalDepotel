@@ -546,9 +546,10 @@ export interface GlobalAppConfigResponse {
   message?: string;
 }
 
-export async function fetchGlobalConfig(): Promise<GlobalAppConfigResponse> {
+export async function fetchGlobalConfig(force = false): Promise<GlobalAppConfigResponse> {
   try {
-    const res = await fetch('/api/config');
+    const url = force ? '/api/config?force=1' : '/api/config';
+    const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
       if (data && data.success && data.spreadsheetId) {

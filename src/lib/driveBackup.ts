@@ -254,7 +254,7 @@ export async function scanDriveBackup({
     let sourceFiles: Array<{ id: string; name: string; size?: string }> = [];
     let sourcePageToken: string | null = null;
     do {
-      const pageUrl: string = `https://www.googleapis.com/drive/v3/files?q='${sourceFolderId}'+in+parents+and+trashed=false&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name,size)${sourcePageToken ? `&pageToken=${encodeURIComponent(sourcePageToken)}` : ''}`;
+      const pageUrl: string = `https://www.googleapis.com/drive/v3/files?q='${sourceFolderId}'+in+parents+and+mimeType!='application/vnd.google-apps.folder'+and+trashed=false&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name,size)${sourcePageToken ? `&pageToken=${encodeURIComponent(sourcePageToken)}` : ''}`;
       const sourceFilesRes: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${activeToken}` } });
       if (sourceFilesRes.ok) {
         const pageData: any = await sourceFilesRes.json();
@@ -491,7 +491,7 @@ export async function executeDriveBackup({
       const sourceFiles: Array<{ id: string; name: string }> = [];
       let sourcePageToken: string | null = null;
       do {
-        const pageUrl: string = `https://www.googleapis.com/drive/v3/files?q='${sourceFolderId}'+in+parents+and+trashed=false&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name)${sourcePageToken ? `&pageToken=${encodeURIComponent(sourcePageToken)}` : ''}`;
+        const pageUrl: string = `https://www.googleapis.com/drive/v3/files?q='${sourceFolderId}'+in+parents+and+mimeType!='application/vnd.google-apps.folder'+and+trashed=false&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true&fields=nextPageToken,files(id,name)${sourcePageToken ? `&pageToken=${encodeURIComponent(sourcePageToken)}` : ''}`;
         const res: Response = await fetch(pageUrl, { headers: { Authorization: `Bearer ${activeToken}` } });
         if (res.ok) {
           const data: any = await res.json();
@@ -542,6 +542,8 @@ export async function executeDriveBackup({
         });
 
         try {
+          let copiedFileId: string | null = null;
+
           const fileCopyRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}/copy?supportsAllDrives=true&fields=id,name`, {
             method: 'POST',
             headers: {
@@ -556,17 +558,46 @@ export async function executeDriveBackup({
 
           if (fileCopyRes.ok) {
             const copiedData = await fileCopyRes.json();
+            copiedFileId = copiedData.id || null;
+          } else {
+            // Fallback: try download from server photo-file proxy and upload as binary
+            try {
+              const fileRes = await apiFetch(`/api/google/photo-file/${encodeURIComponent(file.id)}`);
+              if (fileRes.ok) {
+                const blob = await fileRes.blob();
+                const boundary = 'backup_boundary_' + Date.now();
+                const metadata = JSON.stringify({ name: file.name, parents: [targetFolderId] });
+                const delimiter = `\r\n--${boundary}\r\n`;
+                const closeDelimiter = `\r\n--${boundary}--`;
+                const metaPart = new Blob([delimiter, 'Content-Type: application/json; charset=UTF-8\r\n\r\n', metadata, delimiter, `Content-Type: ${blob.type || 'image/jpeg'}\r\n\r\n`]);
+                const multipartBody = new Blob([metaPart, blob, new Blob([closeDelimiter])]);
+                const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,name', {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${activeToken}`,
+                    'Content-Type': `multipart/related; boundary=${boundary}`
+                  },
+                  body: multipartBody
+                });
+                if (uploadRes.ok) {
+                  const uploadData = await uploadRes.json();
+                  copiedFileId = uploadData.id || null;
+                }
+              }
+            } catch {}
+          }
+
+          if (copiedFileId) {
             copiedCount++;
-            if (copiedData.id && file.name) {
-              targetFileMap.set(file.name, copiedData.id);
+            if (file.name) {
+              targetFileMap.set(file.name, copiedFileId);
             }
           } else {
             failedCount++;
-            console.warn(`Failed to copy photo ${file.name}:`, await fileCopyRes.text());
           }
-        } catch (copyErr) {
+        } catch (copyErr: any) {
           failedCount++;
-          console.warn(`Error copying photo ${file.name}:`, copyErr);
+          console.warn(`Peringatan backup foto ${file.name}:`, copyErr?.message || copyErr);
         }
       }
 
