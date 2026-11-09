@@ -20,7 +20,7 @@ interface UsersSheetCache {
   values: any[][];
 }
 let usersSheetCache: UsersSheetCache | null = null;
-const USERS_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes TTL
+const USERS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
 
 /**
  * Helper to invalidate Users sheet cache manually (e.g. when profiles are updated)

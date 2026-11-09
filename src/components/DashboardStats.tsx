@@ -3592,34 +3592,45 @@ User Agent: ${navigator.userAgent}`;
     }).length;
     const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
 
-    // Company-wide Executive stats for MONITORING (memuat seluruh UID perusahaan, sama seperti Role Finance)
+    // Company-wide Executive stats for MONITORING (memuat seluruh UID perusahaan, selaras dengan filter saat diklik)
     const monitoringReqs = activeReqs;
 
-    // 1. PENGAJUAN (Pending Approval by Manager / Partially Approved)
-    const pengajuanCount = monitoringReqs.filter(r => 
-      r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
-    ).length;
+    // 1. PENGAJUAN (Pending Approval Manager & Pending Approval Finance)
+    const pengajuanReqs = monitoringReqs.filter(r => {
+      const isPendingManager = r.status === RequestStatus.PENDING_APPROVAL;
+      const isPendingFinance = isOpBiasaRequest(r) && 
+        (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) && 
+        !isFinanceApprovedOpRequest(r, histories);
+      return isPendingManager || isPendingFinance;
+    });
+    const pengajuanCount = pengajuanReqs.length;
 
-    // 2. MENUNGGU TRANSFER (Approved by Manager / Partially Approved or Bailout Reimbursement pending)
-    const pendingTransferReqs = monitoringReqs.filter(r => 
-      r.status === RequestStatus.APPROVED || 
-      r.status === RequestStatus.PARTIALLY_APPROVED || 
-      r.status === RequestStatus.PENDING_TALANGAN_TRANSFER
-    );
+    // 2. MENUNGGU TRANSFER (Approved by Manager & Finance, antrean transfer Finance)
+    const pendingTransferReqs = monitoringReqs.filter(r => isPendingTransferRequest(r, histories, usageItems));
     const menungguTransferCount = pendingTransferReqs.length;
     const menungguTransferNominal = pendingTransferReqs.reduce((sum, r) => {
       if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
         const reqItems = usageItems.filter(i => i.requestId === r.id && i.statusManager === ItemStatus.APPROVED);
         const approvedUsage = reqItems.reduce((iSum, item) => iSum + (item.nominal || 0), 0);
-        return sum + (approvedUsage || r.managerActionAmount || r.jumlahPengajuan || 0);
+        return sum + (approvedUsage || r.adminActionAmount || r.managerActionAmount || r.jumlahPengajuan || 0);
       }
-      const amt = r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0);
+      const finApproved = getFinanceApprovedAmount(r, histories, usageItems);
+      if (isOpBiasaRequest(r) && r.status !== RequestStatus.CLOSED && getTransferBertahap(r, histories, usageItems)) {
+        const remainingToTransfer = Math.max(0, finApproved - (r.adminActionAmount || 0));
+        return sum + (remainingToTransfer || finApproved);
+      }
+      const finHistories = histories.filter(h => (h.requestUid === r.id || h.itemUid === r.id) && h.actionType === 'APPROVAL_FINANCE');
+      let finApprovedNominal = 0;
+      if (finHistories.length > 0) {
+        finApprovedNominal = finHistories.reduce((s, h) => s + (h.nominal || 0), 0);
+      }
+      const amt = r.adminActionAmount > 0 ? r.adminActionAmount : (finApprovedNominal > 0 ? finApprovedNominal : (r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0)));
       return sum + amt;
     }, 0);
 
-    // 3. PROSES LAPORAN (Transferred, Reporting, Review Manager, Review Admin)
+    // 3. PROSES LAPORAN (Transferred, Transfer Bertahap, Reporting, Review Manager, Review Admin)
     const prosesLaporanCount = monitoringReqs.filter(r => 
-      [RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)
+      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)
     ).length;
 
     // 4. CLOSED (Closed requests excluding BBMDS)

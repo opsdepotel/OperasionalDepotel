@@ -57,7 +57,8 @@ import {
   mergeUserProfiles,
   SPREADSHEET_ID,
   DRIVE_FOLDER_ID,
-  fetchGlobalConfig
+  fetchGlobalConfig,
+  invalidateClientActiveHistoriesCache
 } from './lib/googleApi';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
 import { validateDeviceAccessAndBind, requestPersistentStorage, isMobileDevice, generateHardwareFingerprint, isCurrentDeviceValidForUserSync, getBrowserAgnosticHardwareSignature } from './lib/deviceUtils';
@@ -1433,6 +1434,7 @@ export default function App() {
     setError(null);
     setLoadingStep('Memperbarui Data...');
     try {
+      invalidateClientActiveHistoriesCache();
       await syncAllData(token, spreadsheetId);
     } catch (err: any) {
       console.error('handleManualRefresh error:', err);
@@ -4097,7 +4099,11 @@ export default function App() {
         }
       } else if (statusFilter === 'CLOSED') {
         if (r.status !== RequestStatus.CLOSED) return false;
-        if (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) return false;
+        if (activeRole === Role.DIREKTUR) {
+          if (isBbmDurenSawitRequest(r)) return false;
+        } else {
+          if (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) return false;
+        }
 
         // User filter
         if (closedUserFilter !== 'ALL') {

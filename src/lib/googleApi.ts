@@ -1323,25 +1323,78 @@ export interface AllDatabaseTables {
 }
 
 /**
+ * In-memory client cache for active item review histories (reduces redundant Vercel CPU execution)
+ */
+let clientActiveHistoriesCache: {
+  data: ItemReviewHistory[];
+  timestamp: number;
+  spreadsheetId: string;
+} | null = null;
+const CLIENT_ACTIVE_HISTORIES_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
+
+export function invalidateClientActiveHistoriesCache(): void {
+  clientActiveHistoriesCache = null;
+}
+
+/**
+ * In-memory client cache for specific UID review histories
+ */
+const uidReviewHistoriesMemoryCache = new Map<string, { data: ItemReviewHistory[]; timestamp: number }>();
+const UID_HISTORY_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
+
+export function invalidateUidReviewHistoryCache(uid?: string): void {
+  if (uid) {
+    uidReviewHistoriesMemoryCache.delete(uid.toUpperCase().trim());
+  } else {
+    uidReviewHistoriesMemoryCache.clear();
+  }
+}
+
+/**
  * Fetches active item review histories via the high-performance on-demand backend endpoint /api/history.
  * Loads only records for active (non-closed) requests (~740 records instead of 12,382).
+ * Uses a smart 5-minute in-memory cache to eliminate repetitive serverless executions.
  */
-export async function fetchActiveItemReviewHistories(token: string, spreadsheetId: string): Promise<ItemReviewHistory[]> {
+export async function fetchActiveItemReviewHistories(
+  token: string,
+  spreadsheetId: string,
+  forceRefresh = false
+): Promise<ItemReviewHistory[]> {
   if (token === 'mock_demo_token') {
     return getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
+  }
+
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    clientActiveHistoriesCache &&
+    clientActiveHistoriesCache.spreadsheetId === spreadsheetId &&
+    now - clientActiveHistoriesCache.timestamp < CLIENT_ACTIVE_HISTORIES_TTL_MS
+  ) {
+    return clientActiveHistoriesCache.data;
   }
 
   const sessionToken = getStoredSessionToken();
   const authToken = sessionToken || token;
 
   try {
-    const res = await fetch(`/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
-      headers: { Authorization: `Bearer ${authToken}` }
+    const url = `/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}${forceRefresh ? '&forceRefresh=true' : ''}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        ...(forceRefresh ? { 'Cache-Control': 'no-cache' } : {})
+      }
     });
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
-        return json.data as ItemReviewHistory[];
+        const records = json.data as ItemReviewHistory[];
+        clientActiveHistoriesCache = {
+          data: records,
+          timestamp: Date.now(),
+          spreadsheetId
+        };
+        return records;
       }
     }
   } catch (err) {
@@ -1349,34 +1402,67 @@ export async function fetchActiveItemReviewHistories(token: string, spreadsheetI
   }
 
   // Fallback to direct sheet fetch
-  return fetchItemReviewHistories(token, spreadsheetId);
+  const directData = await fetchItemReviewHistories(token, spreadsheetId);
+  if (directData && directData.length > 0) {
+    clientActiveHistoriesCache = {
+      data: directData,
+      timestamp: Date.now(),
+      spreadsheetId
+    };
+  }
+  return directData;
 }
 
 /**
  * Fetches review history on-demand for a specific UID (active or closed) from /api/history?uid=...
+ * Uses a 5-minute memory cache to prevent repetitive round-trips when inspecting the same UID.
  */
-export async function fetchHistoryForUid(token: string, spreadsheetId: string, uid: string): Promise<ItemReviewHistory[]> {
+export async function fetchHistoryForUid(
+  token: string,
+  spreadsheetId: string,
+  uid: string,
+  forceRefresh = false
+): Promise<ItemReviewHistory[]> {
   if (!uid) return [];
+  const cleanUid = uid.toUpperCase().trim();
+
   if (token === 'mock_demo_token') {
     const all = getMockData<ItemReviewHistory[]>('mock_db_item_review_history', []);
-    return all.filter(h => h.requestUid === uid || h.itemUid === uid);
+    return all.filter(h => h.requestUid === cleanUid || h.itemUid === cleanUid);
+  }
+
+  const now = Date.now();
+  if (!forceRefresh) {
+    const cached = uidReviewHistoriesMemoryCache.get(cleanUid);
+    if (cached && now - cached.timestamp < UID_HISTORY_TTL_MS) {
+      return cached.data;
+    }
   }
 
   const sessionToken = getStoredSessionToken();
   const authToken = sessionToken || token;
 
   try {
-    const res = await fetch(`/api/history?uid=${encodeURIComponent(uid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
-      headers: { Authorization: `Bearer ${authToken}` }
+    const url = `/api/history?uid=${encodeURIComponent(cleanUid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}${forceRefresh ? '&forceRefresh=true' : ''}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+        ...(forceRefresh ? { 'Cache-Control': 'no-cache' } : {})
+      }
     });
     if (res.ok) {
       const json = await res.json();
       if (json.success && Array.isArray(json.data)) {
-        return json.data as ItemReviewHistory[];
+        const records = json.data as ItemReviewHistory[];
+        uidReviewHistoriesMemoryCache.set(cleanUid, {
+          data: records,
+          timestamp: Date.now()
+        });
+        return records;
       }
     }
   } catch (err) {
-    console.warn(`[fetchHistoryForUid] /api/history?uid=${uid} failed:`, err);
+    console.warn(`[fetchHistoryForUid] /api/history?uid=${cleanUid} failed:`, err);
   }
 
   return [];
@@ -2495,7 +2581,9 @@ export async function createBatchItemReviewHistories(token: string, spreadsheetI
     throw new Error(`Gagal menyimpan Riwayat Review Item: ${txt}`);
   }
 
-  // Invalidate server on-demand history cache
+  // Invalidate client and server on-demand history cache immediately for real-time consistency
+  invalidateClientActiveHistoriesCache();
+  invalidateUidReviewHistoryCache();
   try {
     fetch('/api/history/invalidate', { method: 'POST' }).catch(() => {});
   } catch {}

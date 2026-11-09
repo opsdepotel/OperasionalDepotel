@@ -16,7 +16,7 @@ interface CachedHistoryData {
 }
 
 let cache: CachedHistoryData | null = null;
-const CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes TTL (invalidated immediately on /api/history/invalidate)
 
 export function invalidateHistoryCache(): void {
   cache = null;
@@ -184,9 +184,16 @@ async function getOrRefreshHistoryCache(spreadsheetId: string, force = false): P
 historyRouter.get('/', requireFirebaseAuth, async (req, res) => {
   try {
     const spreadsheetId = (req.query.spreadsheetId as string) || readServerConfig().spreadsheetId;
-    const forceRefresh = req.query.forceRefresh === 'true';
+    const forceRefresh = req.query.forceRefresh === 'true' || req.headers['cache-control'] === 'no-cache';
     const targetUid = typeof req.query.uid === 'string' ? req.query.uid.trim() : '';
     const isAll = req.query.all === 'true';
+
+    // Set private browser cache headers (safe per user, avoids redundant serverless calls)
+    if (!forceRefresh) {
+      res.setHeader('Cache-Control', 'private, max-age=180, stale-while-revalidate=300');
+    } else {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    }
 
     const historyCache = await getOrRefreshHistoryCache(spreadsheetId, forceRefresh);
 

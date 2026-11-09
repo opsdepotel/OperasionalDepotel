@@ -14,7 +14,7 @@ interface CachedUsageData {
 }
 
 let cache: CachedUsageData | null = null;
-const CACHE_TTL_MS = 60 * 1000; // 60 seconds TTL
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes TTL
 
 export function invalidateUsageCache(): void {
   cache = null;
@@ -121,7 +121,7 @@ async function getOrRefreshUsageCache(spreadsheetId: string, force = false): Pro
 usageRouter.get('/', requireFirebaseAuth, async (req, res) => {
   try {
     const spreadsheetId = (req.query.spreadsheetId as string) || readServerConfig().spreadsheetId;
-    const forceRefresh = req.query.forceRefresh === 'true';
+    const forceRefresh = req.query.forceRefresh === 'true' || req.headers['cache-control'] === 'no-cache';
     const targetUid = typeof req.query.uid === 'string' ? req.query.uid.trim() : '';
 
     if (!targetUid) {
@@ -129,6 +129,12 @@ usageRouter.get('/', requireFirebaseAuth, async (req, res) => {
         success: false,
         error: 'Parameter "uid" diperlukan untuk pemuatan on-demand.'
       });
+    }
+
+    if (!forceRefresh) {
+      res.setHeader('Cache-Control', 'private, max-age=180, stale-while-revalidate=300');
+    } else {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     }
 
     const usageCache = await getOrRefreshUsageCache(spreadsheetId, forceRefresh);
