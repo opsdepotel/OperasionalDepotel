@@ -335,7 +335,11 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       amount = getFinanceApprovedAmount(request, currentPengajuanHistories, usageItems);
     }
 
-    // Fallback jika sudah ditransfer
+    // Fallback jika sudah ditransfer atau disetujui Finance (PENDING_PENGAJUAN_TRANSFER)
+    const isApprovedByFinanceState =
+      request.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER ||
+      isDisbursedOrLater;
+
     if (!time && (isDisbursedOrLater || (!isPengajuanRejected && !isPengajuanRevisedCycle))) {
       const transferLogs = currentPengajuanHistories.filter(h =>
         ((h.status || '').toString().toUpperCase() === 'TRANSFERRED' ||
@@ -347,6 +351,21 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       }
       if (!time && request.adminActionTime && request.adminActionTime !== '-') {
         time = request.adminActionTime;
+      }
+    }
+
+    // Instant fallback bila status pengajuan sudah berstatus PENDING_PENGAJUAN_TRANSFER atau lebih lanjut
+    // Memastikan timeline langsung aktif tanpa delay sinkronisasi riwayat
+    if (isApprovedByFinanceState) {
+      if (!amount) {
+        amount = request.managerActionAmount > 0
+          ? request.managerActionAmount
+          : (request.jumlahPengajuan || request.nominal || 0);
+      }
+      if (!time) {
+        time = (request.adminActionTime && request.adminActionTime !== '-')
+          ? request.adminActionTime
+          : ((request as any).financeApprovedAt || (request as any).managerApprovedAt || request.createdAt || request.timestamp || null);
       }
     }
 
@@ -509,11 +528,15 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       return sum;
     }, 0);
 
+    const effectiveTime = (approvedCount > 0 && !latestApprovedTime)
+      ? ((request.managerActionTime && request.managerActionTime !== '-') ? request.managerActionTime : (request.createdAt || request.timestamp || null))
+      : latestApprovedTime;
+
     return {
       totalItems,
       approvedCount,
       approvedNominal,
-      time: approvedCount > 0 ? latestApprovedTime : null,
+      time: approvedCount > 0 ? effectiveTime : null,
       isRejected: rejectCount > 0,
       rejectTime: latestRejectTime,
       rejectCount
@@ -636,11 +659,15 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       return sum;
     }, 0);
 
+    const effectiveTime = (approvedCount > 0 && !latestApprovedTime)
+      ? ((request.adminActionTime && request.adminActionTime !== '-') ? request.adminActionTime : (request.createdAt || request.timestamp || null))
+      : latestApprovedTime;
+
     return {
       totalItems,
       approvedCount,
       approvedNominal,
-      time: approvedCount > 0 ? latestApprovedTime : null,
+      time: approvedCount > 0 ? effectiveTime : null,
       isRejected: rejectCount > 0,
       rejectTime: latestRejectTime,
       rejectCount
