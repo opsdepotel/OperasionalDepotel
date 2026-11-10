@@ -60,6 +60,7 @@ import {
   fetchGlobalConfig,
   invalidateClientActiveHistoriesCache
 } from './lib/googleApi';
+import { compressTransferReceiptFile } from './lib/imageCompression';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
 import { validateDeviceAccessAndBind, requestPersistentStorage, isMobileDevice, generateHardwareFingerprint, isCurrentDeviceValidForUserSync, getBrowserAgnosticHardwareSignature } from './lib/deviceUtils';
 import { safeSetItem, safeSetJson } from './lib/storage';
@@ -418,20 +419,20 @@ export default function App() {
     // 1. Initial check on mount
     syncServerConfig(true);
 
-    // 2. Efficient interval: Check every 10 minutes instead of every 60 seconds (90% CPU saving)
+    // 2. Efficient interval: Check every 30 minutes instead of polling frequently
     const interval = setInterval(() => {
       syncServerConfig();
-    }, 10 * 60 * 1000);
+    }, 30 * 60 * 1000);
 
-    // 3. Smart on-focus revalidation: If user refocuses the app after being away for > 5 minutes
+    // 3. Smart on-focus revalidation: If user refocuses the app after being away for > 15 minutes
     const handleWindowFocus = () => {
-      if (Date.now() - lastSyncTime >= 5 * 60 * 1000) {
+      if (Date.now() - lastSyncTime >= 15 * 60 * 1000) {
         syncServerConfig();
       }
     };
     window.addEventListener('focus', handleWindowFocus);
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && Date.now() - lastSyncTime >= 5 * 60 * 1000) {
+      if (document.visibilityState === 'visible' && Date.now() - lastSyncTime >= 15 * 60 * 1000) {
         syncServerConfig();
       }
     };
@@ -2618,9 +2619,10 @@ export default function App() {
     let proofFileId = '';
 
     if (photoFile) {
+      const fileToUpload = (await compressTransferReceiptFile(photoFile)) || photoFile;
       if (currentToken !== 'mock_demo_token' && driveFolderId) {
         try {
-          const uploadRes = await uploadReceiptFile(currentToken, driveFolderId, photoFile);
+          const uploadRes = await uploadReceiptFile(currentToken, driveFolderId, fileToUpload);
           proofUrl = uploadRes.viewUrl;
           proofFileId = uploadRes.fileId;
         } catch (uploadErr) {

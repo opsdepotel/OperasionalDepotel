@@ -24,6 +24,7 @@ import {
   Eye
 } from 'lucide-react';
 import { uploadReceiptFile, DRIVE_FOLDER_ID } from '../lib/googleApi';
+import { compressTransferReceiptFile } from '../lib/imageCompression';
 
 interface TransferModalProps {
   request: BudgetRequest;
@@ -251,8 +252,10 @@ export const TransferModal: React.FC<TransferModalProps> = ({
         if (!targetFolderId) {
           throw new Error('ID Folder Google Drive belum terinisialisasi.');
         }
+        setSubmitStep('Mengoptimalkan bukti transfer...');
+        const fileToUpload = (await compressTransferReceiptFile(selectedFile)) || selectedFile;
         setSubmitStep('Mengunggah bukti transfer ke Google Drive...');
-        const uploadResult = await uploadReceiptFile(googleToken, targetFolderId, selectedFile);
+        const uploadResult = await uploadReceiptFile(googleToken, targetFolderId, fileToUpload);
         finalBuktiUrl = uploadResult.viewUrl;
         finalBuktiFileId = uploadResult.fileId;
       }
