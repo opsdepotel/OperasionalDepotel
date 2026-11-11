@@ -90,6 +90,7 @@ function getGenAI(): GoogleGenAI {
         headers: {
           'User-Agent': 'aistudio-build',
         },
+        timeout: 90000,
       },
     });
   }
@@ -110,9 +111,39 @@ async function fetchImageAsBase64(
     }
   }
 
-  // 1. If user provided a valid OAuth access token, download directly from Drive API v3
+  // 1. If user provided a valid OAuth access token, try lightweight thumbnailLink first, then fallback to alt=media
   if (fileId && !fileId.includes('/') && googleAccessToken) {
     try {
+      // 1a. Try thumbnail link for smaller payload & fast AI processing
+      const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?fields=thumbnailLink`, {
+        headers: {
+          Authorization: `Bearer ${googleAccessToken}`,
+        },
+      });
+      if (metaRes.ok) {
+        const metaData = await metaRes.json().catch(() => null);
+        if (metaData?.thumbnailLink) {
+          const thumbUrl = metaData.thumbnailLink.replace(/=s\d+/, '=s1280');
+          const thumbRes = await fetch(thumbUrl, {
+            headers: {
+              Authorization: `Bearer ${googleAccessToken}`,
+            },
+          });
+          if (thumbRes.ok) {
+            const contentType = (thumbRes.headers.get('content-type') || '').toLowerCase();
+            const arrayBuffer = await thumbRes.arrayBuffer();
+            const buffer = Buffer.from(arrayBuffer);
+            if (buffer.length > 200) {
+              return {
+                base64: buffer.toString('base64'),
+                mimeType: contentType.split(';')[0].trim() || 'image/jpeg',
+              };
+            }
+          }
+        }
+      }
+
+      // 1b. Fallback to full binary media
       const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
         headers: {
           Authorization: `Bearer ${googleAccessToken}`,
@@ -356,13 +387,14 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
     const candidateModels = [
       'gemini-3.1-flash-lite',
       'gemini-flash-latest',
+      'gemini-3.8-flash',
     ];
     let response: any = null;
     let lastModelError: any = null;
 
     for (const modelName of candidateModels) {
       let attempts = 0;
-      const maxAttempts = 2;
+      const maxAttempts = 3;
 
       while (attempts < maxAttempts) {
         try {
@@ -432,6 +464,8 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
             errMsg.includes('503') || 
             errMsg.includes('UNAVAILABLE') || 
             errMsg.includes('high demand') || 
+            errMsg.includes('504') || 
+            errMsg.includes('DEADLINE_EXCEEDED') || 
             errMsg.includes('429') || 
             errMsg.includes('RESOURCE_EXHAUSTED') || 
             errMsg.includes('quota') ||
@@ -442,7 +476,7 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
             errMsg.includes('socket');
           
           if (isTransient && attempts < maxAttempts) {
-            await new Promise((r) => setTimeout(r, 600));
+            await new Promise((r) => setTimeout(r, 1200 * attempts));
           } else {
             break;
           }
@@ -613,13 +647,14 @@ Berikan respons dalam format JSON dengan struktur persis berikut:
     const candidateModels = [
       'gemini-3.1-flash-lite',
       'gemini-flash-latest',
+      'gemini-3.8-flash',
     ];
     let response: any = null;
     let lastModelError: any = null;
 
     for (const modelName of candidateModels) {
       let attempts = 0;
-      const maxAttempts = 2;
+      const maxAttempts = 3;
 
       while (attempts < maxAttempts) {
         try {
@@ -654,6 +689,8 @@ Berikan respons dalam format JSON dengan struktur persis berikut:
             errMsg.includes('503') || 
             errMsg.includes('UNAVAILABLE') || 
             errMsg.includes('high demand') || 
+            errMsg.includes('504') || 
+            errMsg.includes('DEADLINE_EXCEEDED') || 
             errMsg.includes('429') || 
             errMsg.includes('RESOURCE_EXHAUSTED') || 
             errMsg.includes('quota') ||
@@ -664,7 +701,7 @@ Berikan respons dalam format JSON dengan struktur persis berikut:
             errMsg.includes('socket');
           
           if (isTransient && attempts < maxAttempts) {
-            await new Promise((r) => setTimeout(r, 600));
+            await new Promise((r) => setTimeout(r, 1200 * attempts));
           } else {
             break;
           }

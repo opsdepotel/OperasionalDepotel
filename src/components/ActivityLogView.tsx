@@ -867,14 +867,34 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!selectedSiteId.trim() || !keterangan.trim()) {
       setErrorMsg('Wajib mengisi SiteID dan Keterangan Kegiatan terlebih dahulu.');
+      e.target.value = '';
       return;
     }
     if (!isValidGpsCoordinates(coordinatesActual)) {
       setErrorMsg('Data koordinat GPS wajib ada sebelum mengambil foto bukti kegiatan. Silakan aktifkan lokasi (GPS) dan klik "Ambil Ulang GPS".');
+      e.target.value = '';
       return;
     }
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+
+      // Validasi file.lastModified: Mencegah upload foto lama dari galeri pada pengguna mobile
+      if (isMobileUser && file.lastModified && !isNaN(file.lastModified) && file.lastModified > 0) {
+        const fileAgeMs = Math.abs(Date.now() - file.lastModified);
+        // Batas toleransi 5 menit (300.000 ms) - aman untuk alur pemotretan langsung kamera HP
+        const maxAgeMs = 5 * 60 * 1000;
+
+        if (fileAgeMs > maxAgeMs) {
+          setErrorMsg('Foto tidak dapat digunakan karena terdeteksi berasal dari Galeri/Penyimpanan HP. Anda wajib memotret secara langsung di lokasi saat ini menggunakan Kamera HP.');
+          setOriginalPhotoFile(null);
+          setPhotoFile(null);
+          setPhotoPreview(null);
+          e.target.value = '';
+          return;
+        }
+      }
+
+      setErrorMsg(null);
       setOriginalPhotoFile(file);
     }
   };
@@ -1475,6 +1495,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         accept="image/*"
                         capture="environment"
                         onChange={handlePhotoChange}
+                        onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                         className="hidden"
                         id="activity-camera-input"
                         required
@@ -1490,6 +1511,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           accept="image/*"
                           capture="environment"
                           onChange={handlePhotoChange}
+                          onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                           className="hidden"
                         />
                       </label>
@@ -1500,6 +1522,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           type="file"
                           accept="image/*"
                           onChange={handlePhotoChange}
+                          onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                           className="hidden"
                         />
                       </label>

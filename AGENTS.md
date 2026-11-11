@@ -1,4 +1,4 @@
-# Project Guidelines & Architecture Rules
+# Project Guidelines & Architecture Rules.
 
 ## Mandatory Rules
 - **No Unapproved Changes**: Never modify business rules, workflows, role hierarchies, or core logic without explicit approval from the user.

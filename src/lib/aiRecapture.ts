@@ -137,6 +137,7 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
   const candidateModels = [
     'gemini-3.1-flash-lite',
     'gemini-flash-latest',
+    'gemini-3.8-flash',
   ];
 
   let response: any = null;
@@ -203,7 +204,7 @@ async function compressDataUrlIfNeeded(base64DataUrl: string, maxDim = 1024): Pr
   if (typeof window === 'undefined' || !base64DataUrl.startsWith('data:')) return base64DataUrl;
   return new Promise((resolve) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    // Do NOT set crossOrigin on data: URIs as it causes load failures on some mobile browsers
     img.onload = () => {
       let { width, height } = img;
       if (width <= maxDim && height <= maxDim && base64DataUrl.length < 400000) {
