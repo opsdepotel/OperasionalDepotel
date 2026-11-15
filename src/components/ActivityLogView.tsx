@@ -17,7 +17,7 @@ import {
 import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone, Wifi, WifiOff, CloudOff, Send, Trash2, CheckCircle2, HardDrive } from 'lucide-react';
 
 
-import { detectFakeGps } from '../lib/fakeGpsDetector';
+import { detectFakeGps, recordGpsFixSample, PreviousActivityReference } from '../lib/fakeGpsDetector';
 import { isMobileDevice } from '../lib/deviceUtils';
 import { validateCapturedActivityPhoto, ActivityPhotoCaptureSource } from '../lib/activityPhotoValidator';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
@@ -525,8 +525,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
   // Form State
   const lastGpsPositionRef = useRef<GeolocationPosition | null>(null);
+  const preFormBaselinePositionRef = useRef<GeolocationPosition | null>(null);
   const formOpenPositionRef = useRef<GeolocationPosition | null>(null);
   const formOpenedTimeRef = useRef<number | null>(null);
+  const sessionGpsFixCountRef = useRef<number>(0);
   const [selectedSiteId, setSelectedSiteId] = useState('');
   const [siteName, setSiteName] = useState('');
   const [coordinatesDb, setCoordinatesDb] = useState('');
@@ -1185,23 +1187,18 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     }
   }, [coordinatesActual, coordinatesDb]);
 
-  // Continuous GPS tracking when form is opened
-  useEffect(() => {
-    if (!showAddForm) return;
-
-    if (!navigator.geolocation) {
-      setGpsError('Perangkat atau browser Anda tidak mendukung pencarian lokasi GPS.');
-      return;
+  // Helper to apply a valid GeolocationPosition to refs, history buffer, and (when form is open) UI state
+  const applyGpsPositionToState = (position: GeolocationPosition, updateFormUi: boolean) => {
+    lastGpsPositionRef.current = position;
+    if (!preFormBaselinePositionRef.current) {
+      preFormBaselinePositionRef.current = position;
     }
+    sessionGpsFixCountRef.current = recordGpsFixSample(position);
 
-    setIsFetchingGps(true);
-    setGpsError(null);
-
-    const updatePosition = (position: GeolocationPosition) => {
-      lastGpsPositionRef.current = position;
+    if (updateFormUi) {
       if (!formOpenPositionRef.current) {
-        formOpenPositionRef.current = position;
-        formOpenedTimeRef.current = position.timestamp || Date.now();
+        formOpenPositionRef.current = preFormBaselinePositionRef.current || position;
+        formOpenedTimeRef.current = formOpenPositionRef.current.timestamp || Date.now();
       }
       const lat = position.coords.latitude.toFixed(6);
       const lon = position.coords.longitude.toFixed(6);
@@ -1210,10 +1207,125 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setGpsAccuracy(acc ? Math.round(acc) : null);
       setGpsError(null);
       setIsFetchingGps(false);
+    }
+  };
+
+  // Two-stage non-stuck GPS requester: tries High Accuracy first, then automatically falls back
+  // to Coarse/Fused OS location if High Accuracy times out or is unavailable indoors.
+  const requestGpsWithFallback = (
+    onSuccess: (pos: GeolocationPosition) => void,
+    onFinalError?: (err: GeolocationPositionError) => void,
+    highAccTimeoutMs = 5500,
+    highAccMaxAgeMs = 3000
+  ) => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+
+    navigator.geolocation.getCurrentPosition(
+      onSuccess,
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          if (onFinalError) onFinalError(err);
+          return;
+        }
+        // Fallback ke Fused / Network Location agar pengguna di dalam gedung tidak pernah stuck
+        navigator.geolocation.getCurrentPosition(
+          onSuccess,
+          (fallbackErr) => {
+            if (onFinalError) onFinalError(fallbackErr);
+          },
+          {
+            enableHighAccuracy: false,
+            timeout: 6500,
+            maximumAge: 60000
+          }
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: highAccTimeoutMs,
+        maximumAge: highAccMaxAgeMs
+      }
+    );
+  };
+
+  // Prioritas #1: Silent Pre-Form Baseline GPS & App-Switch (visibilitychange) Capture
+  // Merekam baseline sebelum form dibuka dan saat user kembali dari aplikasi lain (mis. Fake GPS)
+  // sekaligus membuat koordinat langsung siap (0 detik tunggu) ketika form dibuka.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) return;
+
+    const captureSilentBaseline = (forceFresh = false) => {
+      requestGpsWithFallback(
+        (pos) => {
+          applyGpsPositionToState(pos, showAddForm);
+        },
+        undefined,
+        5000,
+        forceFresh ? 0 : 10000
+      );
+    };
+
+    captureSilentBaseline(false);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        captureSilentBaseline(true);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleVisibilityChange);
+    };
+  }, [showAddForm]);
+
+  // Continuous GPS tracking & sample accumulation when form is opened
+  useEffect(() => {
+    if (!showAddForm) return;
+
+    if (!navigator.geolocation) {
+      setGpsError('Perangkat atau browser Anda tidak mendukung pencarian lokasi GPS.');
+      setIsFetchingGps(false);
+      return;
+    }
+
+    // Jika sudah ada posisi valid dari pre-warm, langsung tampilkan agar form 0ms langsung terbuka tanpa tunggu!
+    if (lastGpsPositionRef.current && lastGpsPositionRef.current.coords) {
+      const existingPos = lastGpsPositionRef.current;
+      if (!formOpenPositionRef.current) {
+        formOpenPositionRef.current = preFormBaselinePositionRef.current || existingPos;
+        formOpenedTimeRef.current = formOpenPositionRef.current.timestamp || Date.now();
+      }
+      const lat = existingPos.coords.latitude.toFixed(6);
+      const lon = existingPos.coords.longitude.toFixed(6);
+      const acc = existingPos.coords.accuracy;
+      setCoordinatesActual(`${lat}, ${lon}`);
+      setGpsAccuracy(acc ? Math.round(acc) : null);
+      setGpsError(null);
+      setIsFetchingGps(false);
+    } else {
+      setIsFetchingGps(true);
+      setGpsError(null);
+    }
+
+    const updatePosition = (position: GeolocationPosition) => {
+      applyGpsPositionToState(position, true);
     };
 
     const handleGpsError = (error: GeolocationPositionError) => {
-      console.error('Error watching GPS:', error);
+      // Anti-Stuck: Jika sudah memiliki posisi GPS valid sebelumnya, jangan pernah mengunci ulang form
+      if (lastGpsPositionRef.current && lastGpsPositionRef.current.coords) {
+        const prev = lastGpsPositionRef.current;
+        setCoordinatesActual(`${prev.coords.latitude.toFixed(6)}, ${prev.coords.longitude.toFixed(6)}`);
+        setGpsAccuracy(prev.coords.accuracy ? Math.round(prev.coords.accuracy) : null);
+        setGpsError(null);
+        setIsFetchingGps(false);
+        return;
+      }
+
+      console.warn('Error watching GPS:', error);
       let msg = 'Gagal mendapatkan koordinat GPS.';
       if (error.code === error.PERMISSION_DENIED) {
         msg = 'Akses lokasi (GPS) ditolak oleh pengguna/browser.';
@@ -1226,28 +1338,53 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setIsFetchingGps(false);
     };
 
-    // First trigger an immediate position request
-    navigator.geolocation.getCurrentPosition(updatePosition, handleGpsError, {
-      enableHighAccuracy: true,
-      timeout: 10000,
-    });
+    // Watchdog anti-stuck: pastikan spinner tidak pernah menggantung > 9 detik di WebView mana pun
+    const watchdogTimer = window.setTimeout(() => {
+      setIsFetchingGps(false);
+    }, 9000);
 
-    // Continuous location tracking
-    const watchId = navigator.geolocation.watchPosition(updatePosition, handleGpsError, {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 3000,
-    });
+    // 1. Trigger immediate position request with automatic High-Accuracy -> Fused fallback
+    requestGpsWithFallback(updatePosition, handleGpsError, 5500, 0);
 
-    // Interval re-check
-    const intervalId = setInterval(() => {
-      navigator.geolocation.getCurrentPosition(updatePosition, () => {}, {
+    // 2. Continuous location tracking (maximumAge: 0 untuk mengumpulkan sampel segar Zero Drift & Jitter)
+    const watchId = navigator.geolocation.watchPosition(
+      updatePosition,
+      (watchErr) => {
+        if (watchErr.code === watchErr.PERMISSION_DENIED) {
+          handleGpsError(watchErr);
+        }
+      },
+      {
         enableHighAccuracy: true,
-        timeout: 5000,
-      });
+        timeout: 12000,
+        maximumAge: 0,
+      }
+    );
+
+    // 3. Interval re-check setiap 4 detik (non-blocking) untuk akumulasi sampel histori GPS
+    const intervalId = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(
+        updatePosition,
+        () => {
+          // Jika high-accuracy timeout di dalam ruangan, coba fallback ringan apabila belum punya fix sama sekali
+          if (!lastGpsPositionRef.current) {
+            navigator.geolocation.getCurrentPosition(updatePosition, () => {}, {
+              enableHighAccuracy: false,
+              timeout: 4000,
+              maximumAge: 30000,
+            });
+          }
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 3800,
+          maximumAge: 0,
+        }
+      );
     }, 4000);
 
     return () => {
+      window.clearTimeout(watchdogTimer);
       navigator.geolocation.clearWatch(watchId);
       clearInterval(intervalId);
     };
@@ -1306,7 +1443,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     setOriginalPhotoFile(file);
   };
 
-  // Get real GPS location
+  // Get real GPS location (Manual button with 2-stage fallback & anti-wipe protection)
   const handleGetGps = () => {
     setGpsError(null);
     if (!navigator.geolocation) {
@@ -1315,19 +1452,28 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     }
 
     setIsFetchingGps(true);
-    navigator.geolocation.getCurrentPosition(
+    const safetyTimer = window.setTimeout(() => {
+      setIsFetchingGps(false);
+    }, 9000);
+
+    requestGpsWithFallback(
       (position) => {
-        lastGpsPositionRef.current = position;
-        const lat = position.coords.latitude.toFixed(6);
-        const lon = position.coords.longitude.toFixed(6);
-        const acc = position.coords.accuracy;
-        setCoordinatesActual(`${lat}, ${lon}`);
-        setGpsAccuracy(acc ? Math.round(acc) : null);
-        setGpsError(null);
-        setIsFetchingGps(false);
+        window.clearTimeout(safetyTimer);
+        applyGpsPositionToState(position, true);
       },
       (error) => {
-        console.error('Error fetching GPS:', error);
+        window.clearTimeout(safetyTimer);
+        // Jika sebelumnya sudah ada titik GPS yang valid, pertahankan agar form tidak terkunci
+        if (lastGpsPositionRef.current && lastGpsPositionRef.current.coords) {
+          const prev = lastGpsPositionRef.current;
+          setCoordinatesActual(`${prev.coords.latitude.toFixed(6)}, ${prev.coords.longitude.toFixed(6)}`);
+          setGpsAccuracy(prev.coords.accuracy ? Math.round(prev.coords.accuracy) : null);
+          setGpsError(null);
+          setIsFetchingGps(false);
+          return;
+        }
+
+        console.warn('Error fetching GPS:', error);
         let msg = 'Gagal mendapatkan koordinat GPS.';
         if (error.code === error.PERMISSION_DENIED) {
           msg = 'Akses lokasi (GPS) ditolak oleh pengguna/browser. Mohon aktifkan izin lokasi di browser/perangkat Anda.';
@@ -1341,7 +1487,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         setGpsAccuracy(null);
         setIsFetchingGps(false);
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      5500,
+      0
     );
   };
 
@@ -1372,14 +1519,67 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       const isVerified = !!matchedSite;
       const finalSiteId = isVerified ? trimmedSiteId.toUpperCase() : trimmedSiteId;
       const finalSiteName = matchedSite ? matchedSite.siteName : (gpsAddress || siteName.trim() || finalSiteId);
+      const todayYmd = getTodayStr();
 
-      // Perform silent Fake GPS check right before submission (including form open vs submit teleportation check)
+      // Prioritas #2: Cari laporan kegiatan terakhir milik user di hari yang sama (online maupun antrean offline)
+      // untuk mendeteksi perpindahan lokasi mustahil antar-laporan meskipun browser sempat di-refresh
+      let previousActivityRef: PreviousActivityReference | null = null;
+      const cleanCurrEmail = (userEmail || userProfile?.email || '').toLowerCase().trim();
+      let latestPrevTs = 0;
+
+      const parseActivityTimestampMs = (rawTs?: string): number => {
+        if (!rawTs) return 0;
+        const direct = new Date(rawTs).getTime();
+        if (!isNaN(direct) && direct > 0) return direct;
+        const m = String(rawTs).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[,\s]+(\d{1,2})[\.:](\d{1,2})(?:[\.:](\d{1,2}))?)?/);
+        if (m) {
+          const [, d, mo, y, h = '0', mi = '0', s = '0'] = m;
+          const parsed = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)).getTime();
+          if (!isNaN(parsed) && parsed > 0) return parsed;
+        }
+        return 0;
+      };
+
+      for (const act of activities) {
+        if ((act.userEmail || '').toLowerCase().trim() !== cleanCurrEmail) continue;
+        if (act.tanggal !== todayYmd) continue;
+        if (!isValidGpsCoordinates(act.coordinatesActual)) continue;
+        const tsMs = parseActivityTimestampMs(act.createdAt || act.timestamp);
+        if (tsMs > latestPrevTs && tsMs <= Date.now()) {
+          latestPrevTs = tsMs;
+          previousActivityRef = {
+            siteId: act.siteId,
+            coordinatesActual: act.coordinatesActual,
+            timestampMs: tsMs
+          };
+        }
+      }
+
+      for (const offItem of offlineQueue) {
+        if ((offItem.userEmail || '').toLowerCase().trim() !== cleanCurrEmail) continue;
+        if (offItem.tanggal !== todayYmd) continue;
+        if (!isValidGpsCoordinates(offItem.coordinatesActual)) continue;
+        const tsMs = typeof offItem.createdAt === 'number'
+          ? offItem.createdAt
+          : parseActivityTimestampMs(String(offItem.createdAt || ''));
+        if (tsMs > latestPrevTs && tsMs <= Date.now()) {
+          latestPrevTs = tsMs;
+          previousActivityRef = {
+            siteId: offItem.siteId,
+            coordinatesActual: offItem.coordinatesActual,
+            timestampMs: tsMs
+          };
+        }
+      }
+
+      // Perform silent Fake GPS check right before submission (Priorities #1, #2, #3)
       const fakeCheck = detectFakeGps(
         lastGpsPositionRef.current,
         coordinatesActual,
         null,
-        1,
-        formOpenPositionRef.current
+        Math.max(1, sessionGpsFixCountRef.current),
+        formOpenPositionRef.current || preFormBaselinePositionRef.current,
+        previousActivityRef
       );
 
       const combinedIndikasiFake = fakeCheck.isFake || photoValidationFlags.length > 0;
@@ -1388,7 +1588,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         .join(' | ');
 
       const actPayload = {
-        tanggal: getTodayStr(), // System date for real-time tracking
+        tanggal: todayYmd, // System date for real-time tracking
         siteId: finalSiteId,
         siteName: finalSiteName,
         coordinatesDb,
@@ -1415,6 +1615,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         setPhotoValidationFlags([]);
         setCapturedGpsSnapshot(null);
         setShowAddForm(false);
+        // Jadikan posisi terakhir saat submit sebagai baseline untuk laporan berikutnya
+        preFormBaselinePositionRef.current = lastGpsPositionRef.current;
         formOpenPositionRef.current = null;
         formOpenedTimeRef.current = null;
       };
@@ -2664,8 +2866,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         {currentRole === Role.USER && (
           <button
             onClick={() => {
-              formOpenPositionRef.current = lastGpsPositionRef.current;
-              formOpenedTimeRef.current = lastGpsPositionRef.current?.timestamp || Date.now();
+              formOpenPositionRef.current = preFormBaselinePositionRef.current || lastGpsPositionRef.current;
+              formOpenedTimeRef.current = formOpenPositionRef.current?.timestamp || Date.now();
               setShowAddForm(true);
             }}
             className="w-full bg-slate-900 text-white font-display font-bold text-xs py-3 px-4 rounded-xl shadow-md hover:bg-slate-800 active:scale-[0.98] transition-all flex items-center justify-center gap-2 mt-4"

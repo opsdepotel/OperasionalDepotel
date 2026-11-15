@@ -73,7 +73,17 @@ interface GpsFixHistoryItem {
   longitude: number;
   accuracy: number | null;
   altitude: number | null;
+  altitudeAccuracy?: number | null;
+  speed?: number | null;
+  heading?: number | null;
   timestamp: number;
+  recordedAt: number;
+}
+
+export interface PreviousActivityReference {
+  siteId?: string;
+  coordinatesActual: string;
+  timestampMs: number;
 }
 
 const gpsFixHistory: GpsFixHistoryItem[] = [];
@@ -110,19 +120,89 @@ export function resetGpsHistoryBuffer(): void {
 }
 
 /**
+ * Mengumpankan sampel posisi GPS secara non-blocking ke buffer histori selama form/tab aktif (Prioritas #1).
+ * Mencegah duplikasi objek fix cache yang identik namun tetap merekam setiap perubahan timestamp/koordinat/akurasi.
+ */
+export function recordGpsFixSample(position: GeolocationPosition | null): number {
+  if (!position || !position.coords) {
+    return gpsFixHistory.length;
+  }
+
+  const { coords, timestamp } = position;
+  const lat = coords.latitude;
+  const lon = coords.longitude;
+  if (typeof lat !== 'number' || typeof lon !== 'number' || isNaN(lat) || isNaN(lon)) {
+    return gpsFixHistory.length;
+  }
+
+  const now = Date.now();
+  const fixTs = timestamp && typeof timestamp === 'number' && timestamp > 0 ? timestamp : now;
+  const acc = coords.accuracy ?? null;
+  const alt = coords.altitude ?? null;
+  const altAcc = coords.altitudeAccuracy ?? null;
+  const spd = coords.speed ?? null;
+  const hdg = coords.heading ?? null;
+
+  const last = gpsFixHistory.length > 0 ? gpsFixHistory[gpsFixHistory.length - 1] : null;
+  if (
+    last &&
+    last.timestamp === fixTs &&
+    last.latitude === lat &&
+    last.longitude === lon &&
+    last.accuracy === acc
+  ) {
+    // Fix identik dari cache browser, tidak perlu diduplikasi
+    return gpsFixHistory.length;
+  }
+
+  gpsFixHistory.push({
+    latitude: lat,
+    longitude: lon,
+    accuracy: acc,
+    altitude: alt,
+    altitudeAccuracy: altAcc,
+    speed: spd,
+    heading: hdg,
+    timestamp: fixTs,
+    recordedAt: now
+  });
+
+  if (gpsFixHistory.length > MAX_HISTORY_ITEMS) {
+    gpsFixHistory.shift();
+  }
+
+  return gpsFixHistory.length;
+}
+
+function parseCoordinatePair(coordStr: string): { lat: number; lon: number } | null {
+  if (!coordStr) return null;
+  const clean = coordStr.replace(/[()\[\]]/g, '').trim();
+  const parts = clean.split(/[\s,]+/);
+  if (parts.length >= 2) {
+    const lat = parseFloat(parts[0]);
+    const lon = parseFloat(parts[1]);
+    if (!isNaN(lat) && !isNaN(lon) && lat !== 0 && lon !== 0) {
+      return { lat, lon };
+    }
+  }
+  return null;
+}
+
+/**
  * Detects GPS Integrity & Risk Score based on Geolocation API signals:
- * 1. Movement & Speed Analysis (Haversine Distance, Elapsed Time, Speed km/h)
+ * 1. Movement & Speed Analysis (Haversine Distance, Elapsed Time, Speed km/h, Cross-Activity Velocity)
  * 2. Accuracy Pattern Analysis (Zero-Accuracy, Unnatural Precision vs Poor Signal)
  * 3. Timestamp Progression Analysis (Dynamic Fix vs Browser Caching)
  * 4. Elevation 3D Fix Evidence
- * 5. Historical Consistency Analysis
+ * 5. Historical Consistency Analysis (Zero Drift, Zero Accuracy Variance, Kinematic Check)
  */
 export function detectFakeGps(
   position: GeolocationPosition | null,
   coordsActualStr: string = '',
   previousPosition?: GeolocationPosition | null,
   checkHistoryCount: number = 1,
-  formOpenPosition?: GeolocationPosition | null
+  formOpenPosition?: GeolocationPosition | null,
+  previousActivityRef?: PreviousActivityReference | null
 ): FakeGpsCheckResult {
   const now = Date.now();
   const capturedAt = now;
@@ -219,11 +299,15 @@ export function detectFakeGps(
   const acc = coords.accuracy;
   const alt = coords.altitude;
   const altAcc = coords.altitudeAccuracy;
+  const spd = coords.speed;
+  const hdg = coords.heading;
 
   const reasons: string[] = [];
   let riskScoreCumulative = 0; // Cumulative risk (0 - 100)
 
-  // Determine prevFix either from parameter or from internal buffer
+  const currentFixTs = timestamp && typeof timestamp === 'number' && timestamp > 0 ? timestamp : now;
+
+  // Determine prevFix either from parameter or from internal buffer (avoiding self-comparison if already recorded)
   let prevFix: GpsFixHistoryItem | null = null;
   if (previousPosition && previousPosition.coords) {
     prevFix = {
@@ -231,24 +315,30 @@ export function detectFakeGps(
       longitude: previousPosition.coords.longitude,
       accuracy: previousPosition.coords.accuracy ?? null,
       altitude: previousPosition.coords.altitude ?? null,
-      timestamp: previousPosition.timestamp || now
+      altitudeAccuracy: previousPosition.coords.altitudeAccuracy ?? null,
+      speed: previousPosition.coords.speed ?? null,
+      heading: previousPosition.coords.heading ?? null,
+      timestamp: previousPosition.timestamp || now,
+      recordedAt: now
     };
   } else if (gpsFixHistory.length > 0) {
-    prevFix = gpsFixHistory[gpsFixHistory.length - 1];
+    const lastInBuffer = gpsFixHistory[gpsFixHistory.length - 1];
+    const isSameAsLast =
+      lastInBuffer.timestamp === currentFixTs &&
+      lastInBuffer.latitude === lat &&
+      lastInBuffer.longitude === lon &&
+      lastInBuffer.accuracy === acc;
+
+    if (isSameAsLast) {
+      prevFix = gpsFixHistory.length >= 2 ? gpsFixHistory[gpsFixHistory.length - 2] : null;
+    } else {
+      prevFix = lastInBuffer;
+    }
   }
 
-  // Save current fix to internal history buffer
-  const currentFixTs = timestamp && typeof timestamp === 'number' && timestamp > 0 ? timestamp : now;
-  gpsFixHistory.push({
-    latitude: lat,
-    longitude: lon,
-    accuracy: acc,
-    altitude: alt,
-    timestamp: currentFixTs
-  });
-  if (gpsFixHistory.length > MAX_HISTORY_ITEMS) {
-    gpsFixHistory.shift();
-  }
+  // Save current fix to internal history buffer if not already the exact last entry
+  recordGpsFixSample(position);
+  const effectiveHistoryCount = Math.max(checkHistoryCount, gpsFixHistory.length);
 
   // --------------------------------------------------------------------------
   // 1. MOVEMENT & SPEED ANALYSIS (Haversine Distance & Speed)
@@ -307,8 +397,36 @@ export function detectFakeGps(
     }
   }
 
+  // 1a-extra. Scan seluruh pasangan berurutan di gpsFixHistory (dalam 10 menit terakhir)
+  // untuk menangkap lompatan saat berpindah aplikasi (visibilitychange) meskipun user menunggu beberapa detik sebelum submit
+  if (moveStatus !== 'ANOMALI' && gpsFixHistory.length >= 2) {
+    for (let i = 1; i < gpsFixHistory.length; i++) {
+      const p1 = gpsFixHistory[i - 1];
+      const p2 = gpsFixHistory[i];
+      if (now - p1.recordedAt > 10 * 60 * 1000) continue;
+
+      const stepDist = calculateHaversineDistanceInMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+      const stepElapsedMs = Math.max(500, Math.abs(p2.timestamp - p1.timestamp));
+      const stepElapsedSec = stepElapsedMs / 1000;
+      const stepSpeedKmh = (stepDist / stepElapsedSec) * 3.6;
+
+      if (stepDist > 100 && stepSpeedKmh > 150) {
+        moveStatus = 'ANOMALI';
+        moveScore = 10;
+        const startCoordsStr = `${p1.latitude.toFixed(6)}, ${p1.longitude.toFixed(6)}`;
+        const endCoordsStr = `${p2.latitude.toFixed(6)}, ${p2.longitude.toFixed(6)}`;
+        const distStr = stepDist >= 1000 ? `${(stepDist / 1000).toFixed(1)} km` : `${Math.round(stepDist)}m`;
+        const jumpReason = `Dugaan Teleportasi antar-sampel sesi (${distStr} dalam ${stepElapsedSec.toFixed(1)}s, ${Math.round(stepSpeedKmh)} km/h | Awal: ${startCoordsStr} -> Akhir: ${endCoordsStr})`;
+        reasons.push(jumpReason);
+        riskScoreCumulative += 80;
+        moveNote += ` [LOMPATAN SESI: ${jumpReason}]`;
+        break;
+      }
+    }
+  }
+
   // --------------------------------------------------------------------------
-  // 1b. ADDITIONAL TELEPORTATION CHECK (Form Open vs Form Submit Comparison)
+  // 1b. ADDITIONAL TELEPORTATION CHECK (Form Open / Baseline vs Form Submit Comparison)
   // --------------------------------------------------------------------------
   if (formOpenPosition && formOpenPosition.coords && lat !== null && lon !== null) {
     const openLat = formOpenPosition.coords.latitude;
@@ -346,6 +464,40 @@ export function detectFakeGps(
         reasons.push(reasonStr);
         riskScoreCumulative += 75;
         moveNote += ` [ANOMALI FORM: ${reasonStr}]`;
+      }
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // 1c. PRIORITAS #2: CROSS-ACTIVITY VELOCITY CHECK (Antar Laporan di Hari yang Sama)
+  // --------------------------------------------------------------------------
+  if (previousActivityRef && previousActivityRef.coordinatesActual && previousActivityRef.timestampMs > 0) {
+    const prevActCoords = parseCoordinatePair(previousActivityRef.coordinatesActual);
+    const actElapsedMs = now - previousActivityRef.timestampMs;
+    // Evaluasi jika laporan sebelumnya berada di hari yang sama (antara 3 detik s/d 14 jam yang lalu)
+    if (prevActCoords && actElapsedMs >= 3000 && actElapsedMs <= 14 * 3600 * 1000) {
+      const actDistMeters = calculateHaversineDistanceInMeters(
+        prevActCoords.lat,
+        prevActCoords.lon,
+        lat,
+        lon
+      );
+      const actElapsedSec = actElapsedMs / 1000;
+      const actSpeedKmh = (actDistMeters / actElapsedSec) * 3.6;
+
+      // Hanya evaluasi jika perpindahan jarak > 1.5 km agar kebal terhadap fluktuasi GPS indoor antar gedung
+      if (actDistMeters > 1500 && (actSpeedKmh > 150 || (actDistMeters > 2500 && actElapsedSec < 90))) {
+        moveStatus = 'ANOMALI';
+        moveScore = Math.min(moveScore, 10);
+        const distKmStr = `${(actDistMeters / 1000).toFixed(1)} km`;
+        const durationStr = actElapsedSec < 120
+          ? `${Math.round(actElapsedSec)} detik`
+          : `${Math.round(actElapsedSec / 60)} menit`;
+        const prevSiteLabel = previousActivityRef.siteId ? ` [${previousActivityRef.siteId}]` : '';
+        const crossActReason = `Dugaan Teleportasi antar-laporan kegiatan (${distKmStr} dalam ${durationStr}, ~${Math.round(actSpeedKmh)} km/h dari laporan sebelumnya${prevSiteLabel})`;
+        reasons.push(crossActReason);
+        riskScoreCumulative += 80;
+        moveNote += ` [ANOMALI ANTAR-LAPORAN: ${crossActReason}]`;
       }
     }
   }
@@ -418,7 +570,7 @@ export function detectFakeGps(
     const prevTimestamp = prevFix?.timestamp;
     const isTimestampUnchanged = prevTimestamp !== undefined && prevTimestamp !== null && prevTimestamp === timestamp;
 
-    if (checkHistoryCount > 1 && isTimestampUnchanged) {
+    if (effectiveHistoryCount > 1 && isTimestampUnchanged) {
       isStagnant = true;
       if (distanceMeters !== null && distanceMeters > 50) {
         // Stagnan padahal posisi berpindah jauh -> ANOMALI SANGAT KUAT
@@ -491,6 +643,21 @@ export function detectFakeGps(
       altNote = 'Elevasi bernilai 0.0m konstan tanpa deviasi vertikal dikombinasikan dengan akurasi horizontal 0m.';
       reasons.push('Elevasi 0m konstan tanpa akurasi ketinggian');
       riskScoreCumulative += 25;
+    } else if (
+      Number.isInteger(alt) &&
+      alt !== 0 &&
+      (altAcc === null || altAcc === undefined || altAcc === 0) &&
+      acc !== null &&
+      acc <= 10 &&
+      gpsFixHistory.length >= 3 &&
+      gpsFixHistory.every(item => item.altitude === alt && (item.altitudeAccuracy === null || item.altitudeAccuracy === undefined || item.altitudeAccuracy === 0))
+    ) {
+      // Spoofer sering memancarkan altitude bulat statis (misal 10m / 50m) tanpa altitudeAccuracy
+      altStatus = 'WARNING';
+      altScore = 50;
+      altNote = `Elevasi bulat statis (${alt}m) tanpa akurasi vertikal pada seluruh sampel.`;
+      reasons.push(`Elevasi statis bulat (${alt}m) tanpa akurasi vertikal`);
+      riskScoreCumulative += 20;
     } else {
       altStatus = 'VALID';
       altScore = 100;
@@ -505,7 +672,7 @@ export function detectFakeGps(
   }
 
   // --------------------------------------------------------------------------
-  // 5. HISTORICAL CONSISTENCY & ZERO DRIFT / GPS JITTER ANALYSIS
+  // 5. HISTORICAL CONSISTENCY, ZERO DRIFT & ZERO ACCURACY VARIANCE (Prioritas #1 & #3)
   // --------------------------------------------------------------------------
   let consStatus: 'VALID' | 'ANOMALI' | 'WARNING' = 'VALID';
   let consScore = 100;
@@ -521,6 +688,8 @@ export function detectFakeGps(
     let zeroDistanceCount = 0;
     let totalJitter = 0;
     let jitterCount = 0;
+    let advancingTimestampCount = 0;
+    let joystickZeroSpeedMoveCount = 0;
 
     for (let i = 1; i < gpsFixHistory.length; i++) {
       const prev = gpsFixHistory[i - 1];
@@ -536,11 +705,20 @@ export function detectFakeGps(
       distanceDeltas.push(d);
       timeDeltas.push(dt);
 
+      if (dt > 0) {
+        advancingTimestampCount++;
+      }
+
       if (d === 0 || d < 0.0001) {
         zeroDistanceCount++;
       } else if (d > 0 && d <= 5) {
         totalJitter += d;
         jitterCount++;
+      }
+
+      // Deteksi pergerakan koordinat aktif (> 8m antar sampel) tetapi sensor speed eksplisit bernilai 0
+      if (d > 8 && dt > 0 && dt < 15000 && curr.speed === 0 && prev.speed === 0) {
+        joystickZeroSpeedMoveCount++;
       }
     }
 
@@ -549,7 +727,7 @@ export function detectFakeGps(
     }
 
     // Cek apakah timestamp terus diperbarui (dt > 0) tetapi koordinat persis 0.000000m tanpa fluktuasi satelit
-    const isTimestampAdvancing = timeDeltas.some(dt => dt > 0);
+    const isTimestampAdvancing = advancingTimestampCount > 0;
     const recentAccs = gpsFixHistory.map(item => item.accuracy).filter((a): a is number => a !== null);
     const isAccConstantlyExact = recentAccs.length >= 3 && recentAccs.every(val => val === recentAccs[0]);
 
@@ -561,7 +739,24 @@ export function detectFakeGps(
       consDetail = `Zero Drift (${zeroDistanceCount}/${distanceDeltas.length} fix statis 0.00m)`;
       consNote = `Anomali Zero Drift: Koordinat beku 0.00m pada ${zeroDistanceCount} perbaikan sinyal aktif tanpa fluktuasi radio satelit alami. Indikasi injeksi lokasi palsu.`;
       reasons.push(`Anomali Zero Drift GPS (${zeroDistanceCount} sampel fix beku 0.00m tanpa jitter satelit alami)`);
-      riskScoreCumulative += 65;
+      // Jika >= 3 sampel statis atau akurasi juga beku identik, pastikan melewati ambang HIGH_RISK (70)
+      riskScoreCumulative += (zeroDistanceCount >= 3 || isAccConstantlyExact) ? 75 : 65;
+    } else if (recentAccs.length >= 4 && isAccConstantlyExact && advancingTimestampCount >= 3 && recentAccs[0] <= 20) {
+      // Prioritas #3: Zero Accuracy Variance pada >= 4 sampel segar (meskipun koordinat digeser dengan joystick)
+      consStatus = 'ANOMALI';
+      consScore = 15;
+      consDetail = `Zero Accuracy Variance (${recentAccs[0]}m x ${recentAccs.length} fix)`;
+      consNote = `Variansi akurasi 0.00m: Nilai akurasi desimal (${recentAccs[0]}m) beku identik pada ${recentAccs.length} perbaikan sinyal berurutan. Indikasi emulator / Mock Location.`;
+      reasons.push(`Anomali Variansi Akurasi 0 (Akurasi beku konstan ${recentAccs[0]}m pada ${recentAccs.length} sampel segar)`);
+      riskScoreCumulative += 70;
+    } else if (joystickZeroSpeedMoveCount >= 2 && isAccConstantlyExact) {
+      // Pergerakan joystick aktif dengan speed hardware = 0 dan akurasi statis
+      consStatus = 'ANOMALI';
+      consScore = 20;
+      consDetail = `Anomali Kinematika Joystick (${joystickZeroSpeedMoveCount} segmen)`;
+      consNote = `Koordinat berpindah terus-menerus namun sensor kecepatan bernilai 0 m/s dengan akurasi beku.`;
+      reasons.push(`Anomali Kinematika GPS (Koordinat bergerak aktif dengan speed 0 m/s dan akurasi statis)`);
+      riskScoreCumulative += 70;
     } else if (recentAccs.length >= 4 && isAccConstantlyExact && recentAccs[0] < 5) {
       consStatus = 'WARNING';
       consScore = 60;
