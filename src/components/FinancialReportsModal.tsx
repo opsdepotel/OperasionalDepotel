@@ -2,9 +2,6 @@ import React, { useState, useMemo } from 'react';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, ItemStatus, RequestStatus } from '../types';
 import { FileText, Download, Filter, X, User, ArrowUpRight, Search, Clock, FileSpreadsheet } from 'lucide-react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
-import ExcelJS from 'exceljs';
 
 interface FinancialReportsModalProps {
   isOpen: boolean;
@@ -392,6 +389,10 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
   // PDF Export Generator Function
   const generatePDF = async () => {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable')
+    ]);
     const doc = new jsPDF({
       orientation: 'landscape',
       unit: 'mm',
@@ -689,6 +690,8 @@ export const FinancialReportsModal: React.FC<FinancialReportsModalProps> = ({
 
   // Excel Export Generator Function (matching exact sample layout & metadata specifications)
   const generateExcel = async () => {
+    const ExcelJSModule = await import('exceljs');
+    const ExcelJS = ExcelJSModule.default || (ExcelJSModule as any);
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, '0');
     const exportDateTimeStr = `${pad(now.getDate())}/${pad(now.getMonth() + 1)}/${now.getFullYear()}  ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;

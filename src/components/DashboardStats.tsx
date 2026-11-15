@@ -3,23 +3,95 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { Role, BudgetRequest, UsageReportItem, RequestStatus, ItemStatus, UserProfile, UserActivity, ItemReviewHistory, SiteInfo } from '../types';
 import { getTransferBertahap, getFinanceApprovedAmount, isPendingTransferRequest, isFinanceApprovedOpRequest, isOpBiasaRequest } from '../App';
 import { parseNumericValue, formatDivisiSubDivisi } from '../lib/googleApi';
 import { detectFakeGps } from '../lib/fakeGpsDetector';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
-import { UserOperationalBalanceReportModal } from './UserOperationalBalanceReportModal';
-import { ReopenUidModal } from './ReopenUidModal';
-import { AdminDatabaseToolsCard } from './AdminDatabaseToolsCard';
-import { AdminPhotoMigrationCard } from './AdminPhotoMigrationCard';
-import { AdminManualActivityModal, ManualActivitySubmitData } from './AdminManualActivityModal';
-import { AdminResponseTimeModal } from './AdminResponseTimeModal';
-import { UserUidMonitoringModal, getUnreportedTransferredRequests } from './UserUidMonitoringModal';
+import type { ManualActivitySubmitData } from './AdminManualActivityModal';
+import { getUnreportedTransferredRequests, isBbmRequest as isBbmRequestUtil } from '../lib/uidMonitoringUtils';
 import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing, Smartphone, TrendingUp } from 'lucide-react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
+
+const UserOperationalBalanceReportModal = lazy(() =>
+  import('./UserOperationalBalanceReportModal').then(m => ({ default: m.UserOperationalBalanceReportModal }))
+);
+const ReopenUidModal = lazy(() =>
+  import('./ReopenUidModal').then(m => ({ default: m.ReopenUidModal }))
+);
+const AdminDatabaseToolsCard = lazy(() =>
+  import('./AdminDatabaseToolsCard').then(m => ({ default: m.AdminDatabaseToolsCard }))
+);
+const AdminPhotoMigrationCard = lazy(() =>
+  import('./AdminPhotoMigrationCard').then(m => ({ default: m.AdminPhotoMigrationCard }))
+);
+const AdminManualActivityModal = lazy(() =>
+  import('./AdminManualActivityModal').then(m => ({ default: m.AdminManualActivityModal }))
+);
+const AdminResponseTimeModal = lazy(() =>
+  import('./AdminResponseTimeModal').then(m => ({ default: m.AdminResponseTimeModal }))
+);
+const UserUidMonitoringModal = lazy(() =>
+  import('./UserUidMonitoringModal').then(m => ({ default: m.UserUidMonitoringModal }))
+);
+
+const isBbmUsageItemCommon = (item: UsageReportItem) =>
+  item.requestId.startsWith('BBMDS') ||
+  item.requestId.startsWith('BBM_DurenSawit') ||
+  item.requestId.startsWith('TFDS');
+
+const isBbmReqLocal = (r: BudgetRequest) =>
+  r.id.startsWith('BBMDS') ||
+  r.id.startsWith('BBM_DurenSawit') ||
+  r.id.startsWith('TFDS') ||
+  r.siteId === 'OPT-DUREN SAWIT' ||
+  r.siteId === 'BBM DUREN SAWIT' ||
+  (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
+  r.keterangan?.toUpperCase().includes('DUREN SAWIT');
+
+const parseDateToYYYYMMDDCommon = (dateInput: string | Date | undefined): string => {
+  if (!dateInput) return '';
+  const str = String(dateInput).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
+    return str.substring(0, 10);
+  }
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
+    const parts = str.split('/');
+    const d = parts[0].padStart(2, '0');
+    const m = parts[1].padStart(2, '0');
+    const y = parts[2].substring(0, 4);
+    return `${y}-${m}-${d}`;
+  }
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  return '';
+};
+
+const getJakartaTodayStrCommon = (): string => {
+  try {
+    const jakartaStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+    if (/^\d{4}-\d{2}-\d{2}$/.test(jakartaStr)) return jakartaStr;
+  } catch {}
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getLocalTodayStrCommon = (): string => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 interface DashboardStatsProps {
   role: Role;
@@ -169,8 +241,90 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   const [isUserUidMonitoringModalOpen, setIsUserUidMonitoringModalOpen] = useState(false);
   useBackHandler(isUserUidMonitoringModalOpen, () => setIsUserUidMonitoringModalOpen(false), 'dashboardStats_userUidMonitoringModal');
 
-  // User Murni UID Monitoring statistics
+  // Shared O(1) Lookup Indexes (Memoized once across all roles)
+  const profilesByEmailMap = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    for (const p of profiles || []) {
+      const key = (p.email || '').trim().toLowerCase();
+      if (key && !map.has(key)) {
+        map.set(key, p);
+      }
+    }
+    return map;
+  }, [profiles]);
+
+  const uniqueProfilesList = useMemo(() => Array.from(profilesByEmailMap.values()), [profilesByEmailMap]);
+
+  const requestsByUserEmailMap = useMemo(() => {
+    const map = new Map<string, BudgetRequest[]>();
+    for (const r of requests) {
+      const key = (r.userEmail || '').trim().toLowerCase();
+      if (!key) continue;
+      let list = map.get(key);
+      if (!list) {
+        list = [];
+        map.set(key, list);
+      }
+      list.push(r);
+    }
+    return map;
+  }, [requests]);
+
+  const usageItemsByRequestIdMap = useMemo(() => {
+    const map = new Map<string, UsageReportItem[]>();
+    for (const item of usageItems) {
+      const key = item.requestId;
+      let list = map.get(key);
+      if (!list) {
+        list = [];
+        map.set(key, list);
+      }
+      list.push(item);
+    }
+    return map;
+  }, [usageItems]);
+
+  const reportedRequestIdsUpperSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of usageItems) {
+      if (item.requestId) {
+        set.add(item.requestId.trim().toUpperCase());
+      }
+    }
+    return set;
+  }, [usageItems]);
+
+  const historiesByUidMap = useMemo(() => {
+    const map = new Map<string, ItemReviewHistory[]>();
+    for (const h of histories || []) {
+      const rUid = h.requestUid;
+      const iUid = h.itemUid;
+      if (rUid) {
+        let list = map.get(rUid);
+        if (!list) {
+          list = [];
+          map.set(rUid, list);
+        }
+        list.push(h);
+      }
+      if (iUid && iUid !== rUid) {
+        let list = map.get(iUid);
+        if (!list) {
+          list = [];
+          map.set(iUid, list);
+        }
+        list.push(h);
+      }
+    }
+    return map;
+  }, [histories]);
+
+  // User Murni UID Monitoring statistics (skipped for Role.USER since monitoring card is not shown to USER)
   const userMurniMonitoringStats = useMemo(() => {
+    if (role === Role.USER) {
+      return { totalUsers: 0, blockedCount: 0, totalUnreportedCount: 0 };
+    }
+
     const userMurniProfiles = (profiles || []).filter(p => {
       const r = (p.role || '').toUpperCase();
       return r === Role.USER || r === 'USER';
@@ -179,20 +333,646 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     let blockedCount = 0;
     let totalUnreportedCount = 0;
 
-    userMurniProfiles.forEach(p => {
-      const unreported = getUnreportedTransferredRequests(p.email, requests, usageItems);
-      totalUnreportedCount += unreported.length;
-      if (unreported.length > 1) {
+    for (const p of userMurniProfiles) {
+      const emailLower = (p.email || '').trim().toLowerCase();
+      if (!emailLower) continue;
+      const userReqs = requestsByUserEmailMap.get(emailLower) || [];
+      let unreportedLen = 0;
+      for (const r of userReqs) {
+        if (isBbmRequestUtil(r)) continue;
+        if (r.status === RequestStatus.CLOSED || r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED) continue;
+        const isTransferred =
+          r.status === RequestStatus.TRANSFERRED ||
+          r.status === RequestStatus.TRANSFER_BERTAHAP ||
+          (typeof r.adminActionAmount === 'number' && r.adminActionAmount > 0);
+        if (!isTransferred) continue;
+        if (!reportedRequestIdsUpperSet.has((r.id || '').trim().toUpperCase())) {
+          unreportedLen++;
+        }
+      }
+      totalUnreportedCount += unreportedLen;
+      if (unreportedLen > 1) {
         blockedCount++;
       }
-    });
+    }
 
     return {
       totalUsers: userMurniProfiles.length,
       blockedCount,
       totalUnreportedCount
     };
-  }, [profiles, requests, usageItems]);
+  }, [role, profiles, requestsByUserEmailMap, reportedRequestIdsUpperSet]);
+
+  // Role-specific memoized aggregations (only active role is computed)
+  const userDashboardStats = useMemo(() => {
+    const needsUserView =
+      role === Role.USER ||
+      ((role === Role.MANAGER || role === Role.FINANCE) && currentTab === 'SUBMISSION');
+    if (!needsUserView) return null;
+
+    const emailLower = (email || '').trim().toLowerCase();
+    const myReqs = (requestsByUserEmailMap.get(emailLower) || []).filter(r => r.status !== RequestStatus.CANCELLED);
+
+    const requesterProfile = profilesByEmailMap.get(emailLower);
+    const isRequesterManagerOrFinance = requesterProfile
+      ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE)
+      : (role === Role.MANAGER || role === Role.FINANCE);
+    const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
+
+    let totalRequested = 0;
+    let totalTransferred = 0;
+    let totalAdjustments = 0;
+    let totalReportedApproved = 0;
+    let taskReportNeeded = 0;
+    let taskCorrections = 0;
+    let taskRejected = 0;
+    let rejectedItemsInReportingCount = 0;
+    let pendingApprCount = 0;
+    let approvedWaitingTransfer = 0;
+    let reportingCount = 0;
+    let closedCount = 0;
+
+    const reportingStates = new Set<RequestStatus>([
+      RequestStatus.TRANSFERRED,
+      RequestStatus.TRANSFER_BERTAHAP,
+      RequestStatus.REPORTING,
+      RequestStatus.REVIEW_MANAGER,
+      RequestStatus.REVIEW_ADMIN
+    ]);
+
+    for (const r of myReqs) {
+      const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+      const reqHistories = historiesByUidMap.get(r.id) || [];
+      const isBbm = isBbmReqLocal(r);
+
+      if (!isBbm) {
+        if (r.siteId !== 'ADJUSTMENT') {
+          totalRequested += r.jumlahPengajuan;
+          totalTransferred += r.adminActionAmount;
+        } else {
+          totalAdjustments += r.adminActionAmount;
+        }
+      }
+
+      let hasRejectedItem = false;
+      for (const item of reqItems) {
+        if (item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItemCommon(item)) {
+          totalReportedApproved += item.nominal;
+        }
+        if (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED) {
+          hasRejectedItem = true;
+          if (reportingStates.has(r.status)) {
+            rejectedItemsInReportingCount++;
+          }
+        }
+      }
+
+      if (r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING) {
+        taskReportNeeded++;
+      }
+      if (reportingStates.has(r.status) && hasRejectedItem) {
+        taskCorrections++;
+      }
+      if (r.status === RequestStatus.REJECTED) {
+        taskRejected++;
+      }
+      if (
+        r.status === RequestStatus.PENDING_APPROVAL ||
+        (isOpBiasaRequest(r) && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) && !isFinanceApprovedOpRequest(r, reqHistories))
+      ) {
+        pendingApprCount++;
+      }
+      if (isPendingTransferRequest(r, reqHistories, reqItems)) {
+        approvedWaitingTransfer++;
+      }
+      if (reportingStates.has(r.status)) {
+        reportingCount++;
+      }
+      if (r.status === RequestStatus.CLOSED && !isBbm) {
+        closedCount++;
+      }
+    }
+
+    const saldoOperasional = totalTransferred + totalAdjustments - totalReportedApproved;
+    const totalTasks = taskReportNeeded + taskCorrections + taskRejected;
+    const rejectedCount = taskRejected;
+
+    const todayStr = getLocalTodayStrCommon();
+    const userEmailToMatch = (userProfile?.email || email || '').toLowerCase();
+    const todayTransferredReqs = (requestsByUserEmailMap.get(userEmailToMatch.trim()) || []).filter(r => {
+      if (isBbmReqLocal(r) || r.status === RequestStatus.CANCELLED || !((r.adminActionAmount || 0) > 0)) return false;
+      const dateAdminActionTime = r.adminActionTime && /^\d{4}-\d{2}-\d{2}/.test(String(r.adminActionTime).trim()) ? String(r.adminActionTime).trim().substring(0, 10) : '';
+      if (dateAdminActionTime) return dateAdminActionTime === todayStr;
+      const datePemakaian = r.tanggalPemakaian && /^\d{4}-\d{2}-\d{2}/.test(String(r.tanggalPemakaian).trim()) ? String(r.tanggalPemakaian).trim().substring(0, 10) : '';
+      const dateCreatedAt = r.createdAt && /^\d{4}-\d{2}-\d{2}/.test(String(r.createdAt).trim()) ? String(r.createdAt).trim().substring(0, 10) : '';
+      const dateTimestamp = r.timestamp && /^\d{4}-\d{2}-\d{2}/.test(String(r.timestamp).trim()) ? String(r.timestamp).trim().substring(0, 10) : '';
+      return datePemakaian === todayStr || dateCreatedAt === todayStr || dateTimestamp === todayStr;
+    });
+
+    const todayActivitiesCount = activities.filter(
+      act => act.userEmail.toLowerCase() === (userProfile?.email || email || '').toLowerCase() && act.tanggal === todayStr
+    ).length;
+
+    return {
+      supervisorTitle,
+      totalRequested,
+      totalTransferred,
+      totalAdjustments,
+      totalReportedApproved,
+      saldoOperasional,
+      taskReportNeeded,
+      taskCorrections,
+      taskRejected,
+      totalTasks,
+      rejectedItemsInReportingCount,
+      pendingApprCount,
+      approvedWaitingTransfer,
+      reportingCount,
+      closedCount,
+      rejectedCount,
+      todayTransferredCount: todayTransferredReqs.length,
+      todayTransferredTotal: todayTransferredReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0),
+      todayActivitiesCount
+    };
+  }, [role, currentTab, email, userProfile, requestsByUserEmailMap, usageItemsByRequestIdMap, historiesByUidMap, profilesByEmailMap, activities]);
+
+  const managerDashboardStats = useMemo(() => {
+    if (role !== Role.MANAGER) return null;
+    const emailLower = (email || '').toLowerCase();
+
+    const managerReqs = requests.filter(r => r.managerEmail.toLowerCase() === emailLower);
+    let pendingBudgetReview = 0;
+    let pendingReportReview = 0;
+
+    for (const r of managerReqs) {
+      if (r.status === RequestStatus.PENDING_APPROVAL && isOpBiasaRequest(r)) {
+        pendingBudgetReview++;
+      }
+      if ([RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) {
+        const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+        if (reqItems.length > 0 && reqItems.some(i => i.statusManager === ItemStatus.PENDING)) {
+          pendingReportReview++;
+        }
+      }
+    }
+    const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
+
+    const myPersonalReqs = (requestsByUserEmailMap.get(emailLower.trim()) || []).filter(r => r.status !== RequestStatus.CANCELLED);
+    let myTaskReportNeeded = 0;
+    let myTaskCorrections = 0;
+    let myTaskRejected = 0;
+    for (const r of myPersonalReqs) {
+      if (r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING) {
+        myTaskReportNeeded++;
+      }
+      if ([RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) {
+        const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+        if (reqItems.some(item => item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED)) {
+          myTaskCorrections++;
+        }
+      }
+      if (r.status === RequestStatus.REJECTED) {
+        myTaskRejected++;
+      }
+    }
+    const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
+
+    const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === emailLower);
+    const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
+    const subActiveCount = requests.filter(r => {
+      const isSubordinate = (r.managerEmail && r.managerEmail.toLowerCase() === emailLower) || subEmails.has(r.userEmail.toLowerCase());
+      const isNotSelf = r.userEmail.toLowerCase() !== emailLower;
+      const isActive = r.status !== RequestStatus.CLOSED && r.status !== RequestStatus.CANCELLED && r.status !== RequestStatus.REJECTED;
+      return isSubordinate && isNotSelf && isActive;
+    }).length;
+
+    const todayStr = getLocalTodayStrCommon();
+    const teamProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === emailLower || p.email.toLowerCase() === emailLower);
+    const teamEmails = new Set(teamProfiles.map(p => p.email.toLowerCase()));
+    const todayTeamActivitiesCount = activities.filter(act =>
+      teamEmails.has(act.userEmail.toLowerCase()) && act.tanggal === todayStr
+    ).length;
+
+    return {
+      pendingBudgetReview,
+      pendingReportReview,
+      totalApprovalTasks,
+      totalUserTasks,
+      teamPendingAppr: pendingBudgetReview,
+      teamUnderReview: pendingReportReview,
+      subActiveCount,
+      todayTeamActivitiesCount
+    };
+  }, [role, email, requests, profiles, activities, requestsByUserEmailMap, usageItemsByRequestIdMap]);
+
+  const financeDashboardStats = useMemo(() => {
+    if (role !== Role.FINANCE) return null;
+    const emailLower = (email || '').toLowerCase();
+    const todayStr = getJakartaTodayStrCommon();
+
+    let pendingFinanceBudgetReview = 0;
+    let pendingFinanceBudgetReviewAmount = 0;
+    let pendingTransfer = 0;
+    let pendingTransferAmount = 0;
+    let pendingAdminReportReview = 0;
+    let closedCount = 0;
+    let financeRejectedCount = 0;
+    let totalTransferred = 0;
+    let todayTransferredCount = 0;
+    let todayTransferredTotal = 0;
+    let todayBbmCount = 0;
+    let todayBbmTotal = 0;
+
+    for (const r of requests) {
+      if ((r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) && r.tanggalPemakaian === todayStr) {
+        todayBbmCount++;
+        todayBbmTotal += r.jumlahPengajuan;
+      }
+
+      if (r.status === RequestStatus.CANCELLED) continue;
+
+      const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+      const reqHistories = historiesByUidMap.get(r.id) || [];
+      const isBbm = isBbmReqLocal(r);
+
+      if (
+        isOpBiasaRequest(r) &&
+        (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) &&
+        !isFinanceApprovedOpRequest(r, reqHistories)
+      ) {
+        pendingFinanceBudgetReview++;
+        pendingFinanceBudgetReviewAmount += r.managerActionAmount > 0 ? r.managerActionAmount : r.jumlahPengajuan;
+      }
+
+      if (isPendingTransferRequest(r, reqHistories, reqItems)) {
+        pendingTransfer++;
+        if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
+          let approvedUsage = 0;
+          for (const i of reqItems) {
+            if (i.statusManager === ItemStatus.APPROVED) approvedUsage += i.nominal || 0;
+          }
+          pendingTransferAmount += approvedUsage || r.adminActionAmount || r.managerActionAmount || r.jumlahPengajuan || 0;
+        } else {
+          const finApproved = getFinanceApprovedAmount(r, reqHistories, reqItems);
+          if (isOpBiasaRequest(r) && r.status !== RequestStatus.CLOSED && getTransferBertahap(r, reqHistories, reqItems)) {
+            const remainingToTransfer = Math.max(0, finApproved - (r.adminActionAmount || 0));
+            pendingTransferAmount += remainingToTransfer || finApproved;
+          } else {
+            let finApprovedNominal = 0;
+            for (const h of reqHistories) {
+              if ((h.requestUid === r.id || h.itemUid === r.id) && h.actionType === 'APPROVAL_FINANCE') {
+                finApprovedNominal += h.nominal || 0;
+              }
+            }
+            const amt = r.adminActionAmount > 0 ? r.adminActionAmount : (finApprovedNominal > 0 ? finApprovedNominal : (r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0)));
+            pendingTransferAmount += amt;
+          }
+        }
+      }
+
+      if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && reqItems.length > 0) {
+        if (!reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED) && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
+          pendingAdminReportReview++;
+        }
+      }
+
+      if (r.status === RequestStatus.CLOSED && !isBbm) {
+        closedCount++;
+      }
+
+      if (r.status === RequestStatus.REJECTED || reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED)) {
+        financeRejectedCount++;
+      }
+
+      if (!isBbm) {
+        totalTransferred += r.adminActionAmount;
+        if ((r.adminActionAmount || 0) > 0) {
+          const dateAdminActionTime = parseDateToYYYYMMDDCommon(r.adminActionTime);
+          const isToday = dateAdminActionTime
+            ? dateAdminActionTime === todayStr
+            : (parseDateToYYYYMMDDCommon(r.tanggalPemakaian) === todayStr ||
+               parseDateToYYYYMMDDCommon(r.createdAt) === todayStr ||
+               parseDateToYYYYMMDDCommon(r.timestamp) === todayStr);
+          if (isToday) {
+            todayTransferredCount++;
+            todayTransferredTotal += r.adminActionAmount || 0;
+          }
+        }
+      }
+    }
+
+    const totalApprovalTasks = pendingFinanceBudgetReview + pendingTransfer + pendingAdminReportReview;
+
+    const myPersonalReqs = (requestsByUserEmailMap.get(emailLower.trim()) || []).filter(r => r.status !== RequestStatus.CANCELLED);
+    let myTaskReportNeeded = 0;
+    let myTaskCorrections = 0;
+    let myTaskRejected = 0;
+    for (const r of myPersonalReqs) {
+      if (r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING) {
+        myTaskReportNeeded++;
+      }
+      if ([RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) {
+        const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+        if (reqItems.some(item => item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED)) {
+          myTaskCorrections++;
+        }
+      }
+      if (r.status === RequestStatus.REJECTED) {
+        myTaskRejected++;
+      }
+    }
+    const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
+
+    let totalClosed = 0;
+    for (const item of usageItems) {
+      if (item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItemCommon(item)) {
+        totalClosed += item.nominal;
+      }
+    }
+
+    let unbalancedUsersCount = 0;
+    let totalAdjustmentNominalNeeded = 0;
+    for (const user of uniqueProfilesList) {
+      const uEmail = (user.email || '').trim().toLowerCase();
+      const userReqs = requestsByUserEmailMap.get(uEmail) || [];
+      let totalTransferredVal = 0;
+      let totalAdjustmentsVal = 0;
+      let totalReportedApproved = 0;
+
+      for (const r of userReqs) {
+        if (r.status === RequestStatus.CANCELLED || isBbmReqLocal(r)) continue;
+        if (r.siteId !== 'ADJUSTMENT') {
+          totalTransferredVal += r.adminActionAmount;
+        } else {
+          totalAdjustmentsVal += r.adminActionAmount;
+        }
+        const rItems = usageItemsByRequestIdMap.get(r.id) || [];
+        for (const item of rItems) {
+          if (!isBbmUsageItemCommon(item) && item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED) {
+            totalReportedApproved += item.nominal;
+          }
+        }
+      }
+
+      const balance = totalTransferredVal + totalAdjustmentsVal - totalReportedApproved;
+      const requiredNominal = Math.abs(balance);
+      if (requiredNominal > 0.01) {
+        unbalancedUsersCount++;
+        totalAdjustmentNominalNeeded += requiredNominal;
+      }
+    }
+
+    const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayStr).length;
+
+    return {
+      pendingFinanceBudgetReview,
+      pendingFinanceBudgetReviewAmount,
+      pendingTransfer,
+      pendingTransferAmount,
+      pendingAdminReportReview,
+      totalApprovalTasks,
+      totalTasks: totalApprovalTasks,
+      totalUserTasks,
+      closedCount,
+      financeRejectedCount,
+      totalTransferred,
+      totalClosed,
+      unbalancedUsersCount,
+      totalAdjustmentNominalNeeded,
+      todayTransferredCount,
+      todayTransferredTotal,
+      todayBbmCount,
+      todayBbmTotal,
+      todayAllActivitiesCount
+    };
+  }, [role, email, requests, usageItems, activities, uniqueProfilesList, requestsByUserEmailMap, usageItemsByRequestIdMap, historiesByUidMap]);
+
+  const direkturDashboardStats = useMemo(() => {
+    if (role !== Role.DIREKTUR) return null;
+
+    const direkturEmails = new Set<string>(['margono@depotel.com', 'direktur@company.com']);
+    for (const p of profiles) {
+      if (p.role === Role.DIREKTUR && p.email) {
+        direkturEmails.add(p.email.trim().toLowerCase());
+      }
+    }
+    const emailLower = (email || '').trim().toLowerCase();
+    const userProfileEmailLower = (userProfile?.email || '').trim().toLowerCase();
+    if (emailLower) direkturEmails.add(emailLower);
+    if (userProfileEmailLower) direkturEmails.add(userProfileEmailLower);
+
+    const isDirekturDirectReq = (r: BudgetRequest) => {
+      const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
+      const requesterProfile = profilesByEmailMap.get((r.userEmail || '').trim().toLowerCase());
+      if (requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE) {
+        return true;
+      }
+      if (reqManagerEmail && (
+        direkturEmails.has(reqManagerEmail) ||
+        reqManagerEmail.includes('margono') ||
+        reqManagerEmail.includes('direktur') ||
+        (emailLower && reqManagerEmail === emailLower) ||
+        (userProfileEmailLower && reqManagerEmail === userProfileEmailLower)
+      )) {
+        return true;
+      }
+      if (requesterProfile) {
+        const profileMgrEmail = (requesterProfile.managerEmail || '').trim().toLowerCase();
+        if (profileMgrEmail && (
+          direkturEmails.has(profileMgrEmail) ||
+          profileMgrEmail.includes('margono') ||
+          profileMgrEmail.includes('direktur') ||
+          (emailLower && profileMgrEmail === emailLower) ||
+          (userProfileEmailLower && profileMgrEmail === userProfileEmailLower)
+        )) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    const reportingStatusSet = new Set<RequestStatus>([
+      RequestStatus.TRANSFERRED,
+      RequestStatus.TRANSFER_BERTAHAP,
+      RequestStatus.REPORTING,
+      RequestStatus.REVIEW_MANAGER,
+      RequestStatus.REVIEW_ADMIN
+    ]);
+
+    const todayStr = getJakartaTodayStrCommon();
+    const todayLocalStr = getLocalTodayStrCommon();
+
+    let pendingBudgetReview = 0;
+    let pendingReportReview = 0;
+    let pengajuanCount = 0;
+    let menungguTransferCount = 0;
+    let menungguTransferNominal = 0;
+    let prosesLaporanCount = 0;
+    let closedCount = 0;
+    let totalPengajuan = 0;
+    let totalTransferred = 0;
+    let todayTransferredCount = 0;
+    let todayTransferredTotal = 0;
+
+    for (const r of requests) {
+      const isBbm = isBbmReqLocal(r);
+      if (!isBbm) {
+        totalTransferred += r.adminActionAmount || 0;
+      }
+
+      if (r.status === RequestStatus.CANCELLED) continue;
+
+      const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+      const reqHistories = historiesByUidMap.get(r.id) || [];
+
+      if (isDirekturDirectReq(r)) {
+        if (r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED) {
+          pendingBudgetReview++;
+        }
+        if (reportingStatusSet.has(r.status) && reqItems.length > 0 && reqItems.some(i => i.statusManager === ItemStatus.PENDING)) {
+          pendingReportReview++;
+        }
+      }
+
+      const isPendingManager = r.status === RequestStatus.PENDING_APPROVAL;
+      const isPendingFinance =
+        isOpBiasaRequest(r) &&
+        (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) &&
+        !isFinanceApprovedOpRequest(r, reqHistories);
+      if (isPendingManager || isPendingFinance) {
+        pengajuanCount++;
+      }
+
+      if (isPendingTransferRequest(r, reqHistories, reqItems)) {
+        menungguTransferCount++;
+        if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
+          let approvedUsage = 0;
+          for (const i of reqItems) {
+            if (i.statusManager === ItemStatus.APPROVED) approvedUsage += i.nominal || 0;
+          }
+          menungguTransferNominal += approvedUsage || r.adminActionAmount || r.managerActionAmount || r.jumlahPengajuan || 0;
+        } else {
+          const finApproved = getFinanceApprovedAmount(r, reqHistories, reqItems);
+          if (isOpBiasaRequest(r) && r.status !== RequestStatus.CLOSED && getTransferBertahap(r, reqHistories, reqItems)) {
+            const remainingToTransfer = Math.max(0, finApproved - (r.adminActionAmount || 0));
+            menungguTransferNominal += remainingToTransfer || finApproved;
+          } else {
+            let finApprovedNominal = 0;
+            for (const h of reqHistories) {
+              if ((h.requestUid === r.id || h.itemUid === r.id) && h.actionType === 'APPROVAL_FINANCE') {
+                finApprovedNominal += h.nominal || 0;
+              }
+            }
+            const amt = r.adminActionAmount > 0 ? r.adminActionAmount : (finApprovedNominal > 0 ? finApprovedNominal : (r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0)));
+            menungguTransferNominal += amt;
+          }
+        }
+      }
+
+      if (reportingStatusSet.has(r.status)) {
+        prosesLaporanCount++;
+      }
+      if (r.status === RequestStatus.CLOSED && !isBbm) {
+        closedCount++;
+      }
+      totalPengajuan += r.jumlahPengajuan || 0;
+
+      if (!isBbm && (r.adminActionAmount || 0) > 0) {
+        const dateAdminActionTime = parseDateToYYYYMMDDCommon(r.adminActionTime);
+        const isToday = dateAdminActionTime
+          ? dateAdminActionTime === todayStr
+          : (parseDateToYYYYMMDDCommon(r.tanggalPemakaian) === todayStr ||
+             parseDateToYYYYMMDDCommon(r.createdAt) === todayStr ||
+             parseDateToYYYYMMDDCommon(r.timestamp) === todayStr);
+        if (isToday) {
+          todayTransferredCount++;
+          todayTransferredTotal += r.adminActionAmount || 0;
+        }
+      }
+    }
+
+    let totalClosed = 0;
+    for (const item of usageItems) {
+      if (item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItemCommon(item)) {
+        totalClosed += item.nominal || 0;
+      }
+    }
+
+    const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayLocalStr).length;
+
+    return {
+      pendingBudgetReview,
+      pendingReportReview,
+      totalApprovalTasks: pendingBudgetReview + pendingReportReview,
+      pengajuanCount,
+      menungguTransferCount,
+      menungguTransferNominal,
+      prosesLaporanCount,
+      closedCount,
+      totalPengajuan,
+      totalTransferred,
+      totalClosed,
+      todayTransferredCount,
+      todayTransferredTotal,
+      todayAllActivitiesCount
+    };
+  }, [role, email, userProfile, profiles, requests, usageItems, activities, profilesByEmailMap, usageItemsByRequestIdMap, historiesByUidMap]);
+
+  const adminDashboardStats = useMemo(() => {
+    if (role !== Role.ADMINISTRATOR) return null;
+    const totalUsers = profiles.length;
+    let staffCount = 0;
+    let managerCount = 0;
+    let financeCount = 0;
+    let direkturCount = 0;
+    let adminCount = 0;
+    let mobileBindingCount = 0;
+    let activeSubsUsersCount = 0;
+
+    for (const p of profiles) {
+      if (p.role === Role.USER) staffCount++;
+      else if (p.role === Role.MANAGER) managerCount++;
+      else if (p.role === Role.FINANCE) financeCount++;
+      else if (p.role === Role.DIREKTUR) direkturCount++;
+      else if (p.role === Role.ADMINISTRATOR) adminCount++;
+      if (p.mobile || p.deviceId) mobileBindingCount++;
+      if (p.pushSubscriptions) {
+        try {
+          const parsed = JSON.parse(p.pushSubscriptions);
+          if (Array.isArray(parsed) ? parsed.length > 0 : !!parsed) activeSubsUsersCount++;
+        } catch {}
+      }
+    }
+
+    const todayStr = getLocalTodayStrCommon();
+    let todayBbmCount = 0;
+    let todayBbmTotal = 0;
+    let opBiasaCount = 0;
+    for (const r of requests) {
+      if ((r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) && r.tanggalPemakaian === todayStr) {
+        todayBbmCount++;
+        todayBbmTotal += r.jumlahPengajuan;
+      }
+      if (r.id && r.id.startsWith('OP-') && !r.id.startsWith('OPT-')) {
+        opBiasaCount++;
+      }
+    }
+
+    return {
+      totalUsers,
+      staffCount,
+      managerCount,
+      financeCount,
+      direkturCount,
+      adminCount,
+      mobileBindingCount,
+      activeSubsUsersCount,
+      todayBbmCount,
+      todayBbmTotal,
+      opBiasaCount,
+      todayStr
+    };
+  }, [role, profiles, requests]);
 
   const allSitesToUse = useMemo(() => {
     return (sites && sites.length > 0) ? sites : DEFAULT_SITES_LIST;
@@ -523,7 +1303,11 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     }
   };
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable')
+    ]);
     const isBbmReq = (r: BudgetRequest) => r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit') || r.id.startsWith('TFDS') || r.siteId === 'OPT-DUREN SAWIT';
     const isBbmItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
 
@@ -647,7 +1431,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   };
 
   const renderStatusBadge = (status: RequestStatus, userEmail?: string) => {
-    const requesterProfile = userEmail ? profiles.find(p => p.email.trim().toLowerCase() === userEmail.trim().toLowerCase()) : null;
+    const requesterProfile = userEmail ? profilesByEmailMap.get(userEmail.trim().toLowerCase()) || null : null;
     const isRequesterManagerOrFinance = requesterProfile ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE) : (role === Role.MANAGER || role === Role.FINANCE);
     const supervisorTitle = isRequesterManagerOrFinance ? 'DIREKTUR' : 'MANAGER';
 
@@ -978,114 +1762,23 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
 
   // Reusable User Dashboard View for USER role or MANAGER/FINANCE Pengajuan Anggaran tab
   const renderUserDashboardView = () => {
-    const myReqs = requests.filter(r => r.userEmail.toLowerCase() === email.toLowerCase() && r.status !== RequestStatus.CANCELLED);
-    const myReqIds = myReqs.map(r => r.id);
-    const myUsage = usageItems.filter(item => myReqIds.includes(item.requestId));
-
-    const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === email.trim().toLowerCase());
-    const isRequesterManagerOrFinance = requesterProfile ? (requesterProfile.role === Role.MANAGER || requesterProfile.role === Role.FINANCE) : (role === Role.MANAGER || role === Role.FINANCE);
-    const supervisorTitle = isRequesterManagerOrFinance ? 'Direktur' : 'Manager';
-
-    const isBbmRequest = (r: BudgetRequest) => 
-      r.id.startsWith('BBMDS') || 
-      r.id.startsWith('BBM_DurenSawit') || 
-      r.id.startsWith('TFDS') || 
-      r.siteId === 'OPT-DUREN SAWIT' ||
-      r.siteId === 'BBM DUREN SAWIT' ||
-      (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
-      r.keterangan?.toUpperCase().includes('DUREN SAWIT');
-    const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
-
-    const totalRequested = myReqs.filter(r => r.siteId !== 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.jumlahPengajuan, 0);
-    const totalTransferred = myReqs.filter(r => r.siteId !== 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.adminActionAmount, 0);
-    const totalAdjustments = myReqs.filter(r => r.siteId === 'ADJUSTMENT' && !isBbmRequest(r)).reduce((sum, r) => sum + r.adminActionAmount, 0);
-
-    // Saldo Operasional: Jumlah seluruh transfer + total adjustment dikurangi jumlah item laporan yang telah mendapatkan persetujuan Manager dan Admin (termasuk item dana talangan), tidak termasuk transaksi BBM Duren Sawit
-    const totalReportedApproved = myUsage
-      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItem(item))
-      .reduce((sum, item) => sum + item.nominal, 0);
-    const saldoOperasional = totalTransferred + totalAdjustments - totalReportedApproved;
-
-    // Active tasks for User:
-    // 1. Rejected requests (need cancellation / review)
-    // 2. Transferred requests that need usage report filling (status is TRANSFERRED or REPORTING)
-    // 3. Reports with some rejected items that need correction
-    const taskReportNeeded = myReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING).length;
-    const taskCorrections = myReqs.filter(r => 
-      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
-      myUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
-    ).length;
-    const taskRejected = myReqs.filter(r => r.status === RequestStatus.REJECTED).length;
-
-    const totalTasks = taskReportNeeded + taskCorrections + taskRejected;
-
-    // Count rejected items in requests currently in PROSES LAPORAN
-    const rejectedItemsInReportingCount = myUsage.filter(item => {
-      const parentReq = myReqs.find(r => r.id === item.requestId);
-      if (!parentReq) return false;
-      const isReportingState = [
-        RequestStatus.TRANSFERRED,
-        RequestStatus.TRANSFER_BERTAHAP,
-        RequestStatus.REPORTING,
-        RequestStatus.REVIEW_MANAGER,
-        RequestStatus.REVIEW_ADMIN
-      ].includes(parentReq.status);
-      return isReportingState && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED);
-    }).length;
-
-    const pendingApprCount = myReqs.filter(r => 
-      r.status === RequestStatus.PENDING_APPROVAL || 
-      (isOpBiasaRequest(r) && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) && !isFinanceApprovedOpRequest(r, histories))
-    ).length;
-
-    const approvedWaitingTransfer = myReqs.filter(r => isPendingTransferRequest(r, histories, usageItems)).length;
-    const reportingCount = myReqs.filter(r => 
-      r.status === RequestStatus.REPORTING ||
-      r.status === RequestStatus.REVIEW_MANAGER ||
-      r.status === RequestStatus.REVIEW_ADMIN ||
-      r.status === RequestStatus.TRANSFERRED ||
-      r.status === RequestStatus.TRANSFER_BERTAHAP
-    ).length;
-    const closedCount = myReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
-    const rejectedCount = taskRejected;
-
-    const parseDateToYYYYMMDD = (dateInput: string | Date | undefined): string => {
-      if (!dateInput) return '';
-      const str = String(dateInput).trim();
-      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-        return str.substring(0, 10);
-      }
-      return '';
-    };
-
-    const getTodayStr = () => {
-      const d = new Date();
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-    const todayStr = getTodayStr();
-
-    const userEmailToMatch = (userProfile?.email || email || '').toLowerCase();
-    const transferredReqsList = requests.filter(r => 
-      !isBbmRequest(r) && 
-      r.status !== RequestStatus.CANCELLED &&
-      (r.adminActionAmount || 0) > 0 &&
-      r.userEmail.toLowerCase() === userEmailToMatch
-    );
-    const todayTransferredReqs = transferredReqsList.filter(r => {
-      const dateAdminActionTime = parseDateToYYYYMMDD(r.adminActionTime);
-      const datePemakaian = parseDateToYYYYMMDD(r.tanggalPemakaian);
-      const dateCreatedAt = parseDateToYYYYMMDD(r.createdAt);
-      const dateTimestamp = parseDateToYYYYMMDD(r.timestamp);
-      if (dateAdminActionTime) {
-        return dateAdminActionTime === todayStr;
-      }
-      return datePemakaian === todayStr || dateCreatedAt === todayStr || dateTimestamp === todayStr;
-    });
-    const todayTransferredCount = todayTransferredReqs.length;
-    const todayTransferredTotal = todayTransferredReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+    const {
+      supervisorTitle,
+      saldoOperasional,
+      taskReportNeeded,
+      taskCorrections,
+      taskRejected,
+      totalTasks,
+      rejectedItemsInReportingCount,
+      pendingApprCount,
+      approvedWaitingTransfer,
+      reportingCount,
+      closedCount,
+      rejectedCount,
+      todayTransferredCount,
+      todayTransferredTotal,
+      todayActivitiesCount
+    } = userDashboardStats!;
 
     return (
       <div className="space-y-4">
@@ -1315,17 +2008,21 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         )}
 
         {/* Modal Laporan Transaksi Saldo Operasional User */}
-        <UserOperationalBalanceReportModal
-          isOpen={isTransactionReportOpen}
-          onClose={() => setIsTransactionReportOpen(false)}
-          userProfile={userProfile}
-          userEmail={email}
-          requests={requests}
-          usageItems={usageItems}
-          histories={histories}
-          profiles={profiles}
-          role={role}
-        />
+        {isTransactionReportOpen && (
+          <Suspense fallback={null}>
+            <UserOperationalBalanceReportModal
+              isOpen={isTransactionReportOpen}
+              onClose={() => setIsTransactionReportOpen(false)}
+              userProfile={userProfile}
+              userEmail={email}
+              requests={requests}
+              usageItems={usageItems}
+              histories={histories}
+              profiles={profiles}
+              role={role}
+            />
+          </Suspense>
+        )}
 
         {/* Modal CARI SITE */}
         {isSearchSiteModalOpen && (
@@ -1529,40 +2226,16 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   if (role === Role.USER) {
     return renderUserDashboardView();
   }  if (role === Role.MANAGER) {
-    const isOpBiasaRequest = (r: BudgetRequest) => r.id.startsWith('OP') && !r.id.startsWith('OPT-') && !r.id.startsWith('BBM') && !r.id.startsWith('ADJ-');
-    const managerReqs = requests.filter(r => r.managerEmail.toLowerCase() === email.toLowerCase());
-    const managerReqIds = managerReqs.map(r => r.id);
-    const managerUsage = usageItems.filter(item => managerReqIds.includes(item.requestId));
-
-    // Active tasks for Manager Approval:
-    // 1. Initial approval needed: requests in PENDING_APPROVAL with OP- prefix
-    const pendingBudgetReview = managerReqs.filter(r => r.status === RequestStatus.PENDING_APPROVAL && isOpBiasaRequest(r)).length;
-
-    // 2. Report reviews needed: requests with usage items pending Manager review
-    const pendingReportReview = managerReqs.filter(r => {
-      if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) return false;
-      const reqItems = usageItems.filter(item => item.requestId === r.id);
-      if (reqItems.length === 0) return false;
-      return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
-    }).length;
-
-    const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
-
-    // Active tasks for Manager's own submissions:
-    const myPersonalReqs = requests.filter(r => r.userEmail.toLowerCase() === email.toLowerCase() && r.status !== RequestStatus.CANCELLED);
-    const myPersonalReqIds = myPersonalReqs.map(r => r.id);
-    const myPersonalUsage = usageItems.filter(item => myPersonalReqIds.includes(item.requestId));
-    const myTaskReportNeeded = myPersonalReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING).length;
-    const myTaskCorrections = myPersonalReqs.filter(r => 
-      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
-      myPersonalUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
-    ).length;
-    const myTaskRejected = myPersonalReqs.filter(r => r.status === RequestStatus.REJECTED).length;
-    const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
-
-    // Request Stats for Manager's Team
-    const teamPendingAppr = pendingBudgetReview;
-    const teamUnderReview = pendingReportReview;
+    const {
+      pendingBudgetReview,
+      pendingReportReview,
+      totalApprovalTasks,
+      totalUserTasks,
+      teamPendingAppr,
+      teamUnderReview,
+      subActiveCount,
+      todayTeamActivitiesCount
+    } = managerDashboardStats!;
 
     return (
       <div className="space-y-4">
@@ -1684,77 +2357,42 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
 
             {/* Kartu UID AKTIF - MANAGER */}
-            {(() => {
-              const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === email.toLowerCase());
-              const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
-
-              const subActiveRequests = requests.filter(r => {
-                const isSubordinate = (r.managerEmail && r.managerEmail.toLowerCase() === email.toLowerCase()) || subEmails.has(r.userEmail.toLowerCase());
-                const isNotSelf = r.userEmail.toLowerCase() !== email.toLowerCase();
-                const isActive = r.status !== RequestStatus.CLOSED && r.status !== RequestStatus.CANCELLED && r.status !== RequestStatus.REJECTED;
-                return isSubordinate && isNotSelf && isActive;
-              });
-
-              return (
-                <div 
-                  onClick={() => setIsManagerActiveUidModalOpen(true)}
-                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
-                  id="manager-active-uid-card"
-                >
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">UID AKTIF (TIM BAWAHAN)</p>
-                    <div className="flex items-baseline gap-1 mt-2">
-                      <span className="text-3xl font-display font-bold text-slate-900">{subActiveRequests.length}</span>
-                      <span className="text-xs text-slate-500 font-medium">UID Aktif</span>
-                    </div>
-                    <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat daftar UID milik bawahan yang masih aktif.</p>
-                  </div>
-                  <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
-                    <FolderOpen className="w-6 h-6" />
-                  </div>
+            <div 
+              onClick={() => setIsManagerActiveUidModalOpen(true)}
+              className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+              id="manager-active-uid-card"
+            >
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">UID AKTIF (TIM BAWAHAN)</p>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-3xl font-display font-bold text-slate-900">{subActiveCount}</span>
+                  <span className="text-xs text-slate-500 font-medium">UID Aktif</span>
                 </div>
-              );
-            })()}
+                <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat daftar UID milik bawahan yang masih aktif.</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                <FolderOpen className="w-6 h-6" />
+              </div>
+            </div>
 
             {/* Kartu Activity User - MANAGER */}
-            {(() => {
-              const getTodayStr = () => {
-                const d = new Date();
-                const year = d.getFullYear();
-                const month = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                return `${year}-${month}-${day}`;
-              };
-              const todayStr = getTodayStr();
-
-              // Subordinates emails
-              const subProfiles = profiles.filter(p => p.managerEmail.toLowerCase() === email.toLowerCase() || p.email.toLowerCase() === email.toLowerCase());
-              const subEmails = new Set(subProfiles.map(p => p.email.toLowerCase()));
-
-              const todayTeamActivitiesCount = activities.filter(act => 
-                subEmails.has(act.userEmail.toLowerCase()) && act.tanggal === todayStr
-              ).length;
-
-              return (
-                <div 
-                  onClick={onOpenActivities}
-                  className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
-                  id="manager-activity-card"
-                >
-                  <div>
-                    <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">ACTIVITY USER (TIM BAWAHAN)</p>
-                    <div className="flex items-baseline gap-1 mt-2">
-                      <span className="text-3xl font-display font-bold text-slate-900">{todayTeamActivitiesCount}</span>
-                      <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
-                    </div>
-                    <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat daftar activity bawahan &amp; filter per user / tanggal</p>
-                  </div>
-                  <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
-                    <CalendarCheck className="w-6 h-6" />
-                  </div>
+            <div 
+              onClick={onOpenActivities}
+              className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex items-center justify-between"
+              id="manager-activity-card"
+            >
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 tracking-widest uppercase">ACTIVITY USER (TIM BAWAHAN)</p>
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-3xl font-display font-bold text-slate-900">{todayTeamActivitiesCount}</span>
+                  <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
                 </div>
-              );
-            })()}
+                <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat daftar activity bawahan &amp; filter per user / tanggal</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                <CalendarCheck className="w-6 h-6" />
+              </div>
+            </div>
 
             {/* Kartu Monitoring UID User Murni - MANAGER */}
             <div 
@@ -1792,204 +2430,46 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         {renderManagerActiveUidModal()}
 
         {/* Modal Monitoring UID User Murni */}
-        <UserUidMonitoringModal
-          isOpen={isUserUidMonitoringModalOpen}
-          onClose={() => setIsUserUidMonitoringModalOpen(false)}
-          profiles={profiles || []}
-          requests={requests}
-          usageItems={usageItems}
-          currentRole={role}
-          currentUserEmail={email}
-        />
+        {isUserUidMonitoringModalOpen && (
+          <Suspense fallback={null}>
+            <UserUidMonitoringModal
+              isOpen={isUserUidMonitoringModalOpen}
+              onClose={() => setIsUserUidMonitoringModalOpen(false)}
+              profiles={profiles || []}
+              requests={requests}
+              usageItems={usageItems}
+              currentRole={role}
+              currentUserEmail={email}
+            />
+          </Suspense>
+        )}
       </div>
     );
   }
 
   // Finance stats
   if (role === Role.FINANCE) {
-    // 1. Pending Finance Review for OP- requests (after Manager/Direktur approval)
-    const pendingFinanceBudgetReviewReqs = requests.filter(r => 
-      r.status !== RequestStatus.CANCELLED &&
-      isOpBiasaRequest(r) && 
-      (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) &&
-      !isFinanceApprovedOpRequest(r, histories)
-    );
-    const pendingFinanceBudgetReview = pendingFinanceBudgetReviewReqs.length;
-    const pendingFinanceBudgetReviewAmount = pendingFinanceBudgetReviewReqs.reduce((sum, r) => sum + (r.managerActionAmount > 0 ? r.managerActionAmount : r.jumlahPengajuan), 0);
-
-    // 2. Pending Cash Transfers (BELUM DITRANSFER)
-    const pendingTransferReqs = requests.filter(r => isPendingTransferRequest(r, histories, usageItems));
-    const pendingTransfer = pendingTransferReqs.length;
-    const pendingTransferAmount = pendingTransferReqs.reduce((sum, r) => {
-      if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
-        const reqItems = usageItems.filter(i => i.requestId === r.id && i.statusManager === ItemStatus.APPROVED);
-        const approvedUsage = reqItems.reduce((iSum, item) => iSum + (item.nominal || 0), 0);
-        return sum + (approvedUsage || r.adminActionAmount || r.managerActionAmount || r.jumlahPengajuan || 0);
-      }
-      const finApproved = getFinanceApprovedAmount(r, histories, usageItems);
-      if (isOpBiasaRequest(r) && r.status !== RequestStatus.CLOSED && getTransferBertahap(r, histories, usageItems)) {
-        const remainingToTransfer = Math.max(0, finApproved - (r.adminActionAmount || 0));
-        return sum + (remainingToTransfer || finApproved);
-      }
-      const finHistories = histories.filter(h => (h.requestUid === r.id || h.itemUid === r.id) && h.actionType === 'APPROVAL_FINANCE');
-      let finApprovedNominal = 0;
-      if (finHistories.length > 0) {
-        finApprovedNominal = finHistories.reduce((s, h) => s + (h.nominal || 0), 0);
-      }
-      const amt = r.adminActionAmount > 0 ? r.adminActionAmount : (finApprovedNominal > 0 ? finApprovedNominal : (r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0)));
-      return sum + amt;
-    }, 0);
-
-    const pendingAdminReportReview = requests.filter(r => {
-      if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
-      const reqItems = usageItems.filter(i => i.requestId === r.id);
-      if (reqItems.length === 0) return false;
-      if (reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED)) return false;
-      const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
-      return managerApproved;
-    }).length;
-
-    // Tasks needing Admin/Finance action:
-    // 1. Pending Finance budget review (OP-)
-    // 2. Pending cash transfers
-    // 3. Pending admin report reviews
-    const totalApprovalTasks = pendingFinanceBudgetReview + pendingTransfer + pendingAdminReportReview;
-    const totalTasks = totalApprovalTasks;
-
-    // Active tasks for Finance's own submissions:
-    const myPersonalReqs = requests.filter(r => r.userEmail.toLowerCase() === email.toLowerCase() && r.status !== RequestStatus.CANCELLED);
-    const myPersonalReqIds = myPersonalReqs.map(r => r.id);
-    const myPersonalUsage = usageItems.filter(item => myPersonalReqIds.includes(item.requestId));
-    const myTaskReportNeeded = myPersonalReqs.filter(r => r.status === RequestStatus.TRANSFERRED || r.status === RequestStatus.TRANSFER_BERTAHAP || r.status === RequestStatus.REPORTING).length;
-    const myTaskCorrections = myPersonalReqs.filter(r => 
-      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status) && 
-      myPersonalUsage.some(item => item.requestId === r.id && (item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED))
-    ).length;
-    const myTaskRejected = myPersonalReqs.filter(r => r.status === RequestStatus.REJECTED).length;
-    const totalUserTasks = myTaskReportNeeded + myTaskCorrections + myTaskRejected;
-    const isBbmRequestAdmin = (r: BudgetRequest) => 
-      r.id.startsWith('BBMDS') || 
-      r.id.startsWith('BBM_DurenSawit') || 
-      r.id.startsWith('TFDS') || 
-      r.siteId === 'OPT-DUREN SAWIT' ||
-      r.siteId === 'BBM DUREN SAWIT' ||
-      (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
-      r.keterangan?.toUpperCase().includes('DUREN SAWIT');
-    const isBbmUsageItemAdmin = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
-
-    const closedCount = requests.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequestAdmin(r)).length;
-
-    const financeRejectedReqs = requests.filter(r => {
-      if (r.status === RequestStatus.CANCELLED) return false;
-      const isReqRejected = r.status === RequestStatus.REJECTED;
-      const hasAdminRejectedItems = usageItems.some(i => i.requestId === r.id && i.statusAdmin === ItemStatus.REJECTED);
-      return isReqRejected || hasAdminRejectedItems;
-    });
-    const financeRejectedCount = financeRejectedReqs.length;
-
-    const totalTransferred = requests.filter(r => !isBbmRequestAdmin(r) && r.status !== RequestStatus.CANCELLED).reduce((sum, r) => sum + r.adminActionAmount, 0);
-    const totalClosed = usageItems
-      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItemAdmin(item))
-      .reduce((sum, item) => sum + item.nominal, 0);
-
-    const uniqueProfiles = (() => {
-      const map = new Map<string, UserProfile>();
-      profiles.forEach(p => {
-        const key = (p.email || '').toLowerCase().trim();
-        if (key && !map.has(key)) {
-          map.set(key, p);
-        }
-      });
-      return Array.from(map.values());
-    })();
-
-    const unbalancedUsersStats = uniqueProfiles.map(user => {
-      const userReqs = requests.filter(r => 
-        r.userEmail.toLowerCase() === user.email.toLowerCase() && 
-        r.status !== RequestStatus.CANCELLED &&
-        !isBbmRequestAdmin(r)
-      );
-      const userReqIds = userReqs.map(r => r.id);
-      const userUsage = usageItems.filter(item => userReqIds.includes(item.requestId) && !isBbmUsageItemAdmin(item));
-
-      const totalTransferredVal = userReqs.filter(r => r.siteId !== 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
-      const totalAdjustmentsVal = userReqs.filter(r => r.siteId === 'ADJUSTMENT').reduce((sum, r) => sum + r.adminActionAmount, 0);
-      const totalReportedApproved = userUsage
-        .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED)
-        .reduce((sum, item) => sum + item.nominal, 0);
-      
-      const balance = totalTransferredVal + totalAdjustmentsVal - totalReportedApproved;
-      return { user, balance, requiredNominal: Math.abs(balance) };
-    }).filter(item => item.requiredNominal > 0.01);
-
-    const unbalancedUsersCount = unbalancedUsersStats.length;
-    const totalAdjustmentNominalNeeded = unbalancedUsersStats.reduce((sum, item) => sum + item.requiredNominal, 0);
-
-    const transferredReqsList = requests.filter(r => 
-      !isBbmRequestAdmin(r) && 
-      r.status !== RequestStatus.CANCELLED &&
-      (r.adminActionAmount || 0) > 0
-    );
-    const transferredCount = transferredReqsList.length;
-    const transferredTotalAmount = transferredReqsList.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
-
-    const parseDateToYYYYMMDD = (dateInput: string | Date | undefined): string => {
-      if (!dateInput) return '';
-      const str = String(dateInput).trim();
-      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-        return str.substring(0, 10);
-      }
-      if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
-        const parts = str.split('/');
-        const d = parts[0].padStart(2, '0');
-        const m = parts[1].padStart(2, '0');
-        const y = parts[2].substring(0, 4);
-        return `${y}-${m}-${d}`;
-      }
-      const d = new Date(str);
-      if (!isNaN(d.getTime())) {
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-      }
-      return '';
-    };
-
-    const getTodayStr = () => {
-      try {
-        const jakartaStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-        if (/^\d{4}-\d{2}-\d{2}$/.test(jakartaStr)) return jakartaStr;
-      } catch (e) {}
-      const d = new Date();
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-    const todayStr = getTodayStr();
-
-    const todayTransferredReqs = transferredReqsList.filter(r => {
-      const dateAdminActionTime = parseDateToYYYYMMDD(r.adminActionTime);
-      const datePemakaian = parseDateToYYYYMMDD(r.tanggalPemakaian);
-      const dateCreatedAt = parseDateToYYYYMMDD(r.createdAt);
-      const dateTimestamp = parseDateToYYYYMMDD(r.timestamp);
-      if (dateAdminActionTime) {
-        return dateAdminActionTime === todayStr;
-      }
-      return datePemakaian === todayStr || dateCreatedAt === todayStr || dateTimestamp === todayStr;
-    });
-    const todayTransferredCount = todayTransferredReqs.length;
-    const todayTransferredTotal = todayTransferredReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
-
-    const todayBbmReqs = requests.filter(r => 
-      (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) &&
-      r.tanggalPemakaian === todayStr
-    );
-    const todayBbmCount = todayBbmReqs.length;
-    const todayBbmTotal = todayBbmReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
-
-    const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayStr).length;
+    const {
+      pendingFinanceBudgetReview,
+      pendingFinanceBudgetReviewAmount,
+      pendingTransfer,
+      pendingTransferAmount,
+      pendingAdminReportReview,
+      totalApprovalTasks,
+      totalTasks,
+      totalUserTasks,
+      closedCount,
+      financeRejectedCount,
+      totalTransferred,
+      totalClosed,
+      unbalancedUsersCount,
+      totalAdjustmentNominalNeeded,
+      todayTransferredCount,
+      todayTransferredTotal,
+      todayBbmCount,
+      todayBbmTotal,
+      todayAllActivitiesCount
+    } = financeDashboardStats!;
 
     const renderAdminBbmCard = () => {
       return (
@@ -2360,53 +2840,39 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     )}
 
     {/* Modal Monitoring UID User Murni */}
-    <UserUidMonitoringModal
-      isOpen={isUserUidMonitoringModalOpen}
-      onClose={() => setIsUserUidMonitoringModalOpen(false)}
-      profiles={profiles || []}
-      requests={requests}
-      usageItems={usageItems}
-      currentRole={role}
-      currentUserEmail={email}
-    />
+    {isUserUidMonitoringModalOpen && (
+      <Suspense fallback={null}>
+        <UserUidMonitoringModal
+          isOpen={isUserUidMonitoringModalOpen}
+          onClose={() => setIsUserUidMonitoringModalOpen(false)}
+          profiles={profiles || []}
+          requests={requests}
+          usageItems={usageItems}
+          currentRole={role}
+          currentUserEmail={email}
+        />
+      </Suspense>
+    )}
   </div>
 );
 }
 
   // Compute stats for ADMINISTRATOR role
   if (role === Role.ADMINISTRATOR) {
-    const totalUsers = profiles.length;
-    const staffCount = profiles.filter(p => p.role === Role.USER).length;
-    const managerCount = profiles.filter(p => p.role === Role.MANAGER).length;
-    const financeCount = profiles.filter(p => p.role === Role.FINANCE).length;
-    const direkturCount = profiles.filter(p => p.role === Role.DIREKTUR).length;
-    const adminCount = profiles.filter(p => p.role === Role.ADMINISTRATOR).length;
-    const mobileBindingCount = profiles.filter(p => p.mobile || p.deviceId).length;
-    const activeSubsUsersCount = profiles.filter(p => {
-      if (!p.pushSubscriptions) return false;
-      try {
-        const parsed = JSON.parse(p.pushSubscriptions);
-        return Array.isArray(parsed) ? parsed.length > 0 : !!parsed;
-      } catch {
-        return false;
-      }
-    }).length;
-
-    const getTodayStr = () => {
-      const d = new Date();
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-    const todayStr = getTodayStr();
-
-    const todayBbmReqs = requests.filter(r => 
-      (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) &&
-      r.tanggalPemakaian === todayStr
-    );
-    const todayBbmCount = todayBbmReqs.length;
-    const todayBbmTotal = todayBbmReqs.reduce((sum, r) => sum + r.jumlahPengajuan, 0);
+    const {
+      totalUsers,
+      staffCount,
+      managerCount,
+      financeCount,
+      direkturCount,
+      adminCount,
+      mobileBindingCount,
+      activeSubsUsersCount,
+      todayBbmCount,
+      todayBbmTotal,
+      opBiasaCount,
+      todayStr
+    } = adminDashboardStats!;
 
     return (
       <div className="space-y-4">
@@ -2519,7 +2985,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   SLA Timeline
                 </span>
                 <span className="text-[9px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">
-                  {requests.filter(r => r.id && r.id.startsWith('OP-') && !r.id.startsWith('OPT-')).length} UID (OP-)
+                  {opBiasaCount} UID (OP-)
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 font-medium mt-1">
@@ -2670,19 +3136,23 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
         )}
 
         {/* Administrator Kartu Tools Database (Backup & Switch Database) */}
-        <AdminDatabaseToolsCard
-          token={token}
-          spreadsheetId={spreadsheetId}
-          driveFolderId={driveFolderId}
-          adminEmail={email}
-          onConfigUpdated={onConfigUpdated}
-        />
+        <Suspense fallback={null}>
+          <AdminDatabaseToolsCard
+            token={token}
+            spreadsheetId={spreadsheetId}
+            driveFolderId={driveFolderId}
+            adminEmail={email}
+            onConfigUpdated={onConfigUpdated}
+          />
+        </Suspense>
 
         {/* Administrator Kartu Migrasi Kepemilikan Foto Google Drive */}
-        <AdminPhotoMigrationCard
-          token={token}
-          adminEmail={email}
-        />
+        <Suspense fallback={null}>
+          <AdminPhotoMigrationCard
+            token={token}
+            adminEmail={email}
+          />
+        </Suspense>
 
         {/* Administrator Kartu Manual Activity Report (Input Kegiatan Susulan) */}
         {onSaveManualActivity && (
@@ -3474,233 +3944,83 @@ User Agent: ${navigator.userAgent}`;
         )}
 
         {/* Modal Reopen UID (Administrator) */}
-        <ReopenUidModal
-          isOpen={isReopenUidModalOpen}
-          onClose={() => setIsReopenUidModalOpen(false)}
-          requests={requests}
-          profiles={profiles}
-          usageItems={usageItems}
-          histories={histories}
-          onReopenRequest={onReopenRequest || (async () => false)}
-        />
+        {isReopenUidModalOpen && (
+          <Suspense fallback={null}>
+            <ReopenUidModal
+              isOpen={isReopenUidModalOpen}
+              onClose={() => setIsReopenUidModalOpen(false)}
+              requests={requests}
+              profiles={profiles}
+              usageItems={usageItems}
+              histories={histories}
+              onReopenRequest={onReopenRequest || (async () => false)}
+            />
+          </Suspense>
+        )}
 
         {/* Modal Manual Activity Report (Administrator) */}
-        {onSaveManualActivity && (
-          <AdminManualActivityModal
-            isOpen={isManualActivityModalOpen}
-            onClose={() => setIsManualActivityModalOpen(false)}
-            profiles={profiles}
-            sites={sites}
-            currentAdminEmail={email}
-            onSubmitManualActivity={onSaveManualActivity}
-          />
+        {onSaveManualActivity && isManualActivityModalOpen && (
+          <Suspense fallback={null}>
+            <AdminManualActivityModal
+              isOpen={isManualActivityModalOpen}
+              onClose={() => setIsManualActivityModalOpen(false)}
+              profiles={profiles}
+              sites={sites}
+              currentAdminEmail={email}
+              onSubmitManualActivity={onSaveManualActivity}
+            />
+          </Suspense>
         )}
 
         {/* Modal Response Time Table (Administrator) */}
-        <AdminResponseTimeModal
-          isOpen={isResponseTimeModalOpen}
-          onClose={() => setIsResponseTimeModalOpen(false)}
-          requests={requests}
-          histories={histories}
-          profiles={profiles}
-        />
+        {isResponseTimeModalOpen && (
+          <Suspense fallback={null}>
+            <AdminResponseTimeModal
+              isOpen={isResponseTimeModalOpen}
+              onClose={() => setIsResponseTimeModalOpen(false)}
+              requests={requests}
+              histories={histories}
+              profiles={profiles}
+            />
+          </Suspense>
+        )}
 
         {/* Modal Monitoring UID User Murni (Administrator) */}
-        <UserUidMonitoringModal
-          isOpen={isUserUidMonitoringModalOpen}
-          onClose={() => setIsUserUidMonitoringModalOpen(false)}
-          profiles={profiles || []}
-          requests={requests}
-          usageItems={usageItems}
-          currentRole={role}
-          currentUserEmail={email}
-        />
+        {isUserUidMonitoringModalOpen && (
+          <Suspense fallback={null}>
+            <UserUidMonitoringModal
+              isOpen={isUserUidMonitoringModalOpen}
+              onClose={() => setIsUserUidMonitoringModalOpen(false)}
+              profiles={profiles || []}
+              requests={requests}
+              usageItems={usageItems}
+              currentRole={role}
+              currentUserEmail={email}
+            />
+          </Suspense>
+        )}
       </div>
     );
   }
 
   // Compute stats for DIREKTUR role
   if (role === Role.DIREKTUR) {
-    const activeReqs = requests.filter(r => r.status !== RequestStatus.CANCELLED);
-    const isBbmRequest = (r: BudgetRequest) => 
-      r.id.startsWith('BBMDS') || 
-      r.id.startsWith('BBM_DurenSawit') || 
-      r.id.startsWith('TFDS') || 
-      r.siteId === 'OPT-DUREN SAWIT' ||
-      r.siteId === 'BBM DUREN SAWIT' ||
-      (r as any).siteName?.toUpperCase().includes('DUREN SAWIT') ||
-      r.keterangan?.toUpperCase().includes('DUREN SAWIT');
-
-    // Direct reports approval & reconciliation tasks for Direktur (where managerEmail matches Direktur email or hierarchy)
-    const direkturEmails = new Set<string>([
-      'margono@depotel.com',
-      'direktur@company.com'
-    ]);
-    profiles
-      .filter(p => p.role === Role.DIREKTUR)
-      .forEach(p => {
-        if (p.email) direkturEmails.add(p.email.trim().toLowerCase());
-      });
-    if (email) direkturEmails.add(email.trim().toLowerCase());
-    if (userProfile?.email) direkturEmails.add(userProfile.email.trim().toLowerCase());
-
-    const isDirekturDirectReq = (r: BudgetRequest) => {
-      const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
-      const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
-
-      // Check role of requester (MANAGER and FINANCE are direct subordinates of Direktur)
-      if (requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE) {
-        return true;
-      }
-
-      // Direct check on ManagerEmail field (e.g. margono@depotel.com)
-      if (reqManagerEmail && (
-        direkturEmails.has(reqManagerEmail) || 
-        reqManagerEmail.includes('margono') || 
-        reqManagerEmail.includes('direktur') || 
-        (email && reqManagerEmail === email.trim().toLowerCase()) ||
-        (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
-      )) {
-        return true;
-      }
-
-      // Check hierarchy from user profiles
-      if (requesterProfile) {
-        const profileMgrEmail = (requesterProfile.managerEmail || '').trim().toLowerCase();
-        if (profileMgrEmail && (
-          direkturEmails.has(profileMgrEmail) || 
-          profileMgrEmail.includes('margono') || 
-          profileMgrEmail.includes('direktur') || 
-          (email && profileMgrEmail === email.trim().toLowerCase()) ||
-          (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
-        )) {
-          return true;
-        }
-      }
-      return false;
-    };
-
-    const direkturDirectReqs = activeReqs.filter(r => isDirekturDirectReq(r));
-    const pendingBudgetReview = direkturDirectReqs.filter(r => 
-      r.status === RequestStatus.PENDING_APPROVAL || r.status === RequestStatus.PARTIALLY_APPROVED
-    ).length;
-    const pendingReportReview = direkturDirectReqs.filter(r => {
-      if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) return false;
-      const reqItems = usageItems.filter(item => item.requestId === r.id);
-      if (reqItems.length === 0) return false;
-      return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
-    }).length;
-    const totalApprovalTasks = pendingBudgetReview + pendingReportReview;
-
-    // Company-wide Executive stats for MONITORING (memuat seluruh UID perusahaan, selaras dengan filter saat diklik)
-    const monitoringReqs = activeReqs;
-
-    // 1. PENGAJUAN (Pending Approval Manager & Pending Approval Finance)
-    const pengajuanReqs = monitoringReqs.filter(r => {
-      const isPendingManager = r.status === RequestStatus.PENDING_APPROVAL;
-      const isPendingFinance = isOpBiasaRequest(r) && 
-        (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) && 
-        !isFinanceApprovedOpRequest(r, histories);
-      return isPendingManager || isPendingFinance;
-    });
-    const pengajuanCount = pengajuanReqs.length;
-
-    // 2. MENUNGGU TRANSFER (Approved by Manager & Finance, antrean transfer Finance)
-    const pendingTransferReqs = monitoringReqs.filter(r => isPendingTransferRequest(r, histories, usageItems));
-    const menungguTransferCount = pendingTransferReqs.length;
-    const menungguTransferNominal = pendingTransferReqs.reduce((sum, r) => {
-      if (r.status === RequestStatus.PENDING_TALANGAN_TRANSFER) {
-        const reqItems = usageItems.filter(i => i.requestId === r.id && i.statusManager === ItemStatus.APPROVED);
-        const approvedUsage = reqItems.reduce((iSum, item) => iSum + (item.nominal || 0), 0);
-        return sum + (approvedUsage || r.adminActionAmount || r.managerActionAmount || r.jumlahPengajuan || 0);
-      }
-      const finApproved = getFinanceApprovedAmount(r, histories, usageItems);
-      if (isOpBiasaRequest(r) && r.status !== RequestStatus.CLOSED && getTransferBertahap(r, histories, usageItems)) {
-        const remainingToTransfer = Math.max(0, finApproved - (r.adminActionAmount || 0));
-        return sum + (remainingToTransfer || finApproved);
-      }
-      const finHistories = histories.filter(h => (h.requestUid === r.id || h.itemUid === r.id) && h.actionType === 'APPROVAL_FINANCE');
-      let finApprovedNominal = 0;
-      if (finHistories.length > 0) {
-        finApprovedNominal = finHistories.reduce((s, h) => s + (h.nominal || 0), 0);
-      }
-      const amt = r.adminActionAmount > 0 ? r.adminActionAmount : (finApprovedNominal > 0 ? finApprovedNominal : (r.managerActionAmount > 0 ? r.managerActionAmount : (r.jumlahPengajuan || 0)));
-      return sum + amt;
-    }, 0);
-
-    // 3. PROSES LAPORAN (Transferred, Transfer Bertahap, Reporting, Review Manager, Review Admin)
-    const prosesLaporanCount = monitoringReqs.filter(r => 
-      [RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)
-    ).length;
-
-    // 4. CLOSED (Closed requests excluding BBMDS)
-    const closedCount = monitoringReqs.filter(r => r.status === RequestStatus.CLOSED && !isBbmRequest(r)).length;
-
-    // Financial totals for executive summary (Monitoring) - aligned with Role Finance formulas
-    const isBbmUsageItem = (item: UsageReportItem) => item.requestId.startsWith('BBMDS') || item.requestId.startsWith('BBM_DurenSawit') || item.requestId.startsWith('TFDS');
-
-    const totalPengajuan = activeReqs.reduce((sum, r) => sum + (r.jumlahPengajuan || 0), 0);
-    const totalTransferred = requests
-      .filter(r => !isBbmRequest(r))
-      .reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
-    const totalClosed = usageItems
-      .filter(item => item.statusManager === ItemStatus.APPROVED && item.statusAdmin === ItemStatus.APPROVED && !isBbmUsageItem(item))
-      .reduce((sum, item) => sum + (item.nominal || 0), 0);
-
-    const parseDateToYYYYMMDD = (dateInput: string | Date | undefined): string => {
-      if (!dateInput) return '';
-      const str = String(dateInput).trim();
-      if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-        return str.substring(0, 10);
-      }
-      if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(str)) {
-        const parts = str.split('/');
-        const d = parts[0].padStart(2, '0');
-        const m = parts[1].padStart(2, '0');
-        const y = parts[2].substring(0, 4);
-        return `${y}-${m}-${d}`;
-      }
-      const d = new Date(str);
-      if (!isNaN(d.getTime())) {
-        const year = d.getFullYear();
-        const month = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}`;
-      }
-      return '';
-    };
-
-    const getTodayStr = () => {
-      try {
-        const jakartaStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
-        if (/^\d{4}-\d{2}-\d{2}$/.test(jakartaStr)) return jakartaStr;
-      } catch (e) {}
-      const d = new Date();
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      return `${year}-${month}-${day}`;
-    };
-    const todayStr = getTodayStr();
-
-    const transferredReqsList = requests.filter(r => 
-      !isBbmRequest(r) && 
-      r.status !== RequestStatus.CANCELLED &&
-      (r.adminActionAmount || 0) > 0
-    );
-
-    const todayTransferredReqs = transferredReqsList.filter(r => {
-      const dateAdminActionTime = parseDateToYYYYMMDD(r.adminActionTime);
-      const datePemakaian = parseDateToYYYYMMDD(r.tanggalPemakaian);
-      const dateCreatedAt = parseDateToYYYYMMDD(r.createdAt);
-      const dateTimestamp = parseDateToYYYYMMDD(r.timestamp);
-      if (dateAdminActionTime) {
-        return dateAdminActionTime === todayStr;
-      }
-      return datePemakaian === todayStr || dateCreatedAt === todayStr || dateTimestamp === todayStr;
-    });
-    const todayTransferredCount = todayTransferredReqs.length;
-    const todayTransferredTotal = todayTransferredReqs.reduce((sum, r) => sum + (r.adminActionAmount || 0), 0);
+    const {
+      pendingBudgetReview,
+      pendingReportReview,
+      totalApprovalTasks,
+      pengajuanCount,
+      menungguTransferCount,
+      menungguTransferNominal,
+      prosesLaporanCount,
+      closedCount,
+      totalPengajuan,
+      totalTransferred,
+      totalClosed,
+      todayTransferredCount,
+      todayTransferredTotal,
+      todayAllActivitiesCount
+    } = direkturDashboardStats!;
 
     return (
       <div className="space-y-4">
@@ -3954,43 +4274,28 @@ User Agent: ${navigator.userAgent}`;
             )}
 
             {/* Kartu Activity User - DIREKTUR */}
-            {(() => {
-              const getTodayStr = () => {
-                const d = new Date();
-                const year = d.getFullYear();
-                const month = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                return `${year}-${month}-${day}`;
-              };
-              const todayStr = getTodayStr();
-
-              const todayAllActivitiesCount = activities.filter(act => act.tanggal === todayStr).length;
-
-              return (
-                <div 
-                  onClick={onOpenActivities}
-                  className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-sm hover:border-purple-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between bg-gradient-to-r from-purple-50/40 via-white to-indigo-50/30"
-                  id="direktur-activity-card"
-                >
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-[10px] font-bold text-purple-700 tracking-widest uppercase">ACTIVITY USER (SEMUA USER)</p>
-                      <span className="text-[9px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
-                        Eksekutif
-                      </span>
-                    </div>
-                    <div className="flex items-baseline gap-1 mt-2">
-                      <span className="text-3xl font-display font-bold text-slate-900">{todayAllActivitiesCount}</span>
-                      <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
-                    </div>
-                    <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat log kegiatan seluruh user (Filter Divisi, User &amp; Tanggal)</p>
-                  </div>
-                  <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 shadow-sm">
-                    <CalendarCheck className="w-6 h-6" />
-                  </div>
+            <div 
+              onClick={onOpenActivities}
+              className="bg-white border border-purple-200/80 rounded-2xl p-5 shadow-sm hover:border-purple-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between bg-gradient-to-r from-purple-50/40 via-white to-indigo-50/30"
+              id="direktur-activity-card"
+            >
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[10px] font-bold text-purple-700 tracking-widest uppercase">ACTIVITY USER (SEMUA USER)</p>
+                  <span className="text-[9px] font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                    Eksekutif
+                  </span>
                 </div>
-              );
-            })()}
+                <div className="flex items-baseline gap-1 mt-2">
+                  <span className="text-3xl font-display font-bold text-slate-900">{todayAllActivitiesCount}</span>
+                  <span className="text-xs text-slate-500 font-medium">Log Kegiatan Hari Ini</span>
+                </div>
+                <p className="text-[9px] text-slate-400 mt-1 font-medium">Klik untuk melihat log kegiatan seluruh user (Filter Divisi, User &amp; Tanggal)</p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0 shadow-sm">
+                <CalendarCheck className="w-6 h-6" />
+              </div>
+            </div>
 
             {/* Card: Monitoring UID User Murni - DIREKTUR */}
             <div 
@@ -4050,15 +4355,19 @@ User Agent: ${navigator.userAgent}`;
         )}
 
         {/* Modal Monitoring UID User Murni (Direktur) */}
-        <UserUidMonitoringModal
-          isOpen={isUserUidMonitoringModalOpen}
-          onClose={() => setIsUserUidMonitoringModalOpen(false)}
-          profiles={profiles || []}
-          requests={requests}
-          usageItems={usageItems}
-          currentRole={role}
-          currentUserEmail={email}
-        />
+        {isUserUidMonitoringModalOpen && (
+          <Suspense fallback={null}>
+            <UserUidMonitoringModal
+              isOpen={isUserUidMonitoringModalOpen}
+              onClose={() => setIsUserUidMonitoringModalOpen(false)}
+              profiles={profiles || []}
+              requests={requests}
+              usageItems={usageItems}
+              currentRole={role}
+              currentUserEmail={email}
+            />
+          </Suspense>
+        )}
       </div>
     );
   }

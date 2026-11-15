@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
@@ -73,38 +73,47 @@ import {
   LOGGED_IN_USER_KEY
 } from './lib/sessionClient';
 
-// Components
+// Components (eagerly loaded for first paint & dashboard)
 import { Header } from './components/Header';
-import { ProfileSetup } from './components/ProfileSetup';
-import { ProfileSettings } from './components/ProfileSettings';
 import { DashboardStats } from './components/DashboardStats';
 import { ZoomableImage } from './components/ZoomableImage';
-import { BudgetRequestForm } from './components/BudgetRequestForm';
-import { UsageReportForm } from './components/UsageReportForm';
 import { FormProgressOverlay } from './components/FormProgressOverlay';
-import { ReviewBudgetModal } from './components/ReviewBudgetModal';
-import { TransferModal } from './components/TransferModal';
-import { ReviewReportModal } from './components/ReviewReportModal';
 import { AppLoginForm } from './components/AppLoginForm';
-import { AdjustmentPanel } from './components/AdjustmentPanel';
-import { TransferListPanel } from './components/TransferListPanel';
-import { ActivityLogView } from './components/ActivityLogView';
-import { AdminPushTestCard } from './components/AdminPushTestCard';
-import { BbmRefillModal } from './components/BbmRefillModal';
-import { BbmListModal } from './components/BbmListModal';
-import { FinancialReportsModal } from './components/FinancialReportsModal';
-import { ItemHistoryModal } from './components/ItemHistoryModal';
-import { UserDashboardPreviewModal } from './components/UserDashboardPreviewModal';
 import { PwaInstallBanner } from './components/PwaInstallBanner';
-import { FinanceSharedReceiptModal } from './components/FinanceSharedReceiptModal';
 import { OP_TimeLine } from './components/OP_TimeLine';
 import { SharedReceiptRecord, getLatestSharedReceipt, deleteSharedReceipt, clearAllSharedReceipts } from './lib/sharedReceiptStorage';
-import { DevicePermissionsModal } from './components/DevicePermissionsModal';
-import { ManualActivitySubmitData } from './components/AdminManualActivityModal';
-import { AdminResponseTimeModal } from './components/AdminResponseTimeModal';
-import { UserUidMonitoringModal, checkUserMurniSubmissionStatus } from './components/UserUidMonitoringModal';
+import type { ManualActivitySubmitData } from './components/AdminManualActivityModal';
+import { checkUserMurniSubmissionStatus } from './lib/uidMonitoringUtils';
 import { checkAllDevicePermissions, DevicePermissionsStatus } from './lib/devicePermissions';
 import { subscribeToPushNotifications, triggerPushNotification, parsePushSubscriptions } from './lib/pushNotifications';
+
+// Lazy-loaded heavy views & conditional modals (Point 1: Code Splitting)
+const ProfileSetup = lazy(() => import('./components/ProfileSetup').then(m => ({ default: m.ProfileSetup })));
+const ProfileSettings = lazy(() => import('./components/ProfileSettings').then(m => ({ default: m.ProfileSettings })));
+const BudgetRequestForm = lazy(() => import('./components/BudgetRequestForm').then(m => ({ default: m.BudgetRequestForm })));
+const UsageReportForm = lazy(() => import('./components/UsageReportForm').then(m => ({ default: m.UsageReportForm })));
+const ReviewBudgetModal = lazy(() => import('./components/ReviewBudgetModal').then(m => ({ default: m.ReviewBudgetModal })));
+const TransferModal = lazy(() => import('./components/TransferModal').then(m => ({ default: m.TransferModal })));
+const ReviewReportModal = lazy(() => import('./components/ReviewReportModal').then(m => ({ default: m.ReviewReportModal })));
+const AdjustmentPanel = lazy(() => import('./components/AdjustmentPanel').then(m => ({ default: m.AdjustmentPanel })));
+const TransferListPanel = lazy(() => import('./components/TransferListPanel').then(m => ({ default: m.TransferListPanel })));
+const ActivityLogView = lazy(() => import('./components/ActivityLogView').then(m => ({ default: m.ActivityLogView })));
+const AdminPushTestCard = lazy(() => import('./components/AdminPushTestCard').then(m => ({ default: m.AdminPushTestCard })));
+const BbmRefillModal = lazy(() => import('./components/BbmRefillModal').then(m => ({ default: m.BbmRefillModal })));
+const BbmListModal = lazy(() => import('./components/BbmListModal').then(m => ({ default: m.BbmListModal })));
+const FinancialReportsModal = lazy(() => import('./components/FinancialReportsModal').then(m => ({ default: m.FinancialReportsModal })));
+const ItemHistoryModal = lazy(() => import('./components/ItemHistoryModal').then(m => ({ default: m.ItemHistoryModal })));
+const UserDashboardPreviewModal = lazy(() => import('./components/UserDashboardPreviewModal').then(m => ({ default: m.UserDashboardPreviewModal })));
+const FinanceSharedReceiptModal = lazy(() => import('./components/FinanceSharedReceiptModal').then(m => ({ default: m.FinanceSharedReceiptModal })));
+const DevicePermissionsModal = lazy(() => import('./components/DevicePermissionsModal').then(m => ({ default: m.DevicePermissionsModal })));
+const AdminResponseTimeModal = lazy(() => import('./components/AdminResponseTimeModal').then(m => ({ default: m.AdminResponseTimeModal })));
+const UserUidMonitoringModal = lazy(() => import('./components/UserUidMonitoringModal').then(m => ({ default: m.UserUidMonitoringModal })));
+
+const ViewSuspenseFallback = (
+  <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-xs text-slate-400 animate-pulse">
+    Memuat tampilan...
+  </div>
+);
 
 // Icons
 import {
@@ -113,7 +122,7 @@ import {
   Briefcase, MessageSquare, ExternalLink, CheckSquare, XCircle, ArrowRight, Edit2,
   Database, ArrowLeft, ArrowRightLeft, Paperclip, Filter, Fuel, X,
   Settings, LogOut, ShieldCheck, History, UserCheck, ShieldAlert, Share2, UploadCloud,
-  ChevronDown, ChevronUp, Smartphone
+  ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Smartphone
 } from 'lucide-react';
 
 export const isOpBiasaRequest = (req: BudgetRequest) => {
@@ -744,6 +753,24 @@ export default function App() {
   const [closedDivisiFilter, setClosedDivisiFilter] = useState<string>('ALL');
   const [closedStartDateFilter, setClosedStartDateFilter] = useState<string>('');
   const [closedEndDateFilter, setClosedEndDateFilter] = useState<string>('');
+  const [closedPage, setClosedPage] = useState<number>(1);
+  const [closedPageSize, setClosedPageSize] = useState<number>(30);
+  const closedListTopRef = useRef<HTMLDivElement | null>(null);
+
+  // Reset pagination to page 1 whenever filters or role/tab change
+  useEffect(() => {
+    setClosedPage(1);
+  }, [
+    statusFilter,
+    searchQuery,
+    closedUserFilter,
+    closedDivisiFilter,
+    closedStartDateFilter,
+    closedEndDateFilter,
+    activeRole,
+    dashboardTab,
+    closedPageSize
+  ]);
 
   // PWA Share Target states for received receipts
   const [pendingSharedRecord, setPendingSharedRecord] = useState<SharedReceiptRecord | null>(null);
@@ -1271,6 +1298,16 @@ export default function App() {
         itemReviewHistories: allHistories
       } = await fetchAllDatabaseTables(accessToken, sheetId);
 
+      // Pre-index item nominal sums by requestId in O(I) single pass
+      const itemNominalSumByReqId = new Map<string, number>();
+      for (const item of allItems) {
+        if (!item.requestId) continue;
+        itemNominalSumByReqId.set(
+          item.requestId,
+          (itemNominalSumByReqId.get(item.requestId) || 0) + (Number(item.nominal) || 0)
+        );
+      }
+
       // Synchronize Dana Talangan requests' JumlahPengajuan with total nominal of their items
       const synchronizedReqs = allReqs.map(req => {
         const isTalangan = req.id.startsWith('OPT-') || 
@@ -1280,12 +1317,9 @@ export default function App() {
           req.keterangan.startsWith('[DANA TALANGAN]');
         
         if (isTalangan) {
-          const reqItems = allItems.filter(i => i.requestId === req.id);
-          if (reqItems.length > 0) {
-            const sumNominal = reqItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
-            if (req.jumlahPengajuan !== sumNominal) {
-              return { ...req, jumlahPengajuan: sumNominal };
-            }
+          const sumNominal = itemNominalSumByReqId.get(req.id);
+          if (sumNominal !== undefined && req.jumlahPengajuan !== sumNominal) {
+            return { ...req, jumlahPengajuan: sumNominal };
           }
         }
         return req;
@@ -2140,7 +2174,6 @@ export default function App() {
         return next;
       });
       setActiveView('dashboard');
-      await handleManualRefresh();
     }
   };
 
@@ -2381,7 +2414,7 @@ export default function App() {
       keterangan: newRequest.keterangan
     };
 
-    const success = await runGoogleAction(
+    const savedResult = await runGoogleAction(
       async () => {
         // If there is an item file to upload for Dana Talangan first item
         if (itemFile && driveFolderId) {
@@ -2403,59 +2436,78 @@ export default function App() {
 
         // Atomically store first item in Laporan sheet for Dana Talangan
         if (finalReportItem && !isExisting) {
+          finalReportItem = { ...finalReportItem, requestId: newRequest.id };
           await createUsageItem(token, spreadsheetId, finalReportItem);
         }
 
+        historyLog.itemUid = newRequest.id;
+        historyLog.requestUid = newRequest.id;
         await createItemReviewHistory(token, spreadsheetId, historyLog);
+
+        return { savedRequest: { ...newRequest }, savedItem: finalReportItem };
       },
       isExisting 
         ? 'Gagal mengupdate revisi pengajuan.' 
         : (isReqTalangan ? 'Gagal menyimpan Pengajuan & Item Dana Talangan.' : 'Gagal menambahkan pengajuan.')
     );
 
-    if (success !== null) {
-      setItemReviewHistories(prev => [historyLog, ...prev]);
+    if (savedResult !== null) {
+      const { savedRequest, savedItem } = savedResult;
+      setItemReviewHistories(prev => {
+        const next = [historyLog, ...prev];
+        safeSetJson('op_app_cached_item_review_histories', next, 50);
+        return next;
+      });
+      setRequests(prev => {
+        const next = isExisting
+          ? prev.map(r => (r.id === savedRequest.id ? savedRequest : r))
+          : [savedRequest, ...prev.filter(r => r.id !== savedRequest.id)].sort((a, b) => b.id.localeCompare(a.id));
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
       setEditingRequest(null);
-      if (finalReportItem) {
-        setUsageItems(prev => [...prev, finalReportItem!]);
+      if (savedItem) {
+        setUsageItems(prev => {
+          const next = [...prev.filter(i => i.id !== savedItem.id), savedItem];
+          safeSetJson('op_app_cached_usage_items', next, 150);
+          return next;
+        });
       }
       if (isReqTalangan) {
-        setSelectedRequest(newRequest);
+        setSelectedRequest(savedRequest);
         setActiveView('report-usage');
       } else {
         setActiveView('dashboard');
       }
 
       // Trigger Web Push Notification for submission or revision (BBM Duren Sawit excluded)
-      if (!isBbmDurenSawitRequest(newRequest)) {
-        const requesterName = userProfile?.nama || userProfile?.email || newRequest.userEmail;
-        const siteLabel = getSiteLabel(newRequest.siteId);
-        const nominalStr = formatIDRValue(newRequest.jumlahPengajuan);
+      if (!isBbmDurenSawitRequest(savedRequest)) {
+        const requesterName = userProfile?.nama || userProfile?.email || savedRequest.userEmail;
+        const siteLabel = getSiteLabel(savedRequest.siteId);
+        const nominalStr = formatIDRValue(savedRequest.jumlahPengajuan);
         
         // Determine supervisor/approver (Direktur if created by Manager/Finance, otherwise managerEmail)
         const isManagerOrFinanceRequester = activeRole === Role.MANAGER || activeRole === Role.FINANCE || userProfile?.role === Role.MANAGER || userProfile?.role === Role.FINANCE;
-        const targetApproverEmail = newRequest.managerEmail || (isManagerOrFinanceRequester ? profiles.find(p => p.role === Role.DIREKTUR)?.email : profiles.find(p => p.role === Role.MANAGER)?.email);
+        const targetApproverEmail = savedRequest.managerEmail || (isManagerOrFinanceRequester ? profiles.find(p => p.role === Role.DIREKTUR)?.email : profiles.find(p => p.role === Role.MANAGER)?.email);
 
         if (targetApproverEmail) {
           if (isExisting) {
             sendPushToEmail(
               targetApproverEmail,
-              `Revisi Pengajuan: UID ${newRequest.id}`,
+              `Revisi Pengajuan: UID ${savedRequest.id}`,
               `Pemohon ${requesterName} telah mengirim perbaikan pengajuan anggaran (${siteLabel}) sebesar ${nominalStr}.`,
-              newRequest
+              savedRequest
             ).catch(console.warn);
           } else {
             sendPushToEmail(
               targetApproverEmail,
-              `Pengajuan Baru: UID ${newRequest.id}`,
+              `Pengajuan Baru: UID ${savedRequest.id}`,
               `Pengajuan anggaran baru dari ${requesterName} (${siteLabel}) sebesar ${nominalStr} menunggu persetujuan Anda.`,
-              newRequest
+              savedRequest
             ).catch(console.warn);
           }
         }
       }
-
-      await handleManualRefresh();
     }
   };
 
@@ -2470,7 +2522,7 @@ export default function App() {
   ) => {
     if (!token || !spreadsheetId) return;
 
-    const success = await runGoogleAction(
+    const createdResult = await runGoogleAction(
       async () => {
         let finalBuktiUrl = '';
         let finalBuktiFileId = '';
@@ -2530,12 +2582,26 @@ export default function App() {
         };
 
         await createBudgetRequest(token, spreadsheetId, newRequest);
+        historyLog.itemUid = newRequest.id;
+        historyLog.requestUid = newRequest.id;
         await createItemReviewHistory(token, spreadsheetId, historyLog);
+        return { newRequest: { ...newRequest }, historyLog };
       },
       'Gagal membuat transaksi Adjustment.'
     );
 
-    if (success !== null) {
+    if (createdResult !== null) {
+      setRequests(prev => {
+        const next = [createdResult.newRequest, ...prev.filter(r => r.id !== createdResult.newRequest.id)].sort((a, b) => b.id.localeCompare(a.id));
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
+      setItemReviewHistories(prev => {
+        const next = [createdResult.historyLog, ...prev];
+        safeSetJson('op_app_cached_item_review_histories', next, 50);
+        return next;
+      });
+
       if (sharedFilePrefill?.recordId) {
         await deleteSharedReceipt(sharedFilePrefill.recordId);
       }
@@ -2553,7 +2619,6 @@ export default function App() {
       ).catch(console.warn);
 
       setActiveView('dashboard');
-      await handleManualRefresh();
     }
   };
 
@@ -2703,8 +2768,16 @@ export default function App() {
       'Gagal menyimpan persetujuan anggaran.'
     );
     if (success !== null) {
-      setItemReviewHistories(prev => [historyLog, ...prev]);
-      setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
+      setItemReviewHistories(prev => {
+        const next = [historyLog, ...prev];
+        safeSetJson('op_app_cached_item_review_histories', next, 50);
+        return next;
+      });
+      setRequests(prev => {
+        const next = prev.map(r => r.id === updated.id ? updated : r);
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
 
       // Trigger Web Push Notification to Applicant & Finance (BBM Duren Sawit is excluded)
       if (!isBbmDurenSawitRequest(reviewBudgetReq)) {
@@ -2740,7 +2813,6 @@ export default function App() {
       }
 
       setReviewBudgetReq(null);
-      await handleManualRefresh();
     }
   };
 
@@ -2783,8 +2855,16 @@ export default function App() {
       'Gagal menolak anggaran.'
     );
     if (success !== null) {
-      setItemReviewHistories(prev => [historyLog, ...prev]);
-      setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
+      setItemReviewHistories(prev => {
+        const next = [historyLog, ...prev];
+        safeSetJson('op_app_cached_item_review_histories', next, 50);
+        return next;
+      });
+      setRequests(prev => {
+        const next = prev.map(r => r.id === updated.id ? updated : r);
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
 
       // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
       if (reviewBudgetReq.userEmail && !isBbmDurenSawitRequest(reviewBudgetReq)) {
@@ -2803,7 +2883,6 @@ export default function App() {
       }
 
       setReviewBudgetReq(null);
-      await handleManualRefresh();
     }
   };
 
@@ -2908,7 +2987,16 @@ export default function App() {
       }
       await clearAllSharedReceipts();
       setSharedFilePrefill(null);
-      setItemReviewHistories(prev => [historyLog, ...prev]);
+      setItemReviewHistories(prev => {
+        const next = [historyLog, ...prev];
+        safeSetJson('op_app_cached_item_review_histories', next, 50);
+        return next;
+      });
+      setRequests(prev => {
+        const next = prev.map(r => r.id === updated.id ? updated : r);
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
 
       // Trigger Web Push Notification to Applicant and Manager (BBM Duren Sawit is excluded)
       if (!isBbmDurenSawitRequest(transferReq)) {
@@ -2941,7 +3029,6 @@ export default function App() {
       }
 
       setTransferReq(null);
-      await handleManualRefresh();
     }
   };
 
@@ -2984,7 +3071,16 @@ export default function App() {
       }
       await clearAllSharedReceipts();
       setSharedFilePrefill(null);
-      setItemReviewHistories(prev => [historyLog, ...prev]);
+      setItemReviewHistories(prev => {
+        const next = [historyLog, ...prev];
+        safeSetJson('op_app_cached_item_review_histories', next, 50);
+        return next;
+      });
+      setRequests(prev => {
+        const next = prev.map(r => r.id === updated.id ? updated : r);
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
 
       // Trigger Web Push Notification to Applicant and Manager (BBM Duren Sawit is excluded)
       if (!isBbmDurenSawitRequest(transferReq)) {
@@ -3016,7 +3112,6 @@ export default function App() {
       }
 
       setTransferReq(null);
-      await handleManualRefresh();
     }
   };
 
@@ -3098,8 +3193,19 @@ export default function App() {
     );
 
     if (success !== null) {
-      setItemReviewHistories(prev => [createHistoryLog, ...prev]);
-      await handleManualRefresh();
+      setItemReviewHistories(prev => {
+        const next = [createHistoryLog, ...prev];
+        safeSetJson('op_app_cached_item_review_histories', next, 50);
+        return next;
+      });
+      safeSetJson('op_app_cached_usage_items', updatedUsageItems, 150);
+      if (updatedReq) {
+        setRequests(prev => {
+          const next = prev.map(r => r.id === updatedReq!.id ? updatedReq! : r);
+          safeSetJson('op_app_cached_requests', next, 100);
+          return next;
+        });
+      }
     }
   };
 
@@ -3180,8 +3286,19 @@ export default function App() {
     );
 
     if (success !== null) {
-      setItemReviewHistories(prev => [editHistoryLog, ...prev]);
-      await handleManualRefresh();
+      setItemReviewHistories(prev => {
+        const next = [editHistoryLog, ...prev];
+        safeSetJson('op_app_cached_item_review_histories', next, 50);
+        return next;
+      });
+      safeSetJson('op_app_cached_usage_items', updatedUsageItems, 150);
+      if (updatedReq) {
+        setRequests(prev => {
+          const next = prev.map(r => r.id === updatedReq!.id ? updatedReq! : r);
+          safeSetJson('op_app_cached_requests', next, 100);
+          return next;
+        });
+      }
     }
   };
 
@@ -3219,9 +3336,7 @@ export default function App() {
         'Gagal menghapus item laporan dan UID terkait.'
       );
 
-      if (success !== null) {
-        await handleManualRefresh();
-      } else {
+      if (success === null) {
         throw new Error('Gagal menghapus item laporan dan UID terkait dari database.');
       }
       return;
@@ -3264,7 +3379,14 @@ export default function App() {
       'Gagal menghapus item penggunaan.'
     );
     if (success !== null) {
-      await handleManualRefresh();
+      safeSetJson('op_app_cached_usage_items', updatedUsageItems, 150);
+      if (updatedReq) {
+        setRequests(prev => {
+          const next = prev.map(r => r.id === updatedReq!.id ? updatedReq! : r);
+          safeSetJson('op_app_cached_requests', next, 100);
+          return next;
+        });
+      }
     } else {
       throw new Error('Gagal menghapus item penggunaan dari database.');
     }
@@ -3281,6 +3403,12 @@ export default function App() {
       'Gagal mengirim laporan penggunaan.'
     );
     if (success !== null) {
+      setRequests(prev => {
+        const next = prev.map(r => r.id === updatedReq.id ? updatedReq : r);
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
+
       // Trigger Web Push Notification to Manager / Direct Supervisor
       if (!isBbmDurenSawitRequest(req)) {
         const isManagerOrFinanceRequester = activeRole === Role.MANAGER || activeRole === Role.FINANCE || userProfile?.role === Role.MANAGER || userProfile?.role === Role.FINANCE;
@@ -3300,7 +3428,6 @@ export default function App() {
 
       setSelectedRequest(null);
       setActiveView('dashboard');
-      await handleManualRefresh();
     }
   };
 
@@ -3596,7 +3723,8 @@ export default function App() {
     const historyLogs: ItemReviewHistory[] = [];
     const targetItems = usageItems.filter(i => i.requestId === reqToUse.id);
 
-    const success = await runGoogleAction(async () => {
+    const reviewResult = await runGoogleAction(async () => {
+      const updatedItemsMap = new Map<string, UsageReportItem>();
       for (const dec of itemDecisions) {
         const original = targetItems.find(i => i.id === dec.itemId);
         if (original) {
@@ -3609,6 +3737,7 @@ export default function App() {
             updatedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
           };
           await updateUsageItem(currentToken, currentSheetId, updatedItem);
+          updatedItemsMap.set(updatedItem.id, updatedItem);
 
           const actionType = isManager
             ? (dec.status === ItemStatus.APPROVED 
@@ -3675,11 +3804,29 @@ export default function App() {
         managerComment: updatedManagerComment
       };
       await updateBudgetRequest(currentToken, currentSheetId, updatedReq);
+      return { updatedItemsMap, updatedReq };
     }, 'Gagal memproses review penggunaan.');
 
-    if (success !== null) {
+    if (reviewResult !== null) {
+      const { updatedItemsMap, updatedReq } = reviewResult;
+      if (updatedItemsMap.size > 0) {
+        setUsageItems(prev => {
+          const next = prev.map(item => updatedItemsMap.get(item.id) || item);
+          safeSetJson('op_app_cached_usage_items', next, 150);
+          return next;
+        });
+      }
+      setRequests(prev => {
+        const next = prev.map(r => r.id === updatedReq.id ? updatedReq : r);
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
       if (historyLogs.length > 0) {
-        setItemReviewHistories(prev => [...historyLogs, ...prev]);
+        setItemReviewHistories(prev => {
+          const next = [...historyLogs, ...prev];
+          safeSetJson('op_app_cached_item_review_histories', next, 50);
+          return next;
+        });
       }
       setReviewReportReq(null);
       setSelectedRequest(null);
@@ -3722,14 +3869,12 @@ export default function App() {
         }
       }
 
-      await handleManualRefresh();
-
       // Check if Finance approved all items for standard request => open dedicated Form Closing modal
       const allApprovedByFinance = itemDecisions.length > 0 && itemDecisions.every(d => d.status === ItemStatus.APPROVED);
       const isTalangan = reqToUse.id.startsWith('OPT-') || reqToUse.id.startsWith('BBMDS') || reqToUse.id.startsWith('BBM_DurenSawit') || reqToUse.tipePengajuan === 'DANA_TALANGAN' || reqToUse.keterangan.startsWith('[DANA TALANGAN]');
 
       if (activeRole === Role.FINANCE && allApprovedByFinance && !isTalangan && nextRequestStatus !== RequestStatus.CLOSED) {
-        setClosingConfirmReq(reqToUse);
+        setClosingConfirmReq(updatedReq);
       }
     }
   };
@@ -3747,6 +3892,15 @@ export default function App() {
       'Gagal menutup laporan.'
     );
     if (success !== null) {
+      setRequests(prev => {
+        const next = prev.map(r => r.id === updatedReq.id ? updatedReq : r);
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
+      if (selectedRequest?.id === updatedReq.id) {
+        setSelectedRequest(updatedReq);
+      }
+
       // Trigger Web Push Notification to Applicant
       if (!isBbmDurenSawitRequest(req) && req.userEmail) {
         const siteLabel = getSiteLabel(req.siteId);
@@ -3757,8 +3911,6 @@ export default function App() {
           req
         ).catch(console.warn);
       }
-
-      await handleManualRefresh();
     }
   };
 
@@ -3792,7 +3944,6 @@ export default function App() {
         }
       } catch {}
 
-      await handleManualRefresh();
       return true;
     }
     return false;
@@ -3837,7 +3988,14 @@ export default function App() {
       'Gagal memperbarui data transfer.'
     );
     if (success !== null) {
-      await handleManualRefresh();
+      setRequests(prev => {
+        const next = prev.map(r => r.id === updatedReq.id ? updatedReq : r);
+        safeSetJson('op_app_cached_requests', next, 100);
+        return next;
+      });
+      if (selectedRequest?.id === updatedReq.id) {
+        setSelectedRequest(updatedReq);
+      }
     }
   };
 
@@ -3883,20 +4041,53 @@ export default function App() {
     return isNaN(parsed) ? null : new Date(parsed);
   };
 
-  const getClosingDate = (req: BudgetRequest): Date | null => {
-    const reqItems = usageItems.filter(i => i.requestId === req.id);
+  // O(1) indexed lookup maps to eliminate O(N*M) linear scans across large request/laporan lists
+  const profilesByEmailMap = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    for (const p of profiles) {
+      const rawKey = (p.email || '').toLowerCase();
+      if (rawKey && !map.has(rawKey)) {
+        map.set(rawKey, p);
+      }
+      const trimmedKey = (p.email || '').trim().toLowerCase();
+      if (trimmedKey && !map.has(trimmedKey)) {
+        map.set(trimmedKey, p);
+      }
+    }
+    return map;
+  }, [profiles]);
+
+  const usageItemsByRequestIdMap = useMemo(() => {
+    const map = new Map<string, UsageReportItem[]>();
+    for (const item of usageItems) {
+      const existing = map.get(item.requestId);
+      if (existing) {
+        existing.push(item);
+      } else {
+        map.set(item.requestId, [item]);
+      }
+    }
+    return map;
+  }, [usageItems]);
+
+  const getClosingDate = useCallback((req: BudgetRequest): Date | null => {
+    const reqItems = usageItemsByRequestIdMap.get(req.id) || [];
     if (reqItems.length > 0) {
-      const dates = reqItems
-        .map(i => i.updatedAt)
-        .filter(Boolean)
-        .map(d => parseIndonesianDate(d))
-        .filter((d): d is Date => d !== null);
-      if (dates.length > 0) {
-        return new Date(Math.max(...dates.map(d => d.getTime())));
+      let maxTime = -Infinity;
+      for (const item of reqItems) {
+        if (!item.updatedAt) continue;
+        const d = parseIndonesianDate(item.updatedAt);
+        if (d !== null) {
+          const t = d.getTime();
+          if (t > maxTime) maxTime = t;
+        }
+      }
+      if (maxTime !== -Infinity) {
+        return new Date(maxTime);
       }
     }
     return parseIndonesianDate(req.createdAt);
-  };
+  }, [usageItemsByRequestIdMap]);
 
   const getRequestCreatedDate = (req: BudgetRequest): Date | null => {
     const dateStr = req.timestamp || req.createdAt;
@@ -3971,193 +4162,263 @@ export default function App() {
     }
   };
 
-  // Filtering Logic for requests list on Dashboard
-  const filteredRequests = requests.filter((r) => {
-    // Exclude CANCELLED requests from all main views
-    if (r.status === RequestStatus.CANCELLED) return false;
+  // Filtering Logic for requests list on Dashboard (memoized with O(1) lookups)
+  const filteredRequests = useMemo(() => {
+    const normalizedSearchQuery = searchQuery ? searchQuery.toLowerCase() : '';
+    const userEmailLower = userProfile?.email?.toLowerCase() || '';
+    const userEmailTrimmedLower = userProfile?.email?.trim().toLowerCase() || '';
 
-    // Role based scoping
-    if (activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && dashboardTab === 'SUBMISSION')) {
-      // User only sees their own requests in submission mode
-      if (r.userEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
-    } else if (activeRole === Role.MANAGER) {
-      // Manager sees requests assigned to them
-      if (userProfile?.email && r.managerEmail.toLowerCase() !== userProfile?.email?.toLowerCase()) return false;
-    }
-    // DIREKTUR, FINANCE & ADMINISTRATOR see all requests across the organization!
-    // Finance sees everything in APPROVAL mode!
-    if (activeRole === Role.FINANCE && dashboardTab !== 'SUBMISSION') {
-      if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && statusFilter === 'REPORTING') {
-        const reqItems = usageItems.filter(i => i.requestId === r.id);
-        if (reqItems.length === 0 || !reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
-          return false;
-        }
-      }
-    }
-
-    // Text search query
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const matchId = r.id.toLowerCase().includes(query);
-      const matchDesc = r.keterangan.toLowerCase().includes(query);
-      const matchSite = r.siteId.toLowerCase().includes(query);
-      const matchUser = r.userEmail.toLowerCase().includes(query);
-
-      const requesterProfile = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
-      const matchName = requesterProfile?.nama ? requesterProfile.nama.toLowerCase().includes(query) : false;
-      const matchUserId = requesterProfile?.userId ? requesterProfile.userId.toLowerCase().includes(query) : false;
-      const matchDivisi = requesterProfile?.divisi ? requesterProfile.divisi.toLowerCase().includes(query) : false;
-
-      if (!matchId && !matchDesc && !matchSite && !matchUser && !matchName && !matchUserId && !matchDivisi) return false;
-    }
-
-    // DIREKTUR Role UID Filter: APPROVAL group = direct subordinates (MANAGER & FINANCE), MONITORING group = all other UIDs
+    const direkturEmails = new Set<string>([
+      'margono@depotel.com',
+      'direktur@company.com'
+    ]);
     if (activeRole === Role.DIREKTUR) {
-      const direkturEmails = new Set<string>([
-        'margono@depotel.com',
-        'direktur@company.com'
-      ]);
-      profiles
-        .filter(p => p.role === Role.DIREKTUR)
-        .forEach(p => {
-          if (p.email) direkturEmails.add(p.email.trim().toLowerCase());
-        });
-      if (userProfile?.email) direkturEmails.add(userProfile.email.trim().toLowerCase());
-
-      const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
-      const requesterProfile = profiles.find(p => p.email.trim().toLowerCase() === (r.userEmail || '').trim().toLowerCase());
-      const profileMgrEmail = (requesterProfile?.managerEmail || '').trim().toLowerCase();
-
-      const isDirectSubordinate = 
-        (requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE) ||
-        (reqManagerEmail && (
-          direkturEmails.has(reqManagerEmail) || 
-          reqManagerEmail.includes('margono') || 
-          reqManagerEmail.includes('direktur') || 
-          (userProfile?.email && reqManagerEmail === userProfile.email.trim().toLowerCase())
-        )) ||
-        (profileMgrEmail && (
-          direkturEmails.has(profileMgrEmail) || 
-          profileMgrEmail.includes('margono') || 
-          profileMgrEmail.includes('direktur') || 
-          (userProfile?.email && profileMgrEmail === userProfile.email.trim().toLowerCase())
-        ));
-
-      if (statusFilter === 'DIREKTUR_APPROVAL' || statusFilter === 'DIREKTUR_RECONCILIATION') {
-        if (!isDirectSubordinate) return false;
+      for (const p of profiles) {
+        if (p.role === Role.DIREKTUR && p.email) {
+          direkturEmails.add(p.email.trim().toLowerCase());
+        }
       }
+      if (userEmailTrimmedLower) direkturEmails.add(userEmailTrimmedLower);
     }
 
-    // Status Filter
-    if (statusFilter !== 'ALL') {
-      if (statusFilter === 'DIREKTUR_APPROVAL') {
-        if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
-      } else if (statusFilter === 'DIREKTUR_RECONCILIATION') {
-        if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) return false;
-        const reqItems = usageItems.filter(i => i.requestId === r.id);
-        if (reqItems.length === 0) return false;
-        if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING)) return false;
-      } else if (statusFilter === 'PENDING') {
-        if (activeRole === Role.MANAGER && dashboardTab === 'APPROVAL') {
-          if (r.status !== RequestStatus.PENDING_APPROVAL) return false;
-          if (!isOpBiasaRequest(r)) return false;
-        } else if (activeRole === Role.FINANCE && dashboardTab !== 'SUBMISSION') {
-          if (!isOpBiasaRequest(r)) return false;
-          if (r.status !== RequestStatus.APPROVED && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
-          if (isFinanceApprovedOpRequest(r, itemReviewHistories)) return false;
-        } else {
-          const isPendingManager = r.status === RequestStatus.PENDING_APPROVAL;
-          const isPendingFinance = isOpBiasaRequest(r) && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) && !isFinanceApprovedOpRequest(r, itemReviewHistories);
-          if (!isPendingManager && !isPendingFinance) return false;
-        }
-      } else if (statusFilter === 'APPROVED') {
-        if (!isPendingTransferRequest(r, itemReviewHistories, usageItems)) return false;
-      } else if (statusFilter === 'TRANSFERRED') {
-        if (r.status !== RequestStatus.TRANSFERRED && r.status !== RequestStatus.TRANSFER_BERTAHAP) return false;
-      } else if (statusFilter === 'REPORTING') {
-        // For USER or SUBMISSION tab, "Proses Laporan" displays requests currently in reporting / review process
-        if (activeRole === Role.USER || dashboardTab === 'SUBMISSION') {
-          if (r.status !== RequestStatus.REPORTING &&
-              r.status !== RequestStatus.REVIEW_MANAGER &&
-              r.status !== RequestStatus.REVIEW_ADMIN &&
-              r.status !== RequestStatus.TRANSFERRED &&
-              r.status !== RequestStatus.TRANSFER_BERTAHAP) return false;
-        } else if (activeRole === Role.MANAGER) {
-          if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) return false;
-          const reqItems = usageItems.filter(i => i.requestId === r.id);
-          if (reqItems.length === 0) return false;
-          return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
-        } else if (activeRole === Role.FINANCE) {
-          if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
-          const reqItems = usageItems.filter(i => i.requestId === r.id);
-          if (reqItems.length === 0) return false;
-          if (reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED)) return false;
-          const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
-          if (!managerApproved) return false;
-        } else if (activeRole === Role.DIREKTUR) {
-          if (![RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
-        } else {
-          if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
-        }
-      } else if (statusFilter === 'CLOSED') {
-        if (r.status !== RequestStatus.CLOSED) return false;
-        if (activeRole === Role.DIREKTUR) {
-          if (isBbmDurenSawitRequest(r)) return false;
-        } else {
-          if (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) return false;
-        }
+    const closedStart = closedStartDateFilter ? (() => {
+      const start = new Date(closedStartDateFilter);
+      start.setHours(0, 0, 0, 0);
+      return start;
+    })() : null;
+    const closedEnd = closedEndDateFilter ? (() => {
+      const end = new Date(closedEndDateFilter);
+      end.setHours(23, 59, 59, 999);
+      return end;
+    })() : null;
 
-        // User filter
-        if (closedUserFilter !== 'ALL') {
-          if (r.userEmail.toLowerCase() !== closedUserFilter.toLowerCase()) return false;
-        }
+    return requests.filter((r) => {
+      // Exclude CANCELLED requests from all main views
+      if (r.status === RequestStatus.CANCELLED) return false;
 
-        // Division filter
-        if (closedDivisiFilter !== 'ALL') {
-          const reqProfile = profiles.find(p => p.email.toLowerCase() === r.userEmail.toLowerCase());
-          const divisi = reqProfile?.divisi || '';
-          if (divisi.toLowerCase() !== closedDivisiFilter.toLowerCase()) return false;
-        }
-
-        // Closing date range filter
-        if (closedStartDateFilter || closedEndDateFilter) {
-          const closingDate = getClosingDate(r);
-          if (closingDate) {
-            if (closedStartDateFilter) {
-              const start = new Date(closedStartDateFilter);
-              start.setHours(0, 0, 0, 0);
-              if (closingDate < start) return false;
-            }
-            if (closedEndDateFilter) {
-              const end = new Date(closedEndDateFilter);
-              end.setHours(23, 59, 59, 999);
-              if (closingDate > end) return false;
-            }
-          } else {
+      // Role based scoping
+      if (activeRole === Role.USER || ((activeRole === Role.MANAGER || activeRole === Role.FINANCE) && dashboardTab === 'SUBMISSION')) {
+        // User only sees their own requests in submission mode
+        if (r.userEmail.toLowerCase() !== userEmailLower) return false;
+      } else if (activeRole === Role.MANAGER) {
+        // Manager sees requests assigned to them
+        if (userEmailLower && r.managerEmail.toLowerCase() !== userEmailLower) return false;
+      }
+      // DIREKTUR, FINANCE & ADMINISTRATOR see all requests across the organization!
+      // Finance sees everything in APPROVAL mode!
+      if (activeRole === Role.FINANCE && dashboardTab !== 'SUBMISSION') {
+        if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && statusFilter === 'REPORTING') {
+          const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+          if (reqItems.length === 0 || !reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
             return false;
           }
         }
-      } else if (statusFilter === 'REJECTED') {
-        const isReqRejected = r.status === RequestStatus.REJECTED;
-        const hasAdminRejectedItems = usageItems.some(i => i.requestId === r.id && i.statusAdmin === ItemStatus.REJECTED);
-        if (!isReqRejected && !hasAdminRejectedItems) return false;
       }
-    }
 
-    return true;
-  });
+      // Text search query
+      if (normalizedSearchQuery) {
+        const matchId = r.id.toLowerCase().includes(normalizedSearchQuery);
+        const matchDesc = r.keterangan.toLowerCase().includes(normalizedSearchQuery);
+        const matchSite = r.siteId.toLowerCase().includes(normalizedSearchQuery);
+        const matchUser = r.userEmail.toLowerCase().includes(normalizedSearchQuery);
 
-  const sortedRequests = [...filteredRequests].sort((a, b) => {
+        const requesterProfile = profilesByEmailMap.get(r.userEmail.toLowerCase());
+        const matchName = requesterProfile?.nama ? requesterProfile.nama.toLowerCase().includes(normalizedSearchQuery) : false;
+        const matchUserId = requesterProfile?.userId ? requesterProfile.userId.toLowerCase().includes(normalizedSearchQuery) : false;
+        const matchDivisi = requesterProfile?.divisi ? requesterProfile.divisi.toLowerCase().includes(normalizedSearchQuery) : false;
+
+        if (!matchId && !matchDesc && !matchSite && !matchUser && !matchName && !matchUserId && !matchDivisi) return false;
+      }
+
+      // DIREKTUR Role UID Filter: APPROVAL group = direct subordinates (MANAGER & FINANCE), MONITORING group = all other UIDs
+      if (activeRole === Role.DIREKTUR) {
+        if (statusFilter === 'DIREKTUR_APPROVAL' || statusFilter === 'DIREKTUR_RECONCILIATION') {
+          const reqManagerEmail = (r.managerEmail || '').trim().toLowerCase();
+          const requesterProfile = profilesByEmailMap.get((r.userEmail || '').trim().toLowerCase());
+          const profileMgrEmail = (requesterProfile?.managerEmail || '').trim().toLowerCase();
+
+          const isDirectSubordinate = 
+            (requesterProfile?.role === Role.MANAGER || requesterProfile?.role === Role.FINANCE) ||
+            (reqManagerEmail && (
+              direkturEmails.has(reqManagerEmail) || 
+              reqManagerEmail.includes('margono') || 
+              reqManagerEmail.includes('direktur') || 
+              (userEmailTrimmedLower && reqManagerEmail === userEmailTrimmedLower)
+            )) ||
+            (profileMgrEmail && (
+              direkturEmails.has(profileMgrEmail) || 
+              profileMgrEmail.includes('margono') || 
+              profileMgrEmail.includes('direktur') || 
+              (userEmailTrimmedLower && profileMgrEmail === userEmailTrimmedLower)
+            ));
+
+          if (!isDirectSubordinate) return false;
+        }
+      }
+
+      // Status Filter
+      if (statusFilter !== 'ALL') {
+        if (statusFilter === 'DIREKTUR_APPROVAL') {
+          if (r.status !== RequestStatus.PENDING_APPROVAL && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
+        } else if (statusFilter === 'DIREKTUR_RECONCILIATION') {
+          if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) return false;
+          const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+          if (reqItems.length === 0) return false;
+          if (!reqItems.some(i => i.statusManager === ItemStatus.PENDING)) return false;
+        } else if (statusFilter === 'PENDING') {
+          if (activeRole === Role.MANAGER && dashboardTab === 'APPROVAL') {
+            if (r.status !== RequestStatus.PENDING_APPROVAL) return false;
+            if (!isOpBiasaRequest(r)) return false;
+          } else if (activeRole === Role.FINANCE && dashboardTab !== 'SUBMISSION') {
+            if (!isOpBiasaRequest(r)) return false;
+            if (r.status !== RequestStatus.APPROVED && r.status !== RequestStatus.PARTIALLY_APPROVED) return false;
+            if (isFinanceApprovedOpRequest(r, itemReviewHistories)) return false;
+          } else {
+            const isPendingManager = r.status === RequestStatus.PENDING_APPROVAL;
+            const isPendingFinance = isOpBiasaRequest(r) && (r.status === RequestStatus.APPROVED || r.status === RequestStatus.PARTIALLY_APPROVED) && !isFinanceApprovedOpRequest(r, itemReviewHistories);
+            if (!isPendingManager && !isPendingFinance) return false;
+          }
+        } else if (statusFilter === 'APPROVED') {
+          if (!isPendingTransferRequest(r, itemReviewHistories, usageItems)) return false;
+        } else if (statusFilter === 'TRANSFERRED') {
+          if (r.status !== RequestStatus.TRANSFERRED && r.status !== RequestStatus.TRANSFER_BERTAHAP) return false;
+        } else if (statusFilter === 'REPORTING') {
+          // For USER or SUBMISSION tab, "Proses Laporan" displays requests currently in reporting / review process
+          if (activeRole === Role.USER || dashboardTab === 'SUBMISSION') {
+            if (r.status !== RequestStatus.REPORTING &&
+                r.status !== RequestStatus.REVIEW_MANAGER &&
+                r.status !== RequestStatus.REVIEW_ADMIN &&
+                r.status !== RequestStatus.TRANSFERRED &&
+                r.status !== RequestStatus.TRANSFER_BERTAHAP) return false;
+          } else if (activeRole === Role.MANAGER) {
+            if (![RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP].includes(r.status)) return false;
+            const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+            if (reqItems.length === 0) return false;
+            return reqItems.some(i => i.statusManager === ItemStatus.PENDING);
+          } else if (activeRole === Role.FINANCE) {
+            if (r.status !== RequestStatus.REVIEW_ADMIN && r.status !== RequestStatus.REPORTING) return false;
+            const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+            if (reqItems.length === 0) return false;
+            if (reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED)) return false;
+            const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
+            if (!managerApproved) return false;
+          } else if (activeRole === Role.DIREKTUR) {
+            if (![RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
+          } else {
+            if (r.status !== RequestStatus.REPORTING && r.status !== RequestStatus.REVIEW_MANAGER && r.status !== RequestStatus.REVIEW_ADMIN) return false;
+          }
+        } else if (statusFilter === 'CLOSED') {
+          if (r.status !== RequestStatus.CLOSED) return false;
+          if (activeRole === Role.DIREKTUR) {
+            if (isBbmDurenSawitRequest(r)) return false;
+          } else {
+            if (r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) return false;
+          }
+
+          // User filter
+          if (closedUserFilter !== 'ALL') {
+            if (r.userEmail.toLowerCase() !== closedUserFilter.toLowerCase()) return false;
+          }
+
+          // Division filter
+          if (closedDivisiFilter !== 'ALL') {
+            const reqProfile = profilesByEmailMap.get(r.userEmail.toLowerCase());
+            const divisi = reqProfile?.divisi || '';
+            if (divisi.toLowerCase() !== closedDivisiFilter.toLowerCase()) return false;
+          }
+
+          // Closing date range filter
+          if (closedStart || closedEnd) {
+            const closingDate = getClosingDate(r);
+            if (closingDate) {
+              if (closedStart && closingDate < closedStart) return false;
+              if (closedEnd && closingDate > closedEnd) return false;
+            } else {
+              return false;
+            }
+          }
+        } else if (statusFilter === 'REJECTED') {
+          const isReqRejected = r.status === RequestStatus.REJECTED;
+          const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
+          const hasAdminRejectedItems = reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED);
+          if (!isReqRejected && !hasAdminRejectedItems) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [
+    requests,
+    activeRole,
+    dashboardTab,
+    userProfile?.email,
+    statusFilter,
+    searchQuery,
+    profiles,
+    profilesByEmailMap,
+    usageItems,
+    usageItemsByRequestIdMap,
+    itemReviewHistories,
+    closedUserFilter,
+    closedDivisiFilter,
+    closedStartDateFilter,
+    closedEndDateFilter,
+    getClosingDate
+  ]);
+
+  const sortedRequests = useMemo(() => {
     if (activeRole === Role.FINANCE && (statusFilter === 'APPROVED' || statusFilter === RequestStatus.APPROVED)) {
-      const timeA = getRequestCreatedDate(a)?.getTime() || 0;
-      const timeB = getRequestCreatedDate(b)?.getTime() || 0;
-      if (timeA !== timeB) {
-        return timeA - timeB; // Oldest at the top
-      }
-      return a.id.localeCompare(b.id, undefined, { numeric: true });
+      return [...filteredRequests].sort((a, b) => {
+        const timeA = getRequestCreatedDate(a)?.getTime() || 0;
+        const timeB = getRequestCreatedDate(b)?.getTime() || 0;
+        if (timeA !== timeB) {
+          return timeA - timeB; // Oldest at the top
+        }
+        return a.id.localeCompare(b.id, undefined, { numeric: true });
+      });
     }
-    return 0;
-  });
+    return filteredRequests;
+  }, [filteredRequests, activeRole, statusFilter]);
+
+  // Memoized dropdown options for Finance Closed Archive filters (avoids recalculating on every keystroke)
+  const { closedUserOptions, closedDivisiOptions } = useMemo(() => {
+    if (statusFilter !== 'CLOSED' || activeRole !== Role.FINANCE) {
+      return { closedUserOptions: [] as { email: string; name: string }[], closedDivisiOptions: [] as string[] };
+    }
+    const emailSet = new Set<string>();
+    const divisiSet = new Set<string>();
+    for (const r of requests) {
+      if (r.status !== RequestStatus.CLOSED || r.id.startsWith('BBMDS') || r.id.startsWith('BBM_DurenSawit')) {
+        continue;
+      }
+      if (r.userEmail) {
+        emailSet.add(r.userEmail);
+      }
+      const p = profilesByEmailMap.get((r.userEmail || '').toLowerCase());
+      if (p?.divisi) {
+        divisiSet.add(p.divisi);
+      }
+    }
+    const closedUsers = Array.from(emailSet).map(emailStr => {
+      const p = profilesByEmailMap.get(emailStr.toLowerCase());
+      return { email: emailStr, name: p?.nama || emailStr };
+    });
+    return {
+      closedUserOptions: closedUsers,
+      closedDivisiOptions: Array.from(divisiSet)
+    };
+  }, [statusFilter, activeRole, requests, profilesByEmailMap]);
+
+  // Pagination slice for CLOSED list to avoid rendering 2,500+ cards at once
+  const isClosedListPaginated = statusFilter === 'CLOSED';
+  const totalClosedCount = sortedRequests.length;
+  const totalClosedPages = isClosedListPaginated ? Math.max(1, Math.ceil(totalClosedCount / closedPageSize)) : 1;
+  const safeClosedPage = Math.min(closedPage, totalClosedPages);
+  const displayedRequests = useMemo(() => {
+    if (!isClosedListPaginated) return sortedRequests;
+    const startIdx = (safeClosedPage - 1) * closedPageSize;
+    return sortedRequests.slice(startIdx, startIdx + closedPageSize);
+  }, [isClosedListPaginated, sortedRequests, safeClosedPage, closedPageSize]);
 
   const getStatusBadgeStyles = (status: RequestStatus) => {
     switch (status) {
@@ -4350,9 +4611,11 @@ export default function App() {
           ? 'max-w-7xl'
           : activeView === 'user-uid-monitoring'
             ? 'max-w-4xl'
-            : activeView === 'adjustment'
-              ? 'max-w-2xl'
-              : 'max-w-md'
+            : activeView === 'dashboard' && statusFilter === 'CLOSED'
+              ? 'max-w-3xl'
+              : activeView === 'adjustment'
+                ? 'max-w-2xl'
+                : 'max-w-md'
       }`}>
         {/* Error / Offline Banner */}
         {error && (
@@ -4449,156 +4712,176 @@ export default function App() {
             onOpenPermissions={() => setIsPermissionsModalOpen(true)}
           />
         ) : activeView === 'setup-profile' ? (
-          <ProfileSetup
-            profiles={profiles}
-            requests={requests}
-            resetDeviceLogs={resetDeviceLogs}
-            onSave={handleSaveProfile}
-            onResetDeviceId={handleResetUserDeviceId}
-            onPurgeOrphanHistories={handlePurgeOrphanHistories}
-            onClose={() => setActiveView('dashboard')}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <ProfileSetup
+              profiles={profiles}
+              requests={requests}
+              resetDeviceLogs={resetDeviceLogs}
+              onSave={handleSaveProfile}
+              onResetDeviceId={handleResetUserDeviceId}
+              onPurgeOrphanHistories={handlePurgeOrphanHistories}
+              onClose={() => setActiveView('dashboard')}
+            />
+          </Suspense>
         ) : activeView === 'profile-settings' && userProfile ? (
-          <ProfileSettings
-            userProfile={userProfile}
-            onUpdatePassword={handleUpdatePassword}
-            onUpdateProfilePhoto={handleUpdateProfilePhoto}
-            onClose={() => setActiveView('dashboard')}
-            theme={theme}
-            onThemeChange={setTheme}
-            token={token}
-            driveFolderId={driveFolderId}
-            permissionsStatus={permissionsStatus}
-            onPermissionsUpdated={handlePermissionsUpdated}
-            onOpenPermissionsModal={() => setIsPermissionsModalOpen(true)}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <ProfileSettings
+              userProfile={userProfile}
+              onUpdatePassword={handleUpdatePassword}
+              onUpdateProfilePhoto={handleUpdateProfilePhoto}
+              onClose={() => setActiveView('dashboard')}
+              theme={theme}
+              onThemeChange={setTheme}
+              token={token}
+              driveFolderId={driveFolderId}
+              permissionsStatus={permissionsStatus}
+              onPermissionsUpdated={handlePermissionsUpdated}
+              onOpenPermissionsModal={() => setIsPermissionsModalOpen(true)}
+            />
+          </Suspense>
         ) : activeView === 'new-request' && userProfile ? (
-          <BudgetRequestForm
-            userEmail={userProfile.email}
-            managerEmail={userProfile.managerEmail}
-            defaultSiteId=""
-            onSubmit={handleAddBudgetRequest}
-            onClose={() => {
-              setEditingRequest(null);
-              setActiveView('dashboard');
-            }}
-            initialIsTalangan={initialIsTalangan}
-            sites={sites}
-            initialRequest={editingRequest || undefined}
-            userProfile={userProfile}
-            requests={requests}
-            usageItems={usageItems}
-            activities={activities}
-            onRefreshOfflineQueues={refreshOfflineQueues}
-            profiles={profiles}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <BudgetRequestForm
+              userEmail={userProfile.email}
+              managerEmail={userProfile.managerEmail}
+              defaultSiteId=""
+              onSubmit={handleAddBudgetRequest}
+              onClose={() => {
+                setEditingRequest(null);
+                setActiveView('dashboard');
+              }}
+              initialIsTalangan={initialIsTalangan}
+              sites={sites}
+              initialRequest={editingRequest || undefined}
+              userProfile={userProfile}
+              requests={requests}
+              usageItems={usageItems}
+              activities={activities}
+              onRefreshOfflineQueues={refreshOfflineQueues}
+              profiles={profiles}
+            />
+          </Suspense>
         ) : activeView === 'report-usage' && selectedRequest ? (
-          <UsageReportForm
-            request={selectedRequest}
-            items={usageItems}
-            googleToken={token || ''}
-            driveFolderId={driveFolderId || ''}
-            onAddItem={handleAddUsageItem}
-            onUpdateItem={handleUpdateUsageItem}
-            onDeleteItem={handleDeleteUsageItem}
-            onSubmitReport={handleSubmitUsageReport}
-            onSubmitReview={handleReviewUsageItems}
-            onClose={() => {
-              setSelectedRequest(null);
-              setActiveView('dashboard');
-            }}
-            role={activeRole}
-            onAuthError={handleGoogleAuthError}
-            sites={sites}
-            activities={activities}
-            profiles={profiles}
-            requests={requests}
-            histories={itemReviewHistories}
-            onPreviewDocument={setPreviewDocument}
-            userProfile={userProfile}
-            offlineUsageItems={offlineUsageList}
-            onRefreshOfflineQueues={refreshOfflineQueues}
-            onSyncOffline={syncOfflineReports}
-            isSyncingOffline={isSyncingOfflineReports}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <UsageReportForm
+              request={selectedRequest}
+              items={usageItems}
+              googleToken={token || ''}
+              driveFolderId={driveFolderId || ''}
+              onAddItem={handleAddUsageItem}
+              onUpdateItem={handleUpdateUsageItem}
+              onDeleteItem={handleDeleteUsageItem}
+              onSubmitReport={handleSubmitUsageReport}
+              onSubmitReview={handleReviewUsageItems}
+              onClose={() => {
+                setSelectedRequest(null);
+                setActiveView('dashboard');
+              }}
+              role={activeRole}
+              onAuthError={handleGoogleAuthError}
+              sites={sites}
+              activities={activities}
+              profiles={profiles}
+              requests={requests}
+              histories={itemReviewHistories}
+              onPreviewDocument={setPreviewDocument}
+              userProfile={userProfile}
+              offlineUsageItems={offlineUsageList}
+              onRefreshOfflineQueues={refreshOfflineQueues}
+              onSyncOffline={syncOfflineReports}
+              isSyncingOffline={isSyncingOfflineReports}
+            />
+          </Suspense>
         ) : activeView === 'adjustment' && userProfile ? (
-          <AdjustmentPanel
-            profiles={profiles}
-            requests={requests}
-            usageItems={usageItems}
-            histories={itemReviewHistories}
-            googleToken={token!}
-            driveFolderId={driveFolderId || ''}
-            onCreateAdjustment={handleCreateAdjustment}
-            onClose={async () => {
-              setActiveView('dashboard');
-              setAdjustmentInitialUser(null);
-              if (sharedFilePrefill?.recordId) {
-                const rec = await getLatestSharedReceipt();
-                if (rec) {
-                  setPendingSharedRecord(rec);
+          <Suspense fallback={ViewSuspenseFallback}>
+            <AdjustmentPanel
+              profiles={profiles}
+              requests={requests}
+              usageItems={usageItems}
+              histories={itemReviewHistories}
+              googleToken={token!}
+              driveFolderId={driveFolderId || ''}
+              onCreateAdjustment={handleCreateAdjustment}
+              onClose={async () => {
+                setActiveView('dashboard');
+                setAdjustmentInitialUser(null);
+                if (sharedFilePrefill?.recordId) {
+                  const rec = await getLatestSharedReceipt();
+                  if (rec) {
+                    setPendingSharedRecord(rec);
+                  }
+                  setSharedFilePrefill(null);
                 }
-                setSharedFilePrefill(null);
-              }
-            }}
-            onAuthError={handleGoogleAuthError}
-            initialUserEmail={adjustmentInitialUser?.email}
-            initialFile={sharedFilePrefill?.file}
-          />
+              }}
+              onAuthError={handleGoogleAuthError}
+              initialUserEmail={adjustmentInitialUser?.email}
+              initialFile={sharedFilePrefill?.file}
+            />
+          </Suspense>
         ) : activeView === 'transfer-list' && userProfile ? (
-          <TransferListPanel
-            profiles={profiles}
-            requests={requests}
-            usageItems={usageItems}
-            sites={sites}
-            googleToken={token!}
-            driveFolderId={driveFolderId || ''}
-            histories={itemReviewHistories}
-            userProfile={userProfile}
-            activeRole={activeRole}
-            onClose={() => setActiveView('dashboard')}
-            onPreviewDocument={setPreviewDocument}
-            onUpdateTransfer={handleUpdateTransferDetails}
-            onAuthError={handleGoogleAuthError}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <TransferListPanel
+              profiles={profiles}
+              requests={requests}
+              usageItems={usageItems}
+              sites={sites}
+              googleToken={token!}
+              driveFolderId={driveFolderId || ''}
+              histories={itemReviewHistories}
+              userProfile={userProfile}
+              activeRole={activeRole}
+              onClose={() => setActiveView('dashboard')}
+              onPreviewDocument={setPreviewDocument}
+              onUpdateTransfer={handleUpdateTransferDetails}
+              onAuthError={handleGoogleAuthError}
+            />
+          </Suspense>
         ) : activeView === 'activities' && userProfile ? (
-          <ActivityLogView
-            activities={activities}
-            sites={sites}
-            userEmail={userProfile.email}
-            userProfile={userProfile}
-            profiles={profiles}
-            role={activeRole}
-            onSaveActivity={handleSaveActivity}
-            onUpdateActivity={handleUpdateActivity}
-            onSaveManualActivity={handleSaveManualActivity}
-            onBack={() => setActiveView('dashboard')}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <ActivityLogView
+              activities={activities}
+              sites={sites}
+              userEmail={userProfile.email}
+              userProfile={userProfile}
+              profiles={profiles}
+              role={activeRole}
+              onSaveActivity={handleSaveActivity}
+              onUpdateActivity={handleUpdateActivity}
+              onSaveManualActivity={handleSaveManualActivity}
+              onBack={() => setActiveView('dashboard')}
+            />
+          </Suspense>
         ) : activeView === 'push-test' && userProfile ? (
-          <AdminPushTestCard
-            profiles={profiles}
-            currentAdminEmail={userProfile.email}
-            onBack={() => setActiveView('dashboard')}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <AdminPushTestCard
+              profiles={profiles}
+              currentAdminEmail={userProfile.email}
+              onBack={() => setActiveView('dashboard')}
+            />
+          </Suspense>
         ) : activeView === 'response-time' && userProfile ? (
-          <AdminResponseTimeModal
-            isOpen={true}
-            isFullPageView={true}
-            onClose={() => setActiveView('dashboard')}
-            requests={requests}
-            histories={itemReviewHistories}
-            profiles={profiles}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <AdminResponseTimeModal
+              isOpen={true}
+              isFullPageView={true}
+              onClose={() => setActiveView('dashboard')}
+              requests={requests}
+              histories={itemReviewHistories}
+              profiles={profiles}
+            />
+          </Suspense>
         ) : activeView === 'user-uid-monitoring' && userProfile ? (
-          <UserUidMonitoringModal
-            isOpen={true}
-            profiles={profiles}
-            requests={requests}
-            usageItems={usageItems}
-            currentRole={activeRole}
-            currentUserEmail={userProfile.email}
-            onClose={() => setActiveView('dashboard')}
-          />
+          <Suspense fallback={ViewSuspenseFallback}>
+            <UserUidMonitoringModal
+              isOpen={true}
+              profiles={profiles}
+              requests={requests}
+              usageItems={usageItems}
+              currentRole={activeRole}
+              currentUserEmail={userProfile.email}
+              onClose={() => setActiveView('dashboard')}
+            />
+          </Suspense>
         ) : (
           /* Dashboard Main Section */
           <div className="space-y-4 animate-slide-up">
@@ -4790,81 +5073,57 @@ export default function App() {
                             )}
                           </div>
 
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {/* User Filter */}
-                            <div className="space-y-1">
+                            <div className="space-y-1 min-w-0">
                               <label className="block text-[9px] font-bold text-slate-400 uppercase">Pemohon (User)</label>
                               <select
                                 value={closedUserFilter}
                                 onChange={(e) => setClosedUserFilter(e.target.value)}
-                                className="w-full text-[11px] bg-white border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
+                                className="w-full min-w-0 text-[11px] bg-white border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
                               >
                                 <option value="ALL">Semua Pemohon</option>
-                                {Array.from(
-                                  new Set<string>(
-                                    requests
-                                      .filter(r => r.status === RequestStatus.CLOSED && !r.id.startsWith('BBMDS') && !r.id.startsWith('BBM_DurenSawit'))
-                                      .map(r => r.userEmail)
-                                  )
-                                ).map(email => {
-                                  const emailStr = String(email);
-                                  const p = profiles.find(prof => prof.email.toLowerCase() === emailStr.toLowerCase());
-                                  const name = p?.nama || emailStr;
-                                  return (
-                                    <option key={emailStr} value={emailStr}>
-                                      {name} ({emailStr})
-                                    </option>
-                                  );
-                                })}
+                                {closedUserOptions.map(({ email, name }) => (
+                                  <option key={email} value={email}>
+                                    {name} ({email})
+                                  </option>
+                                ))}
                               </select>
                             </div>
 
                             {/* Divisi Filter */}
-                            <div className="space-y-1">
+                            <div className="space-y-1 min-w-0">
                               <label className="block text-[9px] font-bold text-slate-400 uppercase">Divisi</label>
                               <select
                                 value={closedDivisiFilter}
                                 onChange={(e) => setClosedDivisiFilter(e.target.value)}
-                                className="w-full text-[11px] bg-white border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
+                                className="w-full min-w-0 text-[11px] bg-white border border-slate-200 rounded-lg p-2 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
                               >
                                 <option value="ALL">Semua Divisi</option>
-                                {Array.from(
-                                  new Set<string>(
-                                    requests
-                                      .filter(r => r.status === RequestStatus.CLOSED && !r.id.startsWith('BBMDS') && !r.id.startsWith('BBM_DurenSawit'))
-                                      .map(r => {
-                                        const p = profiles.find(prof => prof.email.toLowerCase() === r.userEmail.toLowerCase());
-                                        return p?.divisi || '';
-                                      })
-                                      .filter(Boolean)
-                                  )
-                                ).map(divisi => {
-                                  const divisiStr = String(divisi);
-                                  return (
-                                    <option key={divisiStr} value={divisiStr}>
-                                      {divisiStr}
-                                    </option>
-                                  );
-                                })}
+                                {closedDivisiOptions.map(divisiStr => (
+                                  <option key={divisiStr} value={divisiStr}>
+                                    {divisiStr}
+                                  </option>
+                                ))}
                               </select>
                             </div>
 
                             {/* Date Range Filter */}
-                            <div className="space-y-1">
+                            <div className="space-y-1 min-w-0 md:col-span-2">
                               <label className="block text-[9px] font-bold text-slate-400 uppercase">Tanggal Closing (Rentang)</label>
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
                                 <input
                                   type="date"
                                   value={closedStartDateFilter}
                                   onChange={(e) => setClosedStartDateFilter(e.target.value)}
-                                  className="w-full text-[11px] bg-white border border-slate-200 rounded-lg p-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
+                                  className="w-full min-w-0 flex-1 text-[11px] bg-white border border-slate-200 rounded-lg p-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
                                 />
-                                <span className="text-[10px] text-slate-400 font-bold">s/d</span>
+                                <span className="text-[10px] text-slate-400 font-bold text-center shrink-0">s/d</span>
                                 <input
                                   type="date"
                                   value={closedEndDateFilter}
                                   onChange={(e) => setClosedEndDateFilter(e.target.value)}
-                                  className="w-full text-[11px] bg-white border border-slate-200 rounded-lg p-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
+                                  className="w-full min-w-0 flex-1 text-[11px] bg-white border border-slate-200 rounded-lg p-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none text-slate-700"
                                 />
                               </div>
                             </div>
@@ -4959,8 +5218,80 @@ export default function App() {
                       })()}
                     </div>
 
+                    {/* Pagination Info & Top Controls for UID CLOSED */}
+                    {isClosedListPaginated && totalClosedCount > 0 && (
+                      <div
+                        ref={closedListTopRef}
+                        className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-[11px] text-slate-600"
+                      >
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span>
+                            Menampilkan{' '}
+                            <strong className="text-slate-800">
+                              {(safeClosedPage - 1) * closedPageSize + 1}–{Math.min(safeClosedPage * closedPageSize, totalClosedCount)}
+                            </strong>{' '}
+                            dari <strong className="text-indigo-700">{totalClosedCount.toLocaleString('id-ID')}</strong> UID Closed
+                          </span>
+                          <select
+                            value={closedPageSize}
+                            onChange={(e) => setClosedPageSize(Number(e.target.value))}
+                            className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-semibold text-slate-700 outline-none focus:border-indigo-500 cursor-pointer"
+                            title="Jumlah UID per halaman"
+                          >
+                            <option value={30}>30 / halaman</option>
+                            <option value={50}>50 / halaman</option>
+                            <option value={100}>100 / halaman</option>
+                          </select>
+                        </div>
+
+                        {totalClosedPages > 1 && (
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={safeClosedPage <= 1}
+                              onClick={() => setClosedPage(1)}
+                              className="px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-[10px] cursor-pointer"
+                              title="Halaman Pertama"
+                            >
+                              Awal
+                            </button>
+                            <button
+                              type="button"
+                              disabled={safeClosedPage <= 1}
+                              onClick={() => setClosedPage(p => Math.max(1, p - 1))}
+                              className="p-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                              title="Halaman Sebelumnya"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
+                            <span className="px-2 font-bold text-[10px] text-slate-700">
+                              Hal {safeClosedPage} / {totalClosedPages}
+                            </span>
+                            <button
+                              type="button"
+                              disabled={safeClosedPage >= totalClosedPages}
+                              onClick={() => setClosedPage(p => Math.min(totalClosedPages, p + 1))}
+                              className="p-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                              title="Halaman Berikutnya"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={safeClosedPage >= totalClosedPages}
+                              onClick={() => setClosedPage(totalClosedPages)}
+                              className="px-2 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-[10px] cursor-pointer"
+                              title="Halaman Terakhir"
+                            >
+                              Akhir
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Request Cards Grid */}
-                    {sortedRequests.length === 0 ? (
+                    {displayedRequests.length === 0 ? (
                       <div className="bg-slate-50 border border-slate-150 rounded-2xl py-12 px-4 text-center text-slate-400 text-xs font-medium">
                         <ClipboardList className="w-10 h-10 text-slate-300 mx-auto mb-2.5" />
                         <p>Tidak ditemukan pengajuan dana.</p>
@@ -4968,8 +5299,8 @@ export default function App() {
                       </div>
                     ) : (
                       <div className="space-y-3">
-                        {sortedRequests.map((req) => {
-                          const reqItems = usageItems.filter(i => i.requestId === req.id);
+                        {displayedRequests.map((req) => {
+                          const reqItems = usageItemsByRequestIdMap.get(req.id) || [];
                           const rejectedItems = reqItems.filter(i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED);
                           const hasRejectedItems = rejectedItems.length > 0;
                           const isFullyApprovedByAdmin = reqItems.length > 0 && reqItems.every(i => i.statusAdmin === ItemStatus.APPROVED);
@@ -4992,7 +5323,7 @@ export default function App() {
 
                           const saldoUID = ditransferAmount - approvedUsageAmount;
 
-                          const requesterProfile = profiles.find(p => p.email.toLowerCase() === req.userEmail.toLowerCase());
+                          const requesterProfile = profilesByEmailMap.get(req.userEmail.toLowerCase());
                           const requesterName = requesterProfile?.nama || requesterProfile?.userId || req.userEmail;
 
                           return (
@@ -5174,7 +5505,7 @@ export default function App() {
                                     <div className="flex items-start gap-1.5">
                                       <span className="font-semibold text-slate-500 shrink-0">
                                         {(() => {
-                                          const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
+                                          const p = profilesByEmailMap.get((req.userEmail || '').trim().toLowerCase());
                                           return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Direktur:' : 'Catatan Manager:';
                                         })()}
                                       </span>
@@ -5334,7 +5665,7 @@ export default function App() {
                                     <p>
                                       <strong>
                                         {(() => {
-                                          const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
+                                          const p = profilesByEmailMap.get((req.userEmail || '').trim().toLowerCase());
                                           return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Revisi Direktur:' : 'Catatan Revisi Manager:';
                                         })()}
                                       </strong> {req.managerComment}
@@ -5387,7 +5718,7 @@ export default function App() {
                                           <p className="text-[10px] text-rose-700 font-medium leading-tight">
                                             <strong className="text-slate-600">
                                               {(() => {
-                                                const p = profiles.find(prof => prof.email.trim().toLowerCase() === (req.userEmail || '').trim().toLowerCase());
+                                                const p = profilesByEmailMap.get((req.userEmail || '').trim().toLowerCase());
                                                 return (p?.role === Role.MANAGER || p?.role === Role.FINANCE) ? 'Catatan Direktur:' : 'Catatan Manager:';
                                               })()}
                                             </strong> "{item.managerComment}"
@@ -5881,6 +6212,42 @@ export default function App() {
                             </div>
                           );
                         })}
+
+                        {/* Bottom Pagination Bar for UID CLOSED */}
+                        {isClosedListPaginated && totalClosedPages > 1 && (
+                          <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-[11px] text-slate-600 mt-3">
+                            <span>
+                              Halaman <strong className="text-slate-800">{safeClosedPage}</strong> dari{' '}
+                              <strong className="text-indigo-700">{totalClosedPages}</strong> ({totalClosedCount.toLocaleString('id-ID')} UID)
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                disabled={safeClosedPage <= 1}
+                                onClick={() => {
+                                  setClosedPage(p => Math.max(1, p - 1));
+                                  closedListTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                }}
+                                className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                              >
+                                <ChevronLeft className="w-3.5 h-3.5" />
+                                <span>Sebelumnya</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={safeClosedPage >= totalClosedPages}
+                                onClick={() => {
+                                  setClosedPage(p => Math.min(totalClosedPages, p + 1));
+                                  closedListTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                }}
+                                className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                              >
+                                <span>Berikutnya</span>
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -5974,85 +6341,99 @@ export default function App() {
       )}
       {/* Modal BbmRefillModal */}
       {isBbmModalOpen && userProfile && (
-        <BbmRefillModal
-          userEmail={userProfile.email}
-          managerEmail={userProfile.managerEmail}
-          defaultSiteId={userProfile.divisi || 'DUREN-SAWIT'}
-          sites={sites}
-          userProfile={userProfile}
-          onSubmit={handleBbmRefillSubmit}
-          onClose={() => setIsBbmModalOpen(false)}
-          requests={requests}
-        />
+        <Suspense fallback={null}>
+          <BbmRefillModal
+            userEmail={userProfile.email}
+            managerEmail={userProfile.managerEmail}
+            defaultSiteId={userProfile.divisi || 'DUREN-SAWIT'}
+            sites={sites}
+            userProfile={userProfile}
+            onSubmit={handleBbmRefillSubmit}
+            onClose={() => setIsBbmModalOpen(false)}
+            requests={requests}
+          />
+        </Suspense>
       )}
 
       {/* Modal BbmListModal */}
-      <BbmListModal
-        isOpen={isBbmListModalOpen}
-        onClose={() => setIsBbmListModalOpen(false)}
-        requests={requests}
-        usageItems={usageItems}
-        profiles={profiles}
-        activities={activities}
-        role={activeRole}
-        userEmail={userProfile?.email}
-        userProfile={userProfile}
-        onSubmitTransferBbmDS={handleTransferBbmDSSubmit}
-        onUpdateActivity={handleUpdateActivity}
-        onOpenBbmRefillModal={(() => {
-          const activeEmail = (userProfile?.email || '').trim().toLowerCase();
-          const activeUid = (userProfile?.userId || '').trim().toLowerCase();
-          const matchedProfile = profiles.find(p => 
-            (activeEmail && p.email && p.email.trim().toLowerCase() === activeEmail) ||
-            (activeUid && p.userId && p.userId.trim().toLowerCase() === activeUid)
-          ) || userProfile;
+      {isBbmListModalOpen && (
+        <Suspense fallback={null}>
+          <BbmListModal
+            isOpen={isBbmListModalOpen}
+            onClose={() => setIsBbmListModalOpen(false)}
+            requests={requests}
+            usageItems={usageItems}
+            profiles={profiles}
+            activities={activities}
+            role={activeRole}
+            userEmail={userProfile?.email}
+            userProfile={userProfile}
+            onSubmitTransferBbmDS={handleTransferBbmDSSubmit}
+            onUpdateActivity={handleUpdateActivity}
+            onOpenBbmRefillModal={(() => {
+              const activeEmail = (userProfile?.email || '').trim().toLowerCase();
+              const activeUid = (userProfile?.userId || '').trim().toLowerCase();
+              const matchedProfile = profiles.find(p => 
+                (activeEmail && p.email && p.email.trim().toLowerCase() === activeEmail) ||
+                (activeUid && p.userId && p.userId.trim().toLowerCase() === activeUid)
+              ) || userProfile;
 
-          const isPrivileged = [
-            Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR
-          ].includes(activeRole) || [
-            Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR
-          ].includes(matchedProfile?.role as Role);
+              const isPrivileged = [
+                Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR
+              ].includes(activeRole) || [
+                Role.MANAGER, Role.FINANCE, Role.DIREKTUR, Role.ADMINISTRATOR
+              ].includes(matchedProfile?.role as Role);
 
-          const rawAkses = matchedProfile?.aksesBBM !== undefined ? matchedProfile.aksesBBM : userProfile?.aksesBBM;
-          const bbmStr = String(rawAkses ?? '').trim().toUpperCase();
-          const hasAccess = isPrivileged || rawAkses === true || [
-            'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
-          ].includes(bbmStr);
+              const rawAkses = matchedProfile?.aksesBBM !== undefined ? matchedProfile.aksesBBM : userProfile?.aksesBBM;
+              const bbmStr = String(rawAkses ?? '').trim().toUpperCase();
+              const hasAccess = isPrivileged || rawAkses === true || [
+                'TRUE', 'YA', '1', 'BENAR', 'YES', 'Y', 'AKTIF', 'ACTIVE', 'CENTANG', 'V', '✓'
+              ].includes(bbmStr);
 
-          return hasAccess ? () => setIsBbmModalOpen(true) : undefined;
-        })()}
-        onPreviewDocument={(rawUrl) => {
-          const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-          if (match && match[1]) {
-            setPreviewDocument({ url: rawUrl, fileId: match[1], title: 'Nota Pengisian BBM Duren Sawit' });
-          } else {
-            setPreviewDocument({ url: rawUrl, title: 'Nota Pengisian BBM Duren Sawit' });
-          }
-        }}
-      />
+              return hasAccess ? () => setIsBbmModalOpen(true) : undefined;
+            })()}
+            onPreviewDocument={(rawUrl) => {
+              const match = rawUrl.match(/\/d\/([a-zA-Z0-9_-]+)/) || rawUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+              if (match && match[1]) {
+                setPreviewDocument({ url: rawUrl, fileId: match[1], title: 'Nota Pengisian BBM Duren Sawit' });
+              } else {
+                setPreviewDocument({ url: rawUrl, title: 'Nota Pengisian BBM Duren Sawit' });
+              }
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* Modal Laporan Keuangan Finance */}
-      <FinancialReportsModal
-        isOpen={isFinancialReportsModalOpen}
-        onClose={() => setIsFinancialReportsModalOpen(false)}
-        requests={requests}
-        usageItems={usageItems}
-        profiles={profiles}
-        role={activeRole}
-      />
+      {isFinancialReportsModalOpen && (
+        <Suspense fallback={null}>
+          <FinancialReportsModal
+            isOpen={isFinancialReportsModalOpen}
+            onClose={() => setIsFinancialReportsModalOpen(false)}
+            requests={requests}
+            usageItems={usageItems}
+            profiles={profiles}
+            role={activeRole}
+          />
+        </Suspense>
+      )}
 
       {/* Modal Pratinjau Dashboard User Administrator */}
-      <UserDashboardPreviewModal
-        isOpen={isUserDashboardPreviewModalOpen}
-        onClose={() => setIsUserDashboardPreviewModalOpen(false)}
-        profiles={profiles}
-        requests={requests}
-        usageItems={usageItems}
-        activities={activities}
-        histories={itemReviewHistories}
-        sites={sites}
-        googleToken={token || ''}
-      />
+      {isUserDashboardPreviewModalOpen && (
+        <Suspense fallback={null}>
+          <UserDashboardPreviewModal
+            isOpen={isUserDashboardPreviewModalOpen}
+            onClose={() => setIsUserDashboardPreviewModalOpen(false)}
+            profiles={profiles}
+            requests={requests}
+            usageItems={usageItems}
+            activities={activities}
+            histories={itemReviewHistories}
+            sites={sites}
+            googleToken={token || ''}
+          />
+        </Suspense>
+      )}
 
       {/* Modal Popup Preview Logo DIOMS */}
       {isDiomsLogoModalOpen && (
@@ -6086,87 +6467,95 @@ export default function App() {
 
       {/* Root Action Modals */}
       {reviewBudgetReq && (
-        <ReviewBudgetModal
-          request={reviewBudgetReq}
-          requesterName={profiles.find(p => p.email.toLowerCase() === reviewBudgetReq.userEmail.toLowerCase())?.nama || reviewBudgetReq.userEmail}
-          profiles={profiles}
-          sites={sites}
-          histories={itemReviewHistories}
-          role={activeRole}
-          onApprove={handleReviewBudget}
-          onReject={handleRejectBudget}
-          onClose={() => setReviewBudgetReq(null)}
-        />
+        <Suspense fallback={null}>
+          <ReviewBudgetModal
+            request={reviewBudgetReq}
+            requesterName={profiles.find(p => p.email.toLowerCase() === reviewBudgetReq.userEmail.toLowerCase())?.nama || reviewBudgetReq.userEmail}
+            profiles={profiles}
+            sites={sites}
+            histories={itemReviewHistories}
+            role={activeRole}
+            onApprove={handleReviewBudget}
+            onReject={handleRejectBudget}
+            onClose={() => setReviewBudgetReq(null)}
+          />
+        </Suspense>
       )}
 
       {requestHistoryModalItem && (
-        <ItemHistoryModal
-          item={requestHistoryModalItem}
-          histories={itemReviewHistories}
-          googleToken={token || ''}
-          spreadsheetId={SPREADSHEET_ID}
-          onClose={() => setRequestHistoryModalItem(null)}
-          onPreviewDocument={setPreviewDocument}
-        />
+        <Suspense fallback={null}>
+          <ItemHistoryModal
+            item={requestHistoryModalItem}
+            histories={itemReviewHistories}
+            googleToken={token || ''}
+            spreadsheetId={SPREADSHEET_ID}
+            onClose={() => setRequestHistoryModalItem(null)}
+            onPreviewDocument={setPreviewDocument}
+          />
+        </Suspense>
       )}
 
       {reviewReportReq && (
-        <ReviewReportModal
-          request={reviewReportReq}
-          requesterName={profiles.find(p => p.email.toLowerCase() === reviewReportReq.userEmail.toLowerCase())?.nama || reviewReportReq.userEmail}
-          items={usageItems}
-          role={activeRole}
-          onSubmitReview={handleReviewUsageItems}
-          onClose={() => {
-            setReviewReportReq(null);
-            setIsReviewOnlyModal(false);
-          }}
-          onPreviewDocument={setPreviewDocument}
-          activities={activities}
-          profiles={profiles}
-          requests={requests}
-          histories={itemReviewHistories}
-          isReviewOnly={isReviewOnlyModal}
-        />
+        <Suspense fallback={null}>
+          <ReviewReportModal
+            request={reviewReportReq}
+            requesterName={profiles.find(p => p.email.toLowerCase() === reviewReportReq.userEmail.toLowerCase())?.nama || reviewReportReq.userEmail}
+            items={usageItems}
+            role={activeRole}
+            onSubmitReview={handleReviewUsageItems}
+            onClose={() => {
+              setReviewReportReq(null);
+              setIsReviewOnlyModal(false);
+            }}
+            onPreviewDocument={setPreviewDocument}
+            activities={activities}
+            profiles={profiles}
+            requests={requests}
+            histories={itemReviewHistories}
+            isReviewOnly={isReviewOnlyModal}
+          />
+        </Suspense>
       )}
 
       {pendingSharedRecord && (
-        <FinanceSharedReceiptModal
-          activeRole={activeRole}
-          sharedRecord={pendingSharedRecord}
-          requests={requests}
-          histories={itemReviewHistories}
-          usageItems={usageItems}
-          profiles={profiles}
-          userEmail={userProfile?.email}
-          userProfile={userProfile}
-          onSubmitTransferBbmDS={handleTransferBbmDSSubmit}
-          onSwitchToFinanceRole={() => {
-            setActiveRole(Role.FINANCE);
-            setDashboardTab('APPROVAL');
-            setStatusFilter('APPROVED');
-            setActiveView('dashboard');
-          }}
-          onSelectCandidate={(candidateReq, file) => {
-            setSharedFilePrefill({ file, recordId: pendingSharedRecord?.id });
-            setTransferReq(candidateReq);
-            setPendingSharedRecord(null);
-          }}
-          onSelectAdjustmentUser={(user, file) => {
-            setSharedFilePrefill({ file, recordId: pendingSharedRecord?.id });
-            setAdjustmentInitialUser(user);
-            setActiveRole(Role.FINANCE);
-            setActiveView('adjustment');
-            setPendingSharedRecord(null);
-          }}
-          onClose={async () => {
-            if (pendingSharedRecord?.id && !pendingSharedRecord.id.startsWith('admin_preview_')) {
-              await deleteSharedReceipt(pendingSharedRecord.id);
-            }
-            await clearAllSharedReceipts();
-            setPendingSharedRecord(null);
-          }}
-        />
+        <Suspense fallback={null}>
+          <FinanceSharedReceiptModal
+            activeRole={activeRole}
+            sharedRecord={pendingSharedRecord}
+            requests={requests}
+            histories={itemReviewHistories}
+            usageItems={usageItems}
+            profiles={profiles}
+            userEmail={userProfile?.email}
+            userProfile={userProfile}
+            onSubmitTransferBbmDS={handleTransferBbmDSSubmit}
+            onSwitchToFinanceRole={() => {
+              setActiveRole(Role.FINANCE);
+              setDashboardTab('APPROVAL');
+              setStatusFilter('APPROVED');
+              setActiveView('dashboard');
+            }}
+            onSelectCandidate={(candidateReq, file) => {
+              setSharedFilePrefill({ file, recordId: pendingSharedRecord?.id });
+              setTransferReq(candidateReq);
+              setPendingSharedRecord(null);
+            }}
+            onSelectAdjustmentUser={(user, file) => {
+              setSharedFilePrefill({ file, recordId: pendingSharedRecord?.id });
+              setAdjustmentInitialUser(user);
+              setActiveRole(Role.FINANCE);
+              setActiveView('adjustment');
+              setPendingSharedRecord(null);
+            }}
+            onClose={async () => {
+              if (pendingSharedRecord?.id && !pendingSharedRecord.id.startsWith('admin_preview_')) {
+                await deleteSharedReceipt(pendingSharedRecord.id);
+              }
+              await clearAllSharedReceipts();
+              setPendingSharedRecord(null);
+            }}
+          />
+        </Suspense>
       )}
 
       {shareAccessDeniedModal?.open && (
@@ -6213,35 +6602,37 @@ export default function App() {
       )}
 
       {transferReq && (
-        <TransferModal
-          request={transferReq}
-          requesterName={profiles.find(p => p.email.toLowerCase() === transferReq.userEmail.toLowerCase())?.nama || transferReq.userEmail}
-          profiles={profiles}
-          onTransfer={handleAdminTransfer}
-          onReject={handleRejectTransfer}
-          histories={itemReviewHistories}
-          usageItems={usageItems}
-          onPreviewDocument={setPreviewDocument}
-          onClose={async () => {
-            setTransferReq(null);
-            if (sharedFilePrefill?.recordId) {
-              const rec = await getLatestSharedReceipt();
-              if (rec) {
-                setPendingSharedRecord(rec);
+        <Suspense fallback={null}>
+          <TransferModal
+            request={transferReq}
+            requesterName={profiles.find(p => p.email.toLowerCase() === transferReq.userEmail.toLowerCase())?.nama || transferReq.userEmail}
+            profiles={profiles}
+            onTransfer={handleAdminTransfer}
+            onReject={handleRejectTransfer}
+            histories={itemReviewHistories}
+            usageItems={usageItems}
+            onPreviewDocument={setPreviewDocument}
+            onClose={async () => {
+              setTransferReq(null);
+              if (sharedFilePrefill?.recordId) {
+                const rec = await getLatestSharedReceipt();
+                if (rec) {
+                  setPendingSharedRecord(rec);
+                }
+                setSharedFilePrefill(null);
               }
-              setSharedFilePrefill(null);
+            }}
+            googleToken={token!}
+            driveFolderId={driveFolderId}
+            onAuthError={handleGoogleAuthError}
+            approvedUsageAmount={
+              usageItems
+                .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
+                .reduce((sum, item) => sum + item.nominal, 0)
             }
-          }}
-          googleToken={token!}
-          driveFolderId={driveFolderId}
-          onAuthError={handleGoogleAuthError}
-          approvedUsageAmount={
-            usageItems
-              .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
-              .reduce((sum, item) => sum + item.nominal, 0)
-          }
-          initialFile={sharedFilePrefill?.file}
-        />
+            initialFile={sharedFilePrefill?.file}
+          />
+        </Suspense>
       )}
 
       {closingConfirmReq && (() => {
@@ -6429,17 +6820,21 @@ export default function App() {
         </div>
       )}
 
-      <DevicePermissionsModal
-        isOpen={isPermissionsModalOpen}
-        onClose={() => {
-          setIsPermissionsModalOpen(false);
-          try {
-            sessionStorage.setItem('op_permissions_modal_dismissed_session', 'true');
-          } catch {}
-        }}
-        onPermissionsUpdated={handlePermissionsUpdated}
-        userProfile={userProfile}
-      />
+      {isPermissionsModalOpen && (
+        <Suspense fallback={null}>
+          <DevicePermissionsModal
+            isOpen={isPermissionsModalOpen}
+            onClose={() => {
+              setIsPermissionsModalOpen(false);
+              try {
+                sessionStorage.setItem('op_permissions_modal_dismissed_session', 'true');
+              } catch {}
+            }}
+            onPermissionsUpdated={handlePermissionsUpdated}
+            userProfile={userProfile}
+          />
+        </Suspense>
+      )}
 
       {/* Global Loading Overlay (Transparansi Penuh, Spinner + Label Singkat, Non-Destructive) */}
       <FormProgressOverlay

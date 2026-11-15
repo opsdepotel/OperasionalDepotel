@@ -158,47 +158,56 @@ const ITEM_REVIEW_HISTORY_HEADERS = [
 function parseSheetRows<T>(headers: string[], rows: any[][], mapper: (rowMap: Record<string, any>) => T): T[] {
   if (!rows || rows.length <= 1) return [];
   const sheetHeaders = rows[0].map(h => String(h).trim());
+  const sheetHeadersNorm = sheetHeaders.map(sh => sh.toLowerCase().replace(/[^a-z0-9]/g, ''));
   const dataRows = rows.slice(1);
+
+  const resolvedCols = headers.map((h, colIndex) => {
+    let idx = sheetHeaders.indexOf(h);
+    if (idx === -1) {
+      const hNorm = h.toLowerCase().replace(/[^a-z0-9]/g, '');
+      idx = sheetHeadersNorm.findIndex(shNorm => {
+        if (shNorm === hNorm) return true;
+        if (hNorm === 'aksesbbm') {
+          return shNorm.startsWith('aksesbbm') || shNorm.includes('bbmdurensawit') || shNorm === 'bbm' || shNorm.includes('aksespengisianbbm');
+        }
+        if (hNorm === 'mobile') {
+          return shNorm.startsWith('mobile') || shNorm.includes('mobiledevice');
+        }
+        if (hNorm === 'deviceid') {
+          return shNorm.startsWith('deviceid');
+        }
+        return false;
+      });
+    }
+    if (idx === -1 && colIndex < sheetHeadersNorm.length && !sheetHeadersNorm[colIndex]) {
+      idx = colIndex;
+    }
+    return { header: h, idx };
+  });
+
+  const nonEmptySheetHeaders: { name: string; idx: number }[] = [];
+  for (let idx = 0; idx < sheetHeaders.length; idx++) {
+    const sh = sheetHeaders[idx];
+    if (sh) nonEmptySheetHeaders.push({ name: sh, idx });
+  }
 
   return dataRows.map((row) => {
     const rowMap: Record<string, any> = {
       _rawRow: row,
       _sheetHeaders: sheetHeaders
     };
-    headers.forEach((h, colIndex) => {
-      let idx = sheetHeaders.indexOf(h);
-      if (idx === -1) {
-        const hNorm = h.toLowerCase().replace(/[^a-z0-9]/g, '');
-        idx = sheetHeaders.findIndex(sh => {
-          const shNorm = sh.toLowerCase().replace(/[^a-z0-9]/g, '');
-          if (shNorm === hNorm) return true;
-          if (hNorm === 'aksesbbm') {
-            return shNorm.startsWith('aksesbbm') || shNorm.includes('bbmdurensawit') || shNorm === 'bbm' || shNorm.includes('aksespengisianbbm');
-          }
-          if (hNorm === 'mobile') {
-            return shNorm.startsWith('mobile') || shNorm.includes('mobiledevice');
-          }
-          if (hNorm === 'deviceid') {
-            return shNorm.startsWith('deviceid');
-          }
-          return false;
-        });
-      }
-      if (idx === -1 && colIndex < row.length) {
-        const existingColHeader = sheetHeaders[colIndex] ? sheetHeaders[colIndex].toLowerCase().replace(/[^a-z0-9]/g, '') : '';
-        if (!existingColHeader) {
-          idx = colIndex;
-        }
-      }
-      rowMap[h] = idx !== -1 && row[idx] !== undefined ? row[idx] : '';
-    });
+    for (let c = 0; c < resolvedCols.length; c++) {
+      const { header, idx } = resolvedCols[c];
+      rowMap[header] = idx !== -1 && row[idx] !== undefined ? row[idx] : '';
+    }
 
     // Also copy all original sheet header key-values into rowMap for flexibility
-    sheetHeaders.forEach((sh, idx) => {
-      if (sh && row[idx] !== undefined) {
-        rowMap[sh] = row[idx];
+    for (let c = 0; c < nonEmptySheetHeaders.length; c++) {
+      const { name, idx } = nonEmptySheetHeaders[c];
+      if (row[idx] !== undefined) {
+        rowMap[name] = row[idx];
       }
-    });
+    }
 
     return mapper(rowMap);
   });
@@ -2007,6 +2016,51 @@ function findRowIndexByHeaderAndValue(
   return -1;
 }
 
+async function findRowIndexFast(
+  token: string,
+  spreadsheetId: string,
+  sheetName: string,
+  primaryHeader: string,
+  targetValue: string,
+  fallbackHeaders: string[],
+  readErrorMessage: string
+): Promise<number> {
+  const colARes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A:A`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!colARes.ok) throw new Error(readErrorMessage);
+
+  const colAData = await colARes.json();
+  const colARows: any[][] = colAData.values || [];
+  if (colARows.length > 1) {
+    const colAHeaderNorm = String(colARows[0]?.[0] || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    const expectedHeadersNorm = [primaryHeader, ...fallbackHeaders].map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+    const normalizedTarget = String(targetValue || '').trim().toLowerCase();
+
+    for (let i = 1; i < colARows.length; i++) {
+      if (String(colARows[i]?.[0] || '').trim().toLowerCase() === normalizedTarget) {
+        return i;
+      }
+    }
+
+    if (expectedHeadersNorm.includes(colAHeaderNorm)) {
+      return -1;
+    }
+  }
+
+  // Fallback to full-sheet scan only if column A does not hold the ID header
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${sheetName}!A1:Z`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) throw new Error(readErrorMessage);
+
+  const data = await res.json();
+  const rows: any[][] = data.values || [];
+  return findRowIndexByHeaderAndValue(rows, primaryHeader, targetValue, fallbackHeaders);
+}
+
 // Update Budget Request
 export async function updateBudgetRequest(token: string, spreadsheetId: string, req: BudgetRequest): Promise<void> {
   if (token === 'mock_demo_token') {
@@ -2019,14 +2073,15 @@ export async function updateBudgetRequest(token: string, spreadsheetId: string, 
     return;
   }
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Z`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!res.ok) throw new Error('Gagal membaca data untuk update.');
-
-  const data = await res.json();
-  const rows: any[][] = data.values || [];
-  const rowIdx = findRowIndexByHeaderAndValue(rows, 'UID', req.id, ['id', 'pengajuanuid']);
+  const rowIdx = await findRowIndexFast(
+    token,
+    spreadsheetId,
+    'Pengajuan',
+    'UID',
+    req.id,
+    ['id', 'pengajuanuid'],
+    'Gagal membaca data untuk update.'
+  );
 
   if (rowIdx === -1) {
     throw new Error(`Data pengajuan dengan UID ${req.id} tidak ditemukan.`);
@@ -2154,14 +2209,15 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
     return;
   }
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!res.ok) throw new Error('Gagal membaca data laporan untuk update.');
-
-  const data = await res.json();
-  const rows: any[][] = data.values || [];
-  const rowIdx = findRowIndexByHeaderAndValue(rows, 'ItemUID', item.id, ['id', 'item_uid']);
+  const rowIdx = await findRowIndexFast(
+    token,
+    spreadsheetId,
+    'Laporan',
+    'ItemUID',
+    item.id,
+    ['id', 'item_uid'],
+    'Gagal membaca data laporan untuk update.'
+  );
 
   if (rowIdx === -1) {
     throw new Error(`Data item laporan dengan ItemUID ${item.id} tidak ditemukan.`);
@@ -2212,14 +2268,15 @@ export async function deleteUsageItem(token: string, spreadsheetId: string, item
     return;
   }
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:Z`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!res.ok) throw new Error('Gagal membaca data laporan untuk menghapus.');
-
-  const data = await res.json();
-  const rows: any[][] = data.values || [];
-  const rowIdx = findRowIndexByHeaderAndValue(rows, 'ItemUID', itemId, ['id', 'item_uid']);
+  const rowIdx = await findRowIndexFast(
+    token,
+    spreadsheetId,
+    'Laporan',
+    'ItemUID',
+    itemId,
+    ['id', 'item_uid'],
+    'Gagal membaca data laporan untuk menghapus.'
+  );
 
   if (rowIdx === -1) {
     throw new Error(`Data item laporan dengan ItemUID ${itemId} tidak ditemukan.`);
@@ -2249,14 +2306,15 @@ export async function deleteBudgetRequest(token: string, spreadsheetId: string, 
     return;
   }
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Pengajuan!A1:Z`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!res.ok) throw new Error('Gagal membaca data pengajuan untuk menghapus.');
-
-  const data = await res.json();
-  const rows: any[][] = data.values || [];
-  const rowIdx = findRowIndexByHeaderAndValue(rows, 'UID', requestId, ['id', 'request_uid', 'requestid', 'uid']);
+  const rowIdx = await findRowIndexFast(
+    token,
+    spreadsheetId,
+    'Pengajuan',
+    'UID',
+    requestId,
+    ['id', 'request_uid', 'requestid', 'uid'],
+    'Gagal membaca data pengajuan untuk menghapus.'
+  );
 
   if (rowIdx === -1) {
     console.warn(`Data pengajuan dengan UID ${requestId} tidak ditemukan saat penghapusan.`);
@@ -2408,14 +2466,15 @@ export async function updateUserActivity(token: string, spreadsheetId: string, a
     console.warn('Could not auto-verify Activity headers:', headerErr);
   }
 
-  const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:Z`, {
-    headers: { Authorization: `Bearer ${token}` }
-  });
-  if (!res.ok) throw new Error('Gagal membaca data kegiatan untuk update.');
-
-  const data = await res.json();
-  const rows: any[][] = data.values || [];
-  const rowIdx = findRowIndexByHeaderAndValue(rows, 'ActivityID', activity.id, ['id', 'activity_id']);
+  const rowIdx = await findRowIndexFast(
+    token,
+    spreadsheetId,
+    'Activity',
+    'ActivityID',
+    activity.id,
+    ['id', 'activity_id'],
+    'Gagal membaca data kegiatan untuk update.'
+  );
 
   if (rowIdx === -1) {
     throw new Error(`Data kegiatan dengan ActivityID ${activity.id} tidak ditemukan di Google Sheets.`);

@@ -1,7 +1,5 @@
 import React from 'react';
 import { FileSpreadsheet, X, Download } from 'lucide-react';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { BudgetRequest, UsageReportItem, UserProfile, ItemReviewHistory, Role, RequestStatus, ItemStatus } from '../types';
 import { formatDivisiSubDivisi, parseNumericValue } from '../lib/googleApi';
 import { useBackHandler } from '../hooks/useBackHandler';
@@ -224,7 +222,11 @@ export const UserOperationalBalanceReportModal: React.FC<UserOperationalBalanceR
     return b.id.localeCompare(a.id);
   });
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable')
+    ]);
     const doc = new jsPDF('landscape', 'mm', 'a4');
     const nowStr = new Date().toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
 

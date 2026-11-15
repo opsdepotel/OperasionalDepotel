@@ -18,6 +18,8 @@ import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader
 
 
 import { detectFakeGps } from '../lib/fakeGpsDetector';
+import { isMobileDevice } from '../lib/deviceUtils';
+import { validateCapturedActivityPhoto, ActivityPhotoCaptureSource } from '../lib/activityPhotoValidator';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture } from '../lib/aiRecapture';
@@ -97,6 +99,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
     String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
     String(userProfile?.mobile).trim() === '1';
+  const isStrictMobile = isMobileUser || isMobileDevice();
+  const supportsLiveCamera =
+    typeof navigator !== 'undefined' &&
+    Boolean(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function');
   const getTodayStr = () => {
     const d = new Date();
     const year = d.getFullYear();
@@ -440,11 +446,6 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   };
 
   // Screen Recapture back handlers
-  useBackHandler(showAddForm, () => {
-    setShowAddForm(false);
-    formOpenPositionRef.current = null;
-    formOpenedTimeRef.current = null;
-  }, 'activity_addForm');
   useBackHandler(!!selectedPhotoUrl, resetPhotoModal, 'activity_photoModal');
   useBackHandler(isAiRecaptureModalOpen, () => setIsAiRecaptureModalOpen(false), 'activity_aiRecaptureModal');
 
@@ -537,8 +538,395 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [originalPhotoFile, setOriginalPhotoFile] = useState<File | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [photoValidationFlags, setPhotoValidationFlags] = useState<string[]>([]);
+  const [capturedGpsSnapshot, setCapturedGpsSnapshot] = useState<{ coords: string; accuracy: number | null } | null>(null);
   const [isFetchingGps, setIsFetchingGps] = useState(false);
   const [gpsError, setGpsError] = useState<string | null>(null);
+
+  // Hybrid Live Camera Modal State & Refs (Option 4)
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+  const [isStartingCamera, setIsStartingCamera] = useState(false);
+  const [isCameraReady, setIsCameraReady] = useState(false);
+  const [cameraFallbackReason, setCameraFallbackReason] = useState<string | null>(null);
+  const [cameraFacingMode, setCameraFacingMode] = useState<'environment' | 'user'>('environment');
+  const [isCapturingFrame, setIsCapturingFrame] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraStartTokenRef = useRef(0);
+
+  const stopCameraStream = () => {
+    cameraStartTokenRef.current += 1;
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => {
+        try {
+          track.stop();
+        } catch {}
+      });
+      cameraStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+        videoRef.current.srcObject = null;
+      } catch {}
+    }
+    setIsCameraReady(false);
+    setIsStartingCamera(false);
+  };
+
+  const closeLiveCameraModal = () => {
+    stopCameraStream();
+    setIsCameraModalOpen(false);
+    setCameraFallbackReason(null);
+    setIsCapturingFrame(false);
+  };
+
+  useBackHandler(showAddForm, () => {
+    stopCameraStream();
+    setIsCameraModalOpen(false);
+    setCameraFallbackReason(null);
+    setShowAddForm(false);
+    setPhotoValidationFlags([]);
+    setCapturedGpsSnapshot(null);
+    formOpenPositionRef.current = null;
+    formOpenedTimeRef.current = null;
+  }, 'activity_addForm');
+  useBackHandler(isCameraModalOpen, closeLiveCameraModal, 'activity_liveCameraModal');
+
+  useEffect(() => {
+    return () => {
+      stopCameraStream();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isCameraModalOpen) return;
+    const handleVisibilityOrHide = () => {
+      if (document.hidden && cameraStreamRef.current) {
+        stopCameraStream();
+        setCameraFallbackReason(
+          'Kamera dijeda saat aplikasi berpindah ke latar belakang agar perangkat tidak terkunci. Ketuk "Coba Kamera Langsung" atau gunakan "Kamera Bawaan HP".'
+        );
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityOrHide);
+    window.addEventListener('pagehide', handleVisibilityOrHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityOrHide);
+      window.removeEventListener('pagehide', handleVisibilityOrHide);
+    };
+  }, [isCameraModalOpen]);
+
+  const startLiveCamera = async (facing: 'environment' | 'user' = cameraFacingMode) => {
+    const token = ++cameraStartTokenRef.current;
+
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {}
+      });
+      cameraStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      try {
+        videoRef.current.srcObject = null;
+      } catch {}
+    }
+
+    setIsStartingCamera(true);
+    setIsCameraReady(false);
+    setCameraFallbackReason(null);
+
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setIsStartingCamera(false);
+      setCameraFallbackReason(
+        'Browser perangkat ini tidak mendukung kamera langsung di dalam halaman. Silakan tekan tombol "Buka Kamera Bawaan HP" di bawah.'
+      );
+      return;
+    }
+
+    const requestWithTimeout = (constraints: MediaStreamConstraints, ms = 7000) => {
+      return new Promise<MediaStream>((resolve, reject) => {
+        let settled = false;
+        const timer = window.setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            reject(new Error('CAMERA_TIMEOUT'));
+          }
+        }, ms);
+
+        navigator.mediaDevices
+          .getUserMedia(constraints)
+          .then((stream) => {
+            window.clearTimeout(timer);
+            if (settled) {
+              stream.getTracks().forEach((t) => {
+                try {
+                  t.stop();
+                } catch {}
+              });
+              return;
+            }
+            settled = true;
+            resolve(stream);
+          })
+          .catch((err) => {
+            window.clearTimeout(timer);
+            if (settled) return;
+            settled = true;
+            reject(err);
+          });
+      });
+    };
+
+    try {
+      let stream: MediaStream;
+      try {
+        stream = await requestWithTimeout({
+          video: {
+            facingMode: { ideal: facing },
+            width: { ideal: 1600 },
+            height: { ideal: 1200 }
+          },
+          audio: false
+        });
+      } catch (err1: any) {
+        const name1 = err1?.name || '';
+        if (name1 === 'OverconstrainedError' || name1 === 'ConstraintNotSatisfiedError' || name1 === 'NotFoundError') {
+          try {
+            stream = await requestWithTimeout({
+              video: { facingMode: facing },
+              audio: false
+            });
+          } catch (err2: any) {
+            const name2 = err2?.name || '';
+            if (name2 === 'OverconstrainedError' || name2 === 'ConstraintNotSatisfiedError' || name2 === 'NotFoundError') {
+              stream = await requestWithTimeout({
+                video: true,
+                audio: false
+              });
+            } else {
+              throw err2;
+            }
+          }
+        } else {
+          throw err1;
+        }
+      }
+
+      if (token !== cameraStartTokenRef.current) {
+        stream.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+        });
+        return;
+      }
+
+      cameraStreamRef.current = stream;
+
+      let videoEl = videoRef.current;
+      if (!videoEl) {
+        await new Promise<void>((r) => window.requestAnimationFrame(() => r()));
+        videoEl = videoRef.current;
+      }
+
+      if (token !== cameraStartTokenRef.current) {
+        stream.getTracks().forEach((t) => {
+          try {
+            t.stop();
+          } catch {}
+        });
+        return;
+      }
+
+      if (videoEl) {
+        videoEl.srcObject = stream;
+        await new Promise<void>((resolveReady) => {
+          let done = false;
+          const finish = () => {
+            if (done) return;
+            done = true;
+            resolveReady();
+          };
+          const checkReady = () => {
+            if (videoEl && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+              finish();
+            }
+          };
+          videoEl.onloadedmetadata = () => {
+            videoEl.play().catch(() => {});
+            checkReady();
+          };
+          videoEl.onplaying = checkReady;
+          videoEl.play().catch(() => {});
+
+          const pollReady = window.setInterval(() => {
+            if (token !== cameraStartTokenRef.current) {
+              window.clearInterval(pollReady);
+              finish();
+              return;
+            }
+            checkReady();
+          }, 120);
+
+          window.setTimeout(() => {
+            window.clearInterval(pollReady);
+            finish();
+          }, 3500);
+        });
+
+        if (token !== cameraStartTokenRef.current) return;
+
+        if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+          setIsCameraReady(true);
+          setIsStartingCamera(false);
+        } else {
+          stopCameraStream();
+          setCameraFallbackReason(
+            'Pratinjau kamera langsung tidak menampilkan gambar. Silakan gunakan "Buka Kamera Bawaan HP" di bawah.'
+          );
+        }
+      } else {
+        stopCameraStream();
+        setCameraFallbackReason(
+          'Tampilan pratinjau kamera belum siap. Silakan gunakan "Buka Kamera Bawaan HP" di bawah.'
+        );
+      }
+    } catch (err: any) {
+      if (token !== cameraStartTokenRef.current) return;
+      stopCameraStream();
+
+      const errName = err?.name || '';
+      const errMsg = String(err?.message || '');
+      let reason =
+        'Kamera langsung gagal dibuka dari browser. Silakan gunakan tombol "Buka Kamera Bawaan HP" di bawah ini.';
+
+      if (errName === 'NotAllowedError' || errName === 'PermissionDeniedError') {
+        reason =
+          'Izin akses kamera di browser belum diizinkan atau ditolak. Anda tetap dapat langsung memotret menggunakan tombol "Buka Kamera Bawaan HP" di bawah ini.';
+      } else if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+        reason =
+          'Kamera sedang dipakai aplikasi lain atau terkunci sementara oleh perangkat. Tutup aplikasi kamera lain atau langsung tekan "Buka Kamera Bawaan HP".';
+      } else if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+        reason =
+          'Perangkat kamera tidak ditemukan oleh browser. Silakan langsung gunakan tombol "Buka Kamera Bawaan HP" di bawah ini.';
+      } else if (errMsg === 'CAMERA_TIMEOUT') {
+        reason =
+          'Kamera membutuhkan waktu terlalu lama untuk terbuka. Silakan langsung gunakan tombol "Buka Kamera Bawaan HP" di bawah ini.';
+      }
+
+      setCameraFallbackReason(reason);
+    }
+  };
+
+  const handleOpenLiveCamera = () => {
+    if (!selectedSiteId.trim() || !keterangan.trim()) {
+      setErrorMsg('Wajib mengisi SiteID dan Keterangan Kegiatan terlebih dahulu.');
+      return;
+    }
+    if (!isValidGpsCoordinates(coordinatesActual)) {
+      setErrorMsg(
+        'Data koordinat GPS wajib ada sebelum mengambil foto bukti kegiatan. Silakan aktifkan lokasi (GPS) dan klik "Ambil Ulang GPS".'
+      );
+      return;
+    }
+    setErrorMsg(null);
+    setIsCameraModalOpen(true);
+    void startLiveCamera(cameraFacingMode);
+  };
+
+  const handleSwitchCameraFacing = () => {
+    const nextFacing = cameraFacingMode === 'environment' ? 'user' : 'environment';
+    setCameraFacingMode(nextFacing);
+    void startLiveCamera(nextFacing);
+  };
+
+  const handleCaptureLiveFrame = () => {
+    const videoEl = videoRef.current;
+    if (!videoEl || !isCameraReady || isCapturingFrame) return;
+
+    const srcW = videoEl.videoWidth;
+    const srcH = videoEl.videoHeight;
+    if (!srcW || !srcH) {
+      stopCameraStream();
+      setCameraFallbackReason(
+        'Bingkai kamera belum terbaca. Silakan gunakan "Buka Kamera Bawaan HP" di bawah ini.'
+      );
+      return;
+    }
+
+    setIsCapturingFrame(true);
+    try {
+      const MAX_DIM = 1600;
+      let dstW = srcW;
+      let dstH = srcH;
+      if (dstW > MAX_DIM || dstH > MAX_DIM) {
+        if (dstW > dstH) {
+          dstH = Math.round((dstH * MAX_DIM) / dstW);
+          dstW = MAX_DIM;
+        } else {
+          dstW = Math.round((dstW * MAX_DIM) / dstH);
+          dstH = MAX_DIM;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = dstW;
+      canvas.height = dstH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        setIsCapturingFrame(false);
+        stopCameraStream();
+        setCameraFallbackReason(
+          'Gagal memproses gambar kamera. Silakan gunakan "Buka Kamera Bawaan HP" di bawah ini.'
+        );
+        return;
+      }
+
+      ctx.drawImage(videoEl, 0, 0, dstW, dstH);
+      canvas.toBlob(
+        (blob) => {
+          canvas.width = 0;
+          canvas.height = 0;
+          setIsCapturingFrame(false);
+
+          if (!blob || blob.size === 0) {
+            stopCameraStream();
+            setCameraFallbackReason(
+              'Hasil tangkapan kamera kosong. Silakan coba lagi atau gunakan "Buka Kamera Bawaan HP".'
+            );
+            return;
+          }
+
+          const capturedFile = new File([blob], `ACT_LIVE_${Date.now()}.jpg`, {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          });
+
+          stopCameraStream();
+          setIsCameraModalOpen(false);
+          setCameraFallbackReason(null);
+          setErrorMsg(null);
+          setPhotoValidationFlags([]);
+          setCapturedGpsSnapshot({
+            coords: coordinatesActual,
+            accuracy: gpsAccuracy
+          });
+          setOriginalPhotoFile(capturedFile);
+        },
+        'image/jpeg',
+        0.92
+      );
+    } catch {
+      setIsCapturingFrame(false);
+      stopCameraStream();
+      setCameraFallbackReason(
+        'Terjadi kendala saat menangkap foto. Silakan gunakan "Buka Kamera Bawaan HP" di bawah ini.'
+      );
+    }
+  };
 
   // Canvas utility to apply watermark to captured photo with downscaling and JPEG compression to prevent OOM crash
   const applyWatermarkToImage = (
@@ -703,8 +1091,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           siteInfoLine = `${siteIdText}_${siteName.trim()}`;
         }
 
-        const coordStr = coordinatesActual 
-          ? (gpsAccuracy !== null ? `GPS: ${coordinatesActual} (±${gpsAccuracy}m)` : `GPS: ${coordinatesActual}`)
+        const wmCoords = capturedGpsSnapshot?.coords || coordinatesActual;
+        const wmAcc = capturedGpsSnapshot ? capturedGpsSnapshot.accuracy : gpsAccuracy;
+        const coordStr = wmCoords 
+          ? (wmAcc !== null ? `GPS: ${wmCoords} (±${wmAcc}m)` : `GPS: ${wmCoords}`)
           : 'GPS Tidak Tersedia';
 
         const watermarkLines = [
@@ -741,7 +1131,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     return () => {
       active = false;
     };
-  }, [originalPhotoFile, selectedSiteId, siteName, coordinatesDb, coordinatesActual]);
+  }, [originalPhotoFile, selectedSiteId, siteName, coordinatesDb, capturedGpsSnapshot]);
 
   const matchedSite = selectedSiteId.trim() ? sites.find(s => s.siteId.toUpperCase() === selectedSiteId.trim().toUpperCase()) : null;
 
@@ -863,40 +1253,57 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     };
   }, [showAddForm]);
 
-  // Handle Photo input
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Photo input (Native Camera fallback or Desktop Gallery)
+  const handlePhotoChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    captureSource: ActivityPhotoCaptureSource = 'native-camera'
+  ) => {
+    const inputEl = e.target;
     if (!selectedSiteId.trim() || !keterangan.trim()) {
       setErrorMsg('Wajib mengisi SiteID dan Keterangan Kegiatan terlebih dahulu.');
-      e.target.value = '';
+      inputEl.value = '';
       return;
     }
     if (!isValidGpsCoordinates(coordinatesActual)) {
       setErrorMsg('Data koordinat GPS wajib ada sebelum mengambil foto bukti kegiatan. Silakan aktifkan lokasi (GPS) dan klik "Ambil Ulang GPS".');
-      e.target.value = '';
+      inputEl.value = '';
       return;
     }
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
 
-      // Validasi file.lastModified: Mencegah upload foto lama dari galeri pada pengguna mobile
-      if (isMobileUser && file.lastModified && !isNaN(file.lastModified) && file.lastModified > 0) {
-        const fileAgeMs = Math.abs(Date.now() - file.lastModified);
-        // Batas toleransi 5 menit (300.000 ms) - aman untuk alur pemotretan langsung kamera HP
-        const maxAgeMs = 5 * 60 * 1000;
+    const file = inputEl.files && inputEl.files[0];
+    if (!file) return;
 
-        if (fileAgeMs > maxAgeMs) {
-          setErrorMsg('Foto tidak dapat digunakan karena terdeteksi berasal dari Galeri/Penyimpanan HP. Anda wajib memotret secara langsung di lokasi saat ini menggunakan Kamera HP.');
-          setOriginalPhotoFile(null);
-          setPhotoFile(null);
-          setPhotoPreview(null);
-          e.target.value = '';
-          return;
-        }
-      }
+    // Close live camera modal cleanly if opened via fallback
+    stopCameraStream();
+    setIsCameraModalOpen(false);
+    setCameraFallbackReason(null);
 
-      setErrorMsg(null);
-      setOriginalPhotoFile(file);
+    const validation = await validateCapturedActivityPhoto(file, {
+      enforceStrictMobile: isStrictMobile,
+      captureSource
+    });
+
+    if (!validation.allowed) {
+      setErrorMsg(
+        validation.rejectReason ||
+          'Foto tidak dapat digunakan karena terdeteksi berasal dari Galeri/Penyimpanan HP. Anda wajib memotret secara langsung di lokasi saat ini menggunakan Kamera HP.'
+      );
+      setOriginalPhotoFile(null);
+      setPhotoFile(null);
+      setPhotoPreview(null);
+      setPhotoValidationFlags([]);
+      setCapturedGpsSnapshot(null);
+      inputEl.value = '';
+      return;
     }
+
+    setErrorMsg(null);
+    setPhotoValidationFlags(validation.auditFlags);
+    setCapturedGpsSnapshot({
+      coords: coordinatesActual,
+      accuracy: gpsAccuracy
+    });
+    setOriginalPhotoFile(file);
   };
 
   // Get real GPS location
@@ -975,6 +1382,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         formOpenPositionRef.current
       );
 
+      const combinedIndikasiFake = fakeCheck.isFake || photoValidationFlags.length > 0;
+      const combinedFakeReason = [fakeCheck.reason, ...photoValidationFlags]
+        .filter(Boolean)
+        .join(' | ');
+
       const actPayload = {
         tanggal: getTodayStr(), // System date for real-time tracking
         siteId: finalSiteId,
@@ -982,12 +1394,14 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         coordinatesDb,
         coordinatesActual,
         keterangan: keterangan.trim(),
-        indikasiFake: fakeCheck.isFake,
-        fakeReason: fakeCheck.reason
+        indikasiFake: combinedIndikasiFake,
+        fakeReason: combinedFakeReason
       };
 
-      if (!isOnline) {
-        await saveOfflineActivity(actPayload, photoPreview || photoFile);
+      const resetFormFields = () => {
+        stopCameraStream();
+        setIsCameraModalOpen(false);
+        setCameraFallbackReason(null);
         setSelectedSiteId('');
         setSiteName('');
         setCoordinatesDb('');
@@ -998,30 +1412,23 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         setOriginalPhotoFile(null);
         setPhotoFile(null);
         setPhotoPreview(null);
+        setPhotoValidationFlags([]);
+        setCapturedGpsSnapshot(null);
         setShowAddForm(false);
         formOpenPositionRef.current = null;
         formOpenedTimeRef.current = null;
+      };
+
+      if (!isOnline) {
+        await saveOfflineActivity(actPayload, photoPreview || photoFile);
+        resetFormFields();
         setSyncNotice('Laporan tersimpan di perangkat. Akan otomatis dikirim saat jaringan internet kembali terhubung.');
         return;
       }
 
       try {
         await onSaveActivity(actPayload, photoFile);
-        
-        // Reset form
-        setSelectedSiteId('');
-        setSiteName('');
-        setCoordinatesDb('');
-        setCoordinatesActual('');
-        setGpsAccuracy(null);
-        setGpsAddress('');
-        setKeterangan('');
-        setOriginalPhotoFile(null);
-        setPhotoFile(null);
-        setPhotoPreview(null);
-        setShowAddForm(false);
-        formOpenPositionRef.current = null;
-        formOpenedTimeRef.current = null;
+        resetFormFields();
       } catch (err: any) {
         const errStr = (err.message || String(err)).toLowerCase();
         const isNetworkErr = !navigator.onLine || 
@@ -1039,19 +1446,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
 
         if (isNetworkErr) {
           await saveOfflineActivity(actPayload, photoPreview || photoFile);
-          setSelectedSiteId('');
-          setSiteName('');
-          setCoordinatesDb('');
-          setCoordinatesActual('');
-          setGpsAccuracy(null);
-          setGpsAddress('');
-          setKeterangan('');
-          setOriginalPhotoFile(null);
-          setPhotoFile(null);
-          setPhotoPreview(null);
-          setShowAddForm(false);
-          formOpenPositionRef.current = null;
-          formOpenedTimeRef.current = null;
+          resetFormFields();
           setSyncNotice('Laporan tersimpan di perangkat. Akan otomatis dikirim saat jaringan internet kembali terhubung.');
         } else {
           setErrorMsg(err.message || 'Gagal menyimpan kegiatan.');
@@ -1297,6 +1692,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         <div className="bg-white border-b border-slate-200 px-4 py-4 sticky top-0 z-10 flex items-center justify-between">
           <button 
             onClick={() => {
+              stopCameraStream();
+              setIsCameraModalOpen(false);
+              setCameraFallbackReason(null);
               setShowAddForm(false);
               setErrorMsg(null);
               setSelectedSiteId('');
@@ -1307,6 +1705,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               setOriginalPhotoFile(null);
               setPhotoFile(null);
               setPhotoPreview(null);
+              setPhotoValidationFlags([]);
+              setCapturedGpsSnapshot(null);
               formOpenPositionRef.current = null;
               formOpenedTimeRef.current = null;
             }}
@@ -1464,6 +1864,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           setOriginalPhotoFile(null);
                           setPhotoFile(null);
                           setPhotoPreview(null);
+                          setPhotoValidationFlags([]);
+                          setCapturedGpsSnapshot(null);
+                          setErrorMsg(null);
                         }}
                         className="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-white text-[10px] font-bold px-2.5 py-1 rounded-lg cursor-pointer"
                       >
@@ -1486,21 +1889,55 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         )}
                       </span>
                     </div>
-                  ) : isMobileUser ? (
-                    <label className="cursor-pointer flex flex-col items-center justify-center gap-1.5 py-3.5 px-6 my-2 bg-sky-50/50 hover:bg-sky-100/60 active:scale-[0.98] border border-sky-200/60 text-sky-700 rounded-2xl shadow-xs transition-all">
-                      <Camera className="w-6 h-6 text-sky-600" />
-                      <span className="text-xs font-bold text-sky-800 tracking-wide">Kamera HP</span>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        capture="environment"
-                        onChange={handlePhotoChange}
-                        onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
-                        className="hidden"
-                        id="activity-camera-input"
-                        required
-                      />
-                    </label>
+                  ) : isStrictMobile ? (
+                    <div className="flex flex-col items-center gap-2 my-1 w-full">
+                      {supportsLiveCamera ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleOpenLiveCamera}
+                            id="activity-live-camera-btn"
+                            className="cursor-pointer flex flex-col items-center justify-center gap-1.5 py-3.5 px-6 bg-sky-50/70 hover:bg-sky-100/70 active:scale-[0.98] border border-sky-200/80 text-sky-700 rounded-2xl shadow-xs transition-all w-full max-w-[240px]"
+                          >
+                            <Camera className="w-6 h-6 text-sky-600" />
+                            <span className="text-xs font-bold text-sky-900 tracking-wide">Buka Kamera HP</span>
+                            <span className="text-[10px] text-sky-600 font-medium">Pemotretan langsung anti-galeri</span>
+                          </button>
+
+                          <label className="cursor-pointer inline-flex items-center gap-1.5 text-[10px] font-semibold text-slate-500 hover:text-indigo-600 py-1 px-2.5 rounded-lg hover:bg-slate-100 transition-colors">
+                            <Smartphone className="w-3 h-3" />
+                            <span>Atau gunakan Kamera Bawaan HP</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              onChange={(e) => { void handlePhotoChange(e, 'native-camera'); }}
+                              onClick={(e) => {
+                                stopCameraStream();
+                                (e.target as HTMLInputElement).value = '';
+                              }}
+                              className="hidden"
+                              id="activity-camera-input"
+                            />
+                          </label>
+                        </>
+                      ) : (
+                        <label className="cursor-pointer flex flex-col items-center justify-center gap-1.5 py-3.5 px-6 my-1 bg-sky-50/50 hover:bg-sky-100/60 active:scale-[0.98] border border-sky-200/60 text-sky-700 rounded-2xl shadow-xs transition-all">
+                          <Camera className="w-6 h-6 text-sky-600" />
+                          <span className="text-xs font-bold text-sky-800 tracking-wide">Kamera HP</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={(e) => { void handlePhotoChange(e, 'native-camera'); }}
+                            onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+                            className="hidden"
+                            id="activity-camera-input"
+                            required
+                          />
+                        </label>
+                      )}
+                    </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2 p-2 w-full">
                       <label className="cursor-pointer flex flex-col items-center justify-center p-3 bg-sky-50/50 hover:bg-sky-100/60 text-sky-700 border border-sky-200/60 rounded-xl transition-all">
@@ -1510,7 +1947,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           type="file"
                           accept="image/*"
                           capture="environment"
-                          onChange={handlePhotoChange}
+                          onChange={(e) => { void handlePhotoChange(e, 'native-camera'); }}
                           onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                           className="hidden"
                         />
@@ -1521,7 +1958,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         <input
                           type="file"
                           accept="image/*"
-                          onChange={handlePhotoChange}
+                          onChange={(e) => { void handlePhotoChange(e, 'gallery'); }}
                           onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                           className="hidden"
                         />
@@ -1553,6 +1990,175 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             </form>
           </div>
         </div>
+
+        {/* Hybrid In-App Live Camera Modal (Option 4) */}
+        {isCameraModalOpen && (
+          <div className="fixed inset-0 z-[120] bg-slate-950/95 flex flex-col justify-between p-4 text-white animate-fade-in">
+            {/* Top Bar */}
+            <div className="flex items-center justify-between gap-2 max-w-lg w-full mx-auto">
+              <div className="min-w-0">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-sky-300 block">
+                  Kamera Kegiatan Harian
+                </span>
+                <p className="text-xs font-bold text-white truncate">
+                  {selectedSiteId.trim().toUpperCase()} {matchedSite ? `- ${matchedSite.siteName}` : ''}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {!cameraFallbackReason && (
+                  <button
+                    type="button"
+                    onClick={handleSwitchCameraFacing}
+                    disabled={isStartingCamera || isCapturingFrame}
+                    title="Ganti Kamera Depan / Belakang"
+                    className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all cursor-pointer disabled:opacity-40"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={closeLiveCameraModal}
+                  className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white border border-white/15 transition-all cursor-pointer"
+                  title="Tutup Kamera"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Center Viewfinder or Guaranteed Fallback */}
+            <div className="flex-1 flex items-center justify-center my-3 max-w-lg w-full mx-auto min-h-0">
+              {cameraFallbackReason ? (
+                <div className="bg-slate-900 border border-slate-700 rounded-2xl p-5 w-full space-y-4 text-center shadow-2xl">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/30 text-amber-300 flex items-center justify-center mx-auto">
+                    <AlertTriangle className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <h3 className="text-sm font-bold text-white">Gunakan Kamera Bawaan HP</h3>
+                    <p className="text-xs text-slate-300 leading-relaxed">{cameraFallbackReason}</p>
+                  </div>
+                  <div className="space-y-2 pt-1">
+                    <label
+                      onClick={() => stopCameraStream()}
+                      className="w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-lg transition-all"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Buka Kamera Bawaan HP</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        onChange={(e) => { void handlePhotoChange(e, 'native-camera'); }}
+                        onClick={(e) => {
+                          stopCameraStream();
+                          (e.target as HTMLInputElement).value = '';
+                        }}
+                        className="hidden"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void startLiveCamera(cameraFacingMode)}
+                      className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs rounded-xl flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700 transition-all"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Coba Kamera Langsung Lagi</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="relative w-full h-full max-h-[65vh] rounded-2xl overflow-hidden bg-black border border-white/15 flex items-center justify-center shadow-2xl">
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                  />
+                  {isStartingCamera && (
+                    <div className="absolute inset-0 bg-slate-950/80 flex flex-col items-center justify-center gap-3 p-4 text-center">
+                      <Loader2 className="w-8 h-8 animate-spin text-sky-400" />
+                      <p className="text-xs font-semibold text-slate-200">Menyiapkan kamera HP...</p>
+                      <label
+                        onClick={() => {
+                          stopCameraStream();
+                          setCameraFallbackReason(
+                            'Kamera bawaan HP telah dipilih. Jika Anda membatalkan pengambilan foto, ketuk "Buka Kamera Bawaan HP" atau "Coba Kamera Langsung Lagi".'
+                          );
+                        }}
+                        className="mt-1 px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold rounded-lg border border-white/20 cursor-pointer flex items-center gap-1.5"
+                      >
+                        <Smartphone className="w-3.5 h-3.5" />
+                        <span>Gunakan Kamera Bawaan HP</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          onChange={(e) => { void handlePhotoChange(e, 'native-camera'); }}
+                          onClick={(e) => {
+                            stopCameraStream();
+                            (e.target as HTMLInputElement).value = '';
+                          }}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Controls */}
+            {!cameraFallbackReason && (
+              <div className="max-w-lg w-full mx-auto flex flex-col items-center gap-3 pb-2">
+                <button
+                  type="button"
+                  onClick={handleCaptureLiveFrame}
+                  disabled={!isCameraReady || isCapturingFrame}
+                  className="w-full max-w-xs py-3.5 px-6 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 disabled:text-slate-400 text-white font-display font-bold text-xs rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-[0.98]"
+                  id="activity-capture-live-btn"
+                >
+                  {isCapturingFrame ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Mengambil Foto...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-4 h-4" />
+                      <span>Ambil Foto Sekarang</span>
+                    </>
+                  )}
+                </button>
+
+                <label
+                  onClick={() => {
+                    stopCameraStream();
+                    setCameraFallbackReason(
+                      'Kamera bawaan HP telah dipilih. Jika Anda membatalkan pengambilan foto, ketuk "Buka Kamera Bawaan HP" atau "Coba Kamera Langsung Lagi".'
+                    );
+                  }}
+                  className="cursor-pointer inline-flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 hover:text-white py-1.5 px-3 rounded-lg bg-white/10 hover:bg-white/15 border border-white/10 transition-colors"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Ganti ke Kamera Bawaan HP (Autofokus/Flash)</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={(e) => { void handlePhotoChange(e, 'native-camera'); }}
+                    onClick={(e) => {
+                      stopCameraStream();
+                      (e.target as HTMLInputElement).value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
