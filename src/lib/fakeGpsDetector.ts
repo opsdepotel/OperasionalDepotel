@@ -352,12 +352,18 @@ export function detectFakeGps(
   let moveNote = 'Lokasi stasioner atau fix pertama.';
 
   if (prevFix) {
-    distanceMeters = calculateHaversineDistanceInMeters(
+    const rawDistanceMeters = calculateHaversineDistanceInMeters(
       prevFix.latitude,
       prevFix.longitude,
       lat,
       lon
     );
+    // Kurangi radius ketidakpastian akurasi jika salah satu fix berasal dari jaringan/indoor kasar (> 80m)
+    const prevAccVal = prevFix.accuracy ?? 0;
+    const currAccVal = acc ?? 0;
+    const convergenceAllowance = (prevAccVal > 80 || currAccVal > 80) ? (prevAccVal + currAccVal) * 1.5 : 0;
+    distanceMeters = Math.max(0, rawDistanceMeters - convergenceAllowance);
+
     const elapsedMs = Math.abs(currentFixTs - prevFix.timestamp);
     elapsedSeconds = elapsedMs / 1000;
 
@@ -405,12 +411,17 @@ export function detectFakeGps(
       const p2 = gpsFixHistory[i];
       if (now - p1.recordedAt > 10 * 60 * 1000) continue;
 
-      const stepDist = calculateHaversineDistanceInMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+      const rawStepDist = calculateHaversineDistanceInMeters(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+      const p1Acc = p1.accuracy ?? 0;
+      const p2Acc = p2.accuracy ?? 0;
+      const stepConvergence = (p1Acc > 80 || p2Acc > 80) ? (p1Acc + p2Acc) * 1.5 : 0;
+      const stepDist = Math.max(0, rawStepDist - stepConvergence);
+
       const stepElapsedMs = Math.max(500, Math.abs(p2.timestamp - p1.timestamp));
       const stepElapsedSec = stepElapsedMs / 1000;
       const stepSpeedKmh = (stepDist / stepElapsedSec) * 3.6;
 
-      if (stepDist > 100 && stepSpeedKmh > 150) {
+      if (stepDist > 200 && stepSpeedKmh > 150) {
         moveStatus = 'ANOMALI';
         moveScore = 10;
         const startCoordsStr = `${p1.latitude.toFixed(6)}, ${p1.longitude.toFixed(6)}`;
@@ -432,8 +443,13 @@ export function detectFakeGps(
     const openLat = formOpenPosition.coords.latitude;
     const openLon = formOpenPosition.coords.longitude;
     const openTs = formOpenPosition.timestamp || (currentFixTs - 10000);
+    const openAcc = formOpenPosition.coords.accuracy ?? 0;
+    const currAccVal = acc ?? 0;
 
-    const formDistMeters = calculateHaversineDistanceInMeters(openLat, openLon, lat, lon);
+    const rawFormDistMeters = calculateHaversineDistanceInMeters(openLat, openLon, lat, lon);
+    const formConvergence = (openAcc > 80 || currAccVal > 80) ? (openAcc + currAccVal) * 1.5 : 0;
+    const formDistMeters = Math.max(0, rawFormDistMeters - formConvergence);
+
     const formElapsedMs = Math.max(500, Math.abs(currentFixTs - openTs));
     const formElapsedSec = formElapsedMs / 1000;
     const formSpeedKmh = (formDistMeters / formElapsedSec) * 3.6;
@@ -643,21 +659,6 @@ export function detectFakeGps(
       altNote = 'Elevasi bernilai 0.0m konstan tanpa deviasi vertikal dikombinasikan dengan akurasi horizontal 0m.';
       reasons.push('Elevasi 0m konstan tanpa akurasi ketinggian');
       riskScoreCumulative += 25;
-    } else if (
-      Number.isInteger(alt) &&
-      alt !== 0 &&
-      (altAcc === null || altAcc === undefined || altAcc === 0) &&
-      acc !== null &&
-      acc <= 10 &&
-      gpsFixHistory.length >= 3 &&
-      gpsFixHistory.every(item => item.altitude === alt && (item.altitudeAccuracy === null || item.altitudeAccuracy === undefined || item.altitudeAccuracy === 0))
-    ) {
-      // Spoofer sering memancarkan altitude bulat statis (misal 10m / 50m) tanpa altitudeAccuracy
-      altStatus = 'WARNING';
-      altScore = 50;
-      altNote = `Elevasi bulat statis (${alt}m) tanpa akurasi vertikal pada seluruh sampel.`;
-      reasons.push(`Elevasi statis bulat (${alt}m) tanpa akurasi vertikal`);
-      riskScoreCumulative += 20;
     } else {
       altStatus = 'VALID';
       altScore = 100;
@@ -672,7 +673,7 @@ export function detectFakeGps(
   }
 
   // --------------------------------------------------------------------------
-  // 5. HISTORICAL CONSISTENCY, ZERO DRIFT & ZERO ACCURACY VARIANCE (Prioritas #1 & #3)
+  // 5. HISTORICAL CONSISTENCY & ZERO DRIFT / GPS JITTER ANALYSIS
   // --------------------------------------------------------------------------
   let consStatus: 'VALID' | 'ANOMALI' | 'WARNING' = 'VALID';
   let consScore = 100;
@@ -688,8 +689,6 @@ export function detectFakeGps(
     let zeroDistanceCount = 0;
     let totalJitter = 0;
     let jitterCount = 0;
-    let advancingTimestampCount = 0;
-    let joystickZeroSpeedMoveCount = 0;
 
     for (let i = 1; i < gpsFixHistory.length; i++) {
       const prev = gpsFixHistory[i - 1];
@@ -705,20 +704,11 @@ export function detectFakeGps(
       distanceDeltas.push(d);
       timeDeltas.push(dt);
 
-      if (dt > 0) {
-        advancingTimestampCount++;
-      }
-
       if (d === 0 || d < 0.0001) {
         zeroDistanceCount++;
       } else if (d > 0 && d <= 5) {
         totalJitter += d;
         jitterCount++;
-      }
-
-      // Deteksi pergerakan koordinat aktif (> 8m antar sampel) tetapi sensor speed eksplisit bernilai 0
-      if (d > 8 && dt > 0 && dt < 15000 && curr.speed === 0 && prev.speed === 0) {
-        joystickZeroSpeedMoveCount++;
       }
     }
 
@@ -726,48 +716,37 @@ export function detectFakeGps(
       avgJitterMeters = totalJitter / jitterCount;
     }
 
-    // Cek apakah timestamp terus diperbarui (dt > 0) tetapi koordinat persis 0.000000m tanpa fluktuasi satelit
-    const isTimestampAdvancing = advancingTimestampCount > 0;
+    // Cek apakah SELURUH sampel benar-benar beku 0.000000m (tanpa ada satupun jitter satelit alami)
+    const isTimestampAdvancing = timeDeltas.some(dt => dt > 0);
     const recentAccs = gpsFixHistory.map(item => item.accuracy).filter((a): a is number => a !== null);
     const isAccConstantlyExact = recentAccs.length >= 3 && recentAccs.every(val => val === recentAccs[0]);
+    const isCompletelyStaticZeroDrift =
+      jitterCount === 0 &&
+      zeroDistanceCount === distanceDeltas.length &&
+      zeroDistanceCount >= 3;
 
-    if (zeroDistanceCount >= 2 && isTimestampAdvancing && (isAccConstantlyExact || (acc !== null && acc <= 15))) {
-      // Zero Drift Anomaly: Aplikasi Fake GPS menyuntikkan koordinat statis tanpa fluktuasi radio satelit
+    if (avgJitterMeters !== null && avgJitterMeters > 0) {
+      // Jika terdapat fluktuasi mikro satelit alami (jitter > 0m), maka sinyal GPS hardware VALID
+      // (meskipun OS membulatkan akurasi ke angka lantai seperti 3m)
+      consStatus = 'VALID';
+      consScore = 100;
+      consDetail = `Jitter Alami (${avgJitterMeters.toFixed(2)}m)`;
+      consNote = `Terverifikasi Fluktuasi Mikro GPS Alami (rata-rata jitter ${avgJitterMeters.toFixed(2)}m/fix). Sinyal radio satelit fisik hardware valid.`;
+    } else if (isCompletelyStaticZeroDrift && isTimestampAdvancing && (isAccConstantlyExact || (acc !== null && acc <= 15))) {
+      // Zero Drift Anomaly: Seluruh sampel 100% beku 0.00m tanpa satupun jitter satelit alami
       isZeroDriftDetected = true;
       consStatus = 'ANOMALI';
       consScore = 10;
       consDetail = `Zero Drift (${zeroDistanceCount}/${distanceDeltas.length} fix statis 0.00m)`;
-      consNote = `Anomali Zero Drift: Koordinat beku 0.00m pada ${zeroDistanceCount} perbaikan sinyal aktif tanpa fluktuasi radio satelit alami. Indikasi injeksi lokasi palsu.`;
+      consNote = `Anomali Zero Drift: Koordinat beku 0.00m pada seluruh ${zeroDistanceCount} perbaikan sinyal aktif tanpa fluktuasi radio satelit alami. Indikasi injeksi lokasi palsu.`;
       reasons.push(`Anomali Zero Drift GPS (${zeroDistanceCount} sampel fix beku 0.00m tanpa jitter satelit alami)`);
-      // Jika >= 3 sampel statis atau akurasi juga beku identik, pastikan melewati ambang HIGH_RISK (70)
-      riskScoreCumulative += (zeroDistanceCount >= 3 || isAccConstantlyExact) ? 75 : 65;
-    } else if (recentAccs.length >= 4 && isAccConstantlyExact && advancingTimestampCount >= 3 && recentAccs[0] <= 20) {
-      // Prioritas #3: Zero Accuracy Variance pada >= 4 sampel segar (meskipun koordinat digeser dengan joystick)
-      consStatus = 'ANOMALI';
-      consScore = 15;
-      consDetail = `Zero Accuracy Variance (${recentAccs[0]}m x ${recentAccs.length} fix)`;
-      consNote = `Variansi akurasi 0.00m: Nilai akurasi desimal (${recentAccs[0]}m) beku identik pada ${recentAccs.length} perbaikan sinyal berurutan. Indikasi emulator / Mock Location.`;
-      reasons.push(`Anomali Variansi Akurasi 0 (Akurasi beku konstan ${recentAccs[0]}m pada ${recentAccs.length} sampel segar)`);
-      riskScoreCumulative += 70;
-    } else if (joystickZeroSpeedMoveCount >= 2 && isAccConstantlyExact) {
-      // Pergerakan joystick aktif dengan speed hardware = 0 dan akurasi statis
-      consStatus = 'ANOMALI';
-      consScore = 20;
-      consDetail = `Anomali Kinematika Joystick (${joystickZeroSpeedMoveCount} segmen)`;
-      consNote = `Koordinat berpindah terus-menerus namun sensor kecepatan bernilai 0 m/s dengan akurasi beku.`;
-      reasons.push(`Anomali Kinematika GPS (Koordinat bergerak aktif dengan speed 0 m/s dan akurasi statis)`);
-      riskScoreCumulative += 70;
-    } else if (recentAccs.length >= 4 && isAccConstantlyExact && recentAccs[0] < 5) {
+      riskScoreCumulative += 65;
+    } else if (recentAccs.length >= 4 && isAccConstantlyExact && recentAccs[0] < 3) {
       consStatus = 'WARNING';
       consScore = 60;
       consDetail = `Akurasi Beku (${recentAccs[0]}m)`;
       consNote = `Nilai akurasi (${recentAccs[0]}m) beku konstan dalam ${recentAccs.length} fix berturut-turut.`;
       riskScoreCumulative += 15;
-    } else if (avgJitterMeters !== null && avgJitterMeters > 0) {
-      consStatus = 'VALID';
-      consScore = 100;
-      consDetail = `Jitter Alami (${avgJitterMeters.toFixed(2)}m)`;
-      consNote = `Terverifikasi Fluktuasi Mikro GPS Alami (rata-rata jitter ${avgJitterMeters.toFixed(2)}m/fix). Sinyal radio satelit fisik hardware valid.`;
     }
   }
 
