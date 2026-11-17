@@ -534,8 +534,6 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [coordinatesDb, setCoordinatesDb] = useState('');
   const [coordinatesActual, setCoordinatesActual] = useState('');
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
-  const [gpsAddress, setGpsAddress] = useState('');
-  const [isGeocoding, setIsGeocoding] = useState(false);
   const [keterangan, setKeterangan] = useState('');
   const [originalPhotoFile, setOriginalPhotoFile] = useState<File | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -1155,37 +1153,36 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     }
   }, [selectedSiteId, sites]);
 
-  // Auto reverse geocode coordinatesActual / coordinatesDb to obtain address
-  useEffect(() => {
-    const coord = coordinatesActual || coordinatesDb;
-    if (!coord) {
-      setGpsAddress('');
-      return;
-    }
+  // Reverse geocode helper: dipanggil HANYA 1 kali saat tombol Submit ditekan dan HANYA jika SiteID/Lokasi tidak terdaftar di database
+  const resolveReverseGeocodeOnSubmit = async (coord: string): Promise<string> => {
+    if (!coord) return '';
     const parts = coord.split(',').map(s => s.trim());
-    if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
-      const lat = parts[0];
-      const lon = parts[1];
-      setIsGeocoding(true);
-      fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`)
-        .then(res => res.json())
-        .then(data => {
-          if (data && data.display_name) {
-            setGpsAddress(data.display_name);
-          } else {
-            setGpsAddress(`Lokasi GPS (${coord})`);
-          }
-        })
-        .catch(() => {
-          setGpsAddress(`Lokasi GPS (${coord})`);
-        })
-        .finally(() => {
-          setIsGeocoding(false);
-        });
-    } else {
-      setGpsAddress(coord);
+    if (parts.length !== 2 || isNaN(Number(parts[0])) || isNaN(Number(parts[1]))) {
+      return coord;
     }
-  }, [coordinatesActual, coordinatesDb]);
+    if (!isOnline || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+      return `Lokasi GPS (${coord})`;
+    }
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 2500);
+    try {
+      const [lat, lon] = parts;
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`,
+        { signal: controller.signal }
+      );
+      if (!res.ok) return `Lokasi GPS (${coord})`;
+      const data = await res.json();
+      if (data && typeof data.display_name === 'string' && data.display_name.trim()) {
+        return data.display_name.trim();
+      }
+      return `Lokasi GPS (${coord})`;
+    } catch {
+      return `Lokasi GPS (${coord})`;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
 
   // Helper to apply a valid GeolocationPosition to refs, history buffer, and (when form is open) UI state
   const applyGpsPositionToState = (position: GeolocationPosition, updateFormUi: boolean) => {
@@ -1518,7 +1515,12 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     try {
       const isVerified = !!matchedSite;
       const finalSiteId = isVerified ? trimmedSiteId.toUpperCase() : trimmedSiteId;
-      const finalSiteName = matchedSite ? matchedSite.siteName : (gpsAddress || siteName.trim() || finalSiteId);
+      const resolvedGpsAddress = matchedSite
+        ? ''
+        : await resolveReverseGeocodeOnSubmit(coordinatesActual || coordinatesDb);
+      const finalSiteName = matchedSite
+        ? matchedSite.siteName
+        : (resolvedGpsAddress || siteName.trim() || finalSiteId);
       const todayYmd = getTodayStr();
 
       // Prioritas #2: Cari laporan kegiatan terakhir milik user di hari yang sama (online maupun antrean offline)
@@ -1607,7 +1609,6 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         setCoordinatesDb('');
         setCoordinatesActual('');
         setGpsAccuracy(null);
-        setGpsAddress('');
         setKeterangan('');
         setOriginalPhotoFile(null);
         setPhotoFile(null);
