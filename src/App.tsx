@@ -9,6 +9,7 @@ import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
 import { initAuth, logout, isGoogleTokenExpired, isPersonalGoogleSession } from './lib/firebase';
 import { fetchServiceAccountToken } from './lib/serviceAccountClient';
+import { resolveStrictDepotelToken, uploadReceiptFileStrictDepotel } from './lib/photoMigration';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
   getOfflineTalanganRequests,
@@ -29,6 +30,7 @@ import {
   fetchHistoryForUid,
   fetchBudgetRequests,
   fetchUsageItems,
+  fetchUsageItemsForUid,
   fetchProfiles,
   defaultRequests,
   defaultUsageItems,
@@ -58,7 +60,9 @@ import {
   SPREADSHEET_ID,
   DRIVE_FOLDER_ID,
   fetchGlobalConfig,
-  invalidateClientActiveHistoriesCache
+  invalidateClientActiveHistoriesCache,
+  invalidateUidReviewHistoryCache,
+  invalidateClosedUsageItemsCache
 } from './lib/googleApi';
 import { compressTransferReceiptFile } from './lib/imageCompression';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
@@ -143,7 +147,7 @@ export const isBbmDurenSawitRequest = (req?: BudgetRequest | null) => {
 
 export const isFinanceApprovedOpRequest = (req: BudgetRequest, histories: ItemReviewHistory[]) => {
   if (!isOpBiasaRequest(req)) return true;
-  if ([RequestStatus.PENDING_PENGAJUAN_TRANSFER, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.CLOSED].includes(req.status)) return true;
+  if ([RequestStatus.PENDING_PENGAJUAN_TRANSFER, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.CLOSED].includes(req.status)) return true;
   if (req.adminComment && req.adminComment.trim().length > 0) return true;
 
   return histories.some(h => {
@@ -267,7 +271,7 @@ export const isRequestTransferred = (
   if ((req.adminActionAmount || 0) > 0) return true;
 
   // 2. Cek status utama pengajuan
-  if ([RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.CLOSED].includes(req.status)) {
+  if ([RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.CLOSED].includes(req.status)) {
     return true;
   }
 
@@ -1032,6 +1036,7 @@ export default function App() {
       }
     };
     window.addEventListener('google_token_refreshed', handleTokenRefreshed);
+    window.addEventListener('google_user_token_updated', handleTokenRefreshed);
 
     const checkTokenStatus = async () => {
       if (token) {
@@ -1052,6 +1057,7 @@ export default function App() {
     const interval = setInterval(checkTokenStatus, 60000);
     return () => {
       window.removeEventListener('google_token_refreshed', handleTokenRefreshed);
+      window.removeEventListener('google_user_token_updated', handleTokenRefreshed);
       clearInterval(interval);
     };
   }, [token]);
@@ -1286,7 +1292,7 @@ export default function App() {
     }
   };
 
-  const syncAllData = async (accessToken: string, sheetId: string) => {
+  const syncAllData = async (accessToken: string, sheetId: string, forceRefresh = false) => {
     try {
       const {
         requests: allReqs,
@@ -1296,7 +1302,7 @@ export default function App() {
         activities: allActs,
         resetDeviceLogs: allResetLogs,
         itemReviewHistories: allHistories
-      } = await fetchAllDatabaseTables(accessToken, sheetId);
+      } = await fetchAllDatabaseTables(accessToken, sheetId, forceRefresh);
 
       // Pre-index item nominal sums by requestId in O(I) single pass
       const itemNominalSumByReqId = new Map<string, number>();
@@ -1470,7 +1476,9 @@ export default function App() {
     setLoadingStep('Memperbarui Data...');
     try {
       invalidateClientActiveHistoriesCache();
-      await syncAllData(token, spreadsheetId);
+      invalidateUidReviewHistoryCache();
+      invalidateClosedUsageItemsCache();
+      await syncAllData(token, spreadsheetId, true);
     } catch (err: any) {
       console.error('handleManualRefresh error:', err);
       const isAuthError = err.message && (
@@ -3145,9 +3153,14 @@ export default function App() {
           jumlahPengajuan: totalNominal,
           status: nextStatus
         };
-      } else if (targetReq.status === RequestStatus.TRANSFERRED) {
-        updatedReq = { ...targetReq, status: RequestStatus.REPORTING };
-      } else if (targetReq.status === RequestStatus.REVIEW_ADMIN || targetReq.status === RequestStatus.REVIEW_MANAGER) {
+      } else if (
+        targetReq.status === RequestStatus.TRANSFERRED ||
+        targetReq.status === RequestStatus.TRANSFER_BERTAHAP ||
+        targetReq.status === RequestStatus.REPORTING ||
+        targetReq.status === RequestStatus.REVIEW_ADMIN ||
+        targetReq.status === RequestStatus.REVIEW_MANAGER ||
+        targetReq.status === RequestStatus.CLOSED
+      ) {
         updatedReq = { ...targetReq, status: RequestStatus.REVIEW_MANAGER };
       }
     }
@@ -3238,10 +3251,22 @@ export default function App() {
           jumlahPengajuan: totalNominal,
           status: nextStatus
         };
-      } else if (targetReq.status === RequestStatus.TRANSFERRED) {
-        updatedReq = { ...targetReq, status: RequestStatus.REPORTING };
-      } else if (targetReq.status === RequestStatus.REVIEW_ADMIN || targetReq.status === RequestStatus.REVIEW_MANAGER) {
-        updatedReq = { ...targetReq, status: RequestStatus.REVIEW_MANAGER };
+      } else if (
+        targetReq.status === RequestStatus.TRANSFERRED ||
+        targetReq.status === RequestStatus.TRANSFER_BERTAHAP ||
+        targetReq.status === RequestStatus.REPORTING ||
+        targetReq.status === RequestStatus.REVIEW_ADMIN ||
+        targetReq.status === RequestStatus.REVIEW_MANAGER ||
+        targetReq.status === RequestStatus.CLOSED
+      ) {
+        const reqItemsAfterEdit = updatedUsageItems.filter(i => i.requestId === targetReq.id);
+        const hasRemainingRejected = reqItemsAfterEdit.some(
+          i => i.statusManager === ItemStatus.REJECTED || i.statusAdmin === ItemStatus.REJECTED
+        );
+        updatedReq = {
+          ...targetReq,
+          status: hasRemainingRejected ? RequestStatus.REPORTING : RequestStatus.REVIEW_MANAGER
+        };
       }
     }
 
@@ -3606,23 +3631,23 @@ export default function App() {
         finalBuktiUrl = `https://drive.google.com/file/d/${mockId}/view`;
         finalBuktiFileId = mockId;
       } else {
-        try {
-          const uploadResult = await uploadReceiptFile(activeToken, driveFolderId || DRIVE_FOLDER_ID, photoFile);
-          finalBuktiUrl = uploadResult.viewUrl;
-          finalBuktiFileId = uploadResult.fileId;
-        } catch (upErr: any) {
-          console.warn('Photo upload returned error, attempting retry with fresh server token:', upErr);
-          const freshSa = await fetchServiceAccountToken(true);
-          if (freshSa && freshSa.token) {
-            activeToken = freshSa.token;
-            setToken(freshSa.token);
-            const uploadResult = await uploadReceiptFile(freshSa.token, driveFolderId || DRIVE_FOLDER_ID, photoFile);
-            finalBuktiUrl = uploadResult.viewUrl;
-            finalBuktiFileId = uploadResult.fileId;
-          } else {
-            throw upErr;
-          }
+        // Pengaman Kepemilikan Drive: Wajib menggunakan token yang terverifikasi milik depotel@vgd4.my.id
+        const depotelAuth = await resolveStrictDepotelToken(activeToken);
+        if (!depotelAuth.isDepotel || !depotelAuth.token) {
+          throw new Error(
+            `Pengaman Kepemilikan Drive: Token aktif saat ini terhubung ke '${depotelAuth.email || 'akun lain'}' (bukan 'depotel@vgd4.my.id'). Pengunggahan ditolak agar foto tidak tercatat atas nama '${depotelAuth.email || 'ops.depotel@gmail.com'}'. Silakan klik tombol 'Hubungkan Sesi depotel@vgd4.my.id' pada form ini terlebih dahulu.`
+          );
         }
+        activeToken = depotelAuth.token;
+        setToken(depotelAuth.token);
+
+        const uploadResult = await uploadReceiptFileStrictDepotel(
+          depotelAuth.token,
+          driveFolderId || DRIVE_FOLDER_ID,
+          photoFile
+        );
+        finalBuktiUrl = uploadResult.viewUrl;
+        finalBuktiFileId = uploadResult.fileId;
       }
     }
 
@@ -3883,6 +3908,29 @@ export default function App() {
   // Workflow Action 6: Closing Process (Admin Action)
   const handleCloseRequest = async (req: BudgetRequest) => {
     if (!token || !spreadsheetId) return;
+
+    // Anti race-condition guard: verify latest Laporan items in live database before closing
+    try {
+      const freshItems = await fetchUsageItemsForUid(token, spreadsheetId, req.id, { forceFresh: true });
+      if (freshItems.length > 0) {
+        const hasUnapprovedItem = freshItems.some(
+          i => i.statusManager !== ItemStatus.APPROVED || i.statusAdmin !== ItemStatus.APPROVED
+        );
+        if (hasUnapprovedItem) {
+          setUsageItems(prev => {
+            const others = prev.filter(i => i.requestId !== req.id);
+            const next = [...others, ...freshItems];
+            safeSetJson('op_app_cached_usage_items', next, 150);
+            return next;
+          });
+          setError(`Closing dibatalkan: Ditemukan item laporan baru atau belum disetujui pada UID ${req.id}. Silakan refresh data dan selesaikan review Manager/Finance terlebih dahulu.`);
+          return;
+        }
+      }
+    } catch (verifyErr) {
+      console.warn('[handleCloseRequest] Gagal memverifikasi item laporan terbaru sebelum closing:', verifyErr);
+    }
+
     const updatedReq: BudgetRequest = {
       ...req,
       status: RequestStatus.CLOSED
@@ -4209,7 +4257,8 @@ export default function App() {
       if (activeRole === Role.FINANCE && dashboardTab !== 'SUBMISSION') {
         if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && statusFilter === 'REPORTING') {
           const reqItems = usageItemsByRequestIdMap.get(r.id) || [];
-          if (reqItems.length === 0 || !reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
+          const hasAdminPending = reqItems.some(i => i.statusAdmin === ItemStatus.PENDING);
+          if (reqItems.length === 0 || !reqItems.every(i => i.statusManager === ItemStatus.APPROVED) || (r.status === RequestStatus.REPORTING && !hasAdminPending)) {
             return false;
           }
         }
@@ -4302,6 +4351,7 @@ export default function App() {
             if (reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED)) return false;
             const managerApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
             if (!managerApproved) return false;
+            if (r.status === RequestStatus.REPORTING && !reqItems.some(i => i.statusAdmin === ItemStatus.PENDING)) return false;
           } else if (activeRole === Role.DIREKTUR) {
             if (![RequestStatus.TRANSFERRED, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN].includes(r.status)) return false;
           } else {
@@ -5387,7 +5437,7 @@ export default function App() {
                                       const finApproved = getFinanceApprovedAmount(req, itemReviewHistories, usageItems);
                                       const hasFinApproval = itemReviewHistories.some(h => (h.requestUid === req.id || h.itemUid === req.id) && h.actionType === 'APPROVAL_FINANCE') ||
                                         !!req.adminComment ||
-                                        [RequestStatus.PENDING_PENGAJUAN_TRANSFER, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.CLOSED].includes(req.status);
+                                        [RequestStatus.PENDING_PENGAJUAN_TRANSFER, RequestStatus.TRANSFER_BERTAHAP, RequestStatus.TRANSFERRED, RequestStatus.REPORTING, RequestStatus.REVIEW_MANAGER, RequestStatus.REVIEW_ADMIN, RequestStatus.CLOSED].includes(req.status);
 
                                       if (isOp) {
                                         if (!hasFinApproval) return '-';
@@ -6144,7 +6194,7 @@ export default function App() {
                                             </div>
                                           )}
 
-                                          {(req.status === RequestStatus.REVIEW_ADMIN || req.status === RequestStatus.REPORTING) && (
+                                          {(req.status === RequestStatus.REVIEW_ADMIN || (req.status === RequestStatus.REPORTING && reqItems.length > 0 && reqItems.every(i => i.statusManager === ItemStatus.APPROVED) && !reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED) && reqItems.some(i => i.statusAdmin === ItemStatus.PENDING))) && (
                                             <button
                                               onClick={() => setReviewReportReq(req)}
                                               className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-all shadow-sm cursor-pointer"

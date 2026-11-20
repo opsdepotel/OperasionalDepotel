@@ -631,7 +631,10 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
       }
 
       if ((r.status === RequestStatus.REVIEW_ADMIN || r.status === RequestStatus.REPORTING) && reqItems.length > 0) {
-        if (!reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED) && reqItems.every(i => i.statusManager === ItemStatus.APPROVED)) {
+        const allMgrApproved = reqItems.every(i => i.statusManager === ItemStatus.APPROVED);
+        const noAdminRejected = !reqItems.some(i => i.statusAdmin === ItemStatus.REJECTED);
+        const hasAdminPending = reqItems.some(i => i.statusAdmin === ItemStatus.PENDING);
+        if (allMgrApproved && noAdminRejected && (r.status === RequestStatus.REVIEW_ADMIN || hasAdminPending)) {
           pendingAdminReportReview++;
         }
       }

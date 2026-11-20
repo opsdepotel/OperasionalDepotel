@@ -71,15 +71,36 @@ export interface ArchiveOrphanedResult {
 
 /**
  * Verifies the Google account associated with the given OAuth access token.
+ * Checks Drive v3 /about?fields=user first (works for all Drive-scoped tokens even without userinfo.email scope),
+ * then falls back to oauth2/v1/tokeninfo.
  * Returns the email and whether it strictly matches depotel@vgd4.my.id.
  */
 export async function verifyTokenAccountEmail(token: string): Promise<{ email: string; isDepotel: boolean } | null> {
   if (!token || token === 'mock_demo_token') return null;
   try {
+    const driveRes = await fetch('https://www.googleapis.com/drive/v3/about?fields=user', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (driveRes.ok) {
+      const driveData = await driveRes.json();
+      const driveEmail = String(driveData?.user?.emailAddress || '').trim().toLowerCase();
+      if (driveEmail) {
+        return {
+          email: driveEmail,
+          isDepotel: driveEmail === 'depotel@vgd4.my.id'
+        };
+      }
+    }
+  } catch {
+    // Fallback to tokeninfo below
+  }
+
+  try {
     const res = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${encodeURIComponent(token)}`);
     if (!res.ok) return null;
     const data = await res.json();
     const email = String(data.email || '').trim().toLowerCase();
+    if (!email) return null;
     return {
       email,
       isDepotel: email === 'depotel@vgd4.my.id'
@@ -87,6 +108,148 @@ export async function verifyTokenAccountEmail(token: string): Promise<{ email: s
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolves a verified OAuth access token strictly owned by depotel@vgd4.my.id.
+ * Checks browser-connected g_user_oauth_token first, then active app token, then server token.
+ */
+export async function resolveStrictDepotelToken(
+  fallbackToken?: string | null
+): Promise<{ token: string | null; email: string | null; isDepotel: boolean }> {
+  const candidates: string[] = [];
+  try {
+    const storedUserTok = localStorage.getItem('g_user_oauth_token');
+    if (storedUserTok && storedUserTok.trim() && storedUserTok !== 'mock_demo_token') {
+      candidates.push(storedUserTok.trim());
+    }
+  } catch {}
+
+  if (fallbackToken && fallbackToken.trim() && fallbackToken !== 'mock_demo_token' && !candidates.includes(fallbackToken.trim())) {
+    candidates.push(fallbackToken.trim());
+  }
+
+  try {
+    const saData = await fetchServiceAccountToken(false);
+    if (saData?.token && !candidates.includes(saData.token)) {
+      candidates.push(saData.token);
+    }
+  } catch {}
+
+  let lastDetectedEmail: string | null = null;
+
+  for (const cand of candidates) {
+    const info = await verifyTokenAccountEmail(cand);
+    if (info) {
+      lastDetectedEmail = info.email;
+      if (info.isDepotel) {
+        return { token: cand, email: info.email, isDepotel: true };
+      }
+    }
+  }
+
+  // Try one forced refresh from server in case server token was recently updated
+  try {
+    const freshSa = await fetchServiceAccountToken(true);
+    if (freshSa?.token && !candidates.includes(freshSa.token)) {
+      const info = await verifyTokenAccountEmail(freshSa.token);
+      if (info) {
+        lastDetectedEmail = info.email;
+        if (info.isDepotel) {
+          return { token: freshSa.token, email: info.email, isDepotel: true };
+        }
+      }
+    }
+  } catch {}
+
+  return { token: null, email: lastDetectedEmail, isDepotel: false };
+}
+
+/**
+ * Uploads a photo file directly to Google Drive strictly using a verified depotel@vgd4.my.id token.
+ * Never falls back to a non-depotel server account, guaranteeing 100% depotel@vgd4.my.id ownership.
+ */
+export async function uploadReceiptFileStrictDepotel(
+  depotelToken: string,
+  folderId: string,
+  file: File
+): Promise<{ fileId: string; viewUrl: string }> {
+  const targetFolderId = folderId || MASTER_DRIVE_FOLDER_ID;
+
+  if (depotelToken === 'mock_demo_token') {
+    const fileId = `mock_file_${Date.now()}`;
+    return { fileId, viewUrl: `https://drive.google.com/file/d/${fileId}/view` };
+  }
+
+  const verify = await verifyTokenAccountEmail(depotelToken);
+  if (!verify || !verify.isDepotel) {
+    throw new Error(
+      `Pengaman Kepemilikan Drive: Token aktif terhubung ke '${verify?.email || 'akun tidak dikenal'}', bukan 'depotel@vgd4.my.id'. Pengunggahan dibatalkan agar file tidak tercatat atas nama akun lain.`
+    );
+  }
+
+  let ext = '.jpg';
+  if (file.name && file.name.includes('.')) {
+    const rawExt = file.name.split('.').pop() || '';
+    if (rawExt && rawExt.length <= 5) {
+      ext = `.${rawExt.toLowerCase()}`;
+    }
+  } else if (file.type) {
+    if (file.type.includes('png')) ext = '.png';
+    else if (file.type.includes('pdf')) ext = '.pdf';
+  }
+  if (ext === '.jpeg') ext = '.jpg';
+
+  const metadata = {
+    name: `bukti_${Date.now()}${ext}`,
+    parents: [targetFolderId]
+  };
+
+  const formData = new FormData();
+  formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  formData.append('file', file);
+
+  const uploadRes = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id,webViewLink,owners',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${depotelToken}` },
+      body: formData
+    }
+  );
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text().catch(() => '');
+    throw new Error(`Gagal mengunggah foto ke Google Drive depotel@vgd4.my.id (HTTP ${uploadRes.status}): ${errText}`);
+  }
+
+  const uploadData = await uploadRes.json();
+  const fileId = uploadData.id;
+  if (!fileId) {
+    throw new Error('Google Drive tidak mengembalikan ID file yang valid.');
+  }
+
+  // Set reader permission so anyone with link can view
+  try {
+    await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?supportsAllDrives=true`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${depotelToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        role: 'reader',
+        type: 'anyone'
+      })
+    });
+  } catch (permErr) {
+    console.warn('Could not set public permission on Drive file:', permErr);
+  }
+
+  return {
+    fileId,
+    viewUrl: uploadData.webViewLink || `https://drive.google.com/file/d/${fileId}/view`
+  };
 }
 
 /**

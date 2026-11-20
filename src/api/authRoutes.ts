@@ -62,29 +62,17 @@ authRouter.post('/login', async (req, res) => {
       ? customSheetId.trim()
       : config.spreadsheetId;
 
-    let values: any[][] = [];
-
-    // 2. Check In-Memory Cache first (0ms CPU Execution time if warm cache)
-    const now = Date.now();
-    if (
-      usersSheetCache &&
-      usersSheetCache.spreadsheetId === spreadsheetId &&
-      now - usersSheetCache.timestamp < USERS_CACHE_TTL_MS &&
-      usersSheetCache.values.length >= 2
-    ) {
-      values = usersSheetCache.values;
-    } else {
-      // Obtain Server Google Access Token (Refresh Token / Service Account)
+    const fetchLiveUsersRows = async (): Promise<{ ok: boolean; values?: any[][]; status?: number; error?: string }> => {
       const tokenResult = await getServerAccessToken();
       const token = tokenResult.token;
       if (!token) {
-        return res.status(503).json({
-          success: false,
+        return {
+          ok: false,
+          status: 503,
           error: 'Google Auth token tidak tersedia di server. Pastikan Service Account atau OAuth telah dikonfigurasi.'
-        });
+        };
       }
 
-      // Fetch Users sheet rows from Google Sheets
       const sheetRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`,
         {
@@ -103,23 +91,49 @@ authRouter.post('/login', async (req, res) => {
           errTxt = await sheetRes.text().catch(() => '');
         }
         console.error('[AuthLogin] Error reading Users sheet:', sheetRes.status, errTxt);
-        return res.status(502).json({
-          success: false,
+        return {
+          ok: false,
+          status: 502,
           error: 'Database operasional Google Sheets sedang tidak dapat dijangkau. Silakan periksa koneksi internet atau hubungi Administrator.'
-        });
+        };
       }
 
       const sheetData = await sheetRes.json();
-      values = sheetData.values || [];
+      const freshValues: any[][] = sheetData.values || [];
 
-      // Update in-memory cache for subsequent login attempts
-      if (values.length >= 2) {
+      if (freshValues.length >= 2) {
         usersSheetCache = {
           spreadsheetId,
-          timestamp: now,
-          values
+          timestamp: Date.now(),
+          values: freshValues
         };
       }
+
+      return { ok: true, values: freshValues };
+    };
+
+    let values: any[][] = [];
+    let usedCache = false;
+
+    // 2. Check In-Memory Cache first (0ms CPU Execution time if warm cache)
+    const now = Date.now();
+    if (
+      usersSheetCache &&
+      usersSheetCache.spreadsheetId === spreadsheetId &&
+      now - usersSheetCache.timestamp < USERS_CACHE_TTL_MS &&
+      usersSheetCache.values.length >= 2
+    ) {
+      values = usersSheetCache.values;
+      usedCache = true;
+    } else {
+      const liveRes = await fetchLiveUsersRows();
+      if (!liveRes.ok || !liveRes.values) {
+        return res.status(liveRes.status || 502).json({
+          success: false,
+          error: liveRes.error || 'Database operasional Google Sheets sedang tidak dapat dijangkau.'
+        });
+      }
+      values = liveRes.values;
     }
 
     if (values.length < 2) {
@@ -129,91 +143,100 @@ authRouter.post('/login', async (req, res) => {
       });
     }
 
-    // Row 0 is headers
-    const rawHeaders: string[] = values[0].map(h => String(h || '').trim());
-    const headerNorms = rawHeaders.map(normalizeHeader);
+    const findMatchingUserInRows = (rows: any[][]) => {
+      if (rows.length < 2) return null;
+      const rawHeaders: string[] = rows[0].map(h => String(h || '').trim());
+      const headerNorms = rawHeaders.map(normalizeHeader);
 
-    const findCol = (...keywords: string[]) => {
-      return headerNorms.findIndex(h => {
-        return keywords.some(k => {
-          const kNorm = normalizeHeader(k);
-          return h === kNorm || h.includes(kNorm);
+      const findCol = (...keywords: string[]) => {
+        return headerNorms.findIndex(h => {
+          return keywords.some(k => {
+            const kNorm = normalizeHeader(k);
+            return h === kNorm || h.includes(kNorm);
+          });
         });
-      });
-    };
+      };
 
-    const colIdx = {
-      userId: findCol('userid', 'user_id', 'uid'),
-      password: findCol('password', 'pass', 'katasandi', 'sandi'),
-      nama: findCol('nama', 'name'),
-      email: findCol('email'),
-      role: findCol('role', 'peran', 'jabatan'),
-      managerEmail: findCol('manageremail', 'manager_email', 'atasan', 'approver'),
-      divisi: findCol('divisi', 'division'),
-      subDivisi: findCol('subdivisi', 'subdivision'),
-      aksesBBM: findCol('aksesbbm', 'bbm'),
-      mobile: findCol('mobile'),
-      deviceId: findCol('deviceid', 'device_id'),
-      fotoProfile: findCol('fotoprofile', 'fotoprofileurl', 'photo'),
-      fotoProfileFileId: findCol('fotoprofilefileid', 'photofileid', 'fileid'),
-      pushSubscriptions: findCol('pushsubscriptions', 'pushsubscription', 'subscription')
-    };
+      const colIdx = {
+        userId: findCol('userid', 'user_id', 'uid'),
+        password: findCol('password', 'pass', 'katasandi', 'sandi'),
+        nama: findCol('nama', 'name'),
+        email: findCol('email'),
+        role: findCol('role', 'peran', 'jabatan'),
+        managerEmail: findCol('manageremail', 'manager_email', 'atasan', 'approver'),
+        divisi: findCol('divisi', 'division'),
+        subDivisi: findCol('subdivisi', 'subdivision'),
+        aksesBBM: findCol('aksesbbm', 'bbm'),
+        mobile: findCol('mobile'),
+        deviceId: findCol('deviceid', 'device_id'),
+        fotoProfile: findCol('fotoprofile', 'fotoprofileurl', 'photo'),
+        fotoProfileFileId: findCol('fotoprofilefileid', 'photofileid', 'fileid'),
+        pushSubscriptions: findCol('pushsubscriptions', 'pushsubscription', 'subscription')
+      };
 
-    // Find user matching cleanInputId (by UserID or Email)
-    let foundUser: any = null;
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length === 0) continue;
 
-    for (let i = 1; i < values.length; i++) {
-      const row = values[i];
-      if (!row || row.length === 0) continue;
+        const rawEmail = (colIdx.email !== -1 && row[colIdx.email] !== undefined ? String(row[colIdx.email]) : '').trim();
+        const rawUserId = (colIdx.userId !== -1 && row[colIdx.userId] !== undefined ? String(row[colIdx.userId]) : '').trim();
+        const uEmail = rawEmail.toLowerCase();
+        const uId = (rawUserId || (rawEmail ? rawEmail.split('@')[0] : '')).toLowerCase();
 
-      const rawEmail = (colIdx.email !== -1 && row[colIdx.email] !== undefined ? String(row[colIdx.email]) : '').trim();
-      const rawUserId = (colIdx.userId !== -1 && row[colIdx.userId] !== undefined ? String(row[colIdx.userId]) : '').trim();
-      const uEmail = rawEmail.toLowerCase();
-      const uId = (rawUserId || (rawEmail ? rawEmail.split('@')[0] : '')).toLowerCase();
+        if ((uId && uId === cleanInputId) || (uEmail && uEmail === cleanInputId)) {
+          const rawRole = (colIdx.role !== -1 && row[colIdx.role] !== undefined ? String(row[colIdx.role]) : '').trim().toUpperCase();
+          let roleVal: Role = Role.USER;
+          if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRATOR') {
+            roleVal = Role.ADMINISTRATOR;
+          } else if (rawRole === 'FINANCE' || rawRole === 'KEUANGAN') {
+            roleVal = Role.FINANCE;
+          } else if (rawRole === 'MANAGER') {
+            roleVal = Role.MANAGER;
+          } else if (rawRole === 'DIREKTUR' || rawRole === 'DIRECTOR') {
+            roleVal = Role.DIREKTUR;
+          }
 
-      if ((uId && uId === cleanInputId) || (uEmail && uEmail === cleanInputId)) {
-        // Parse role
-        const rawRole = (colIdx.role !== -1 && row[colIdx.role] !== undefined ? String(row[colIdx.role]) : '').trim().toUpperCase();
-        let roleVal: Role = Role.USER;
-        if (rawRole === 'ADMIN' || rawRole === 'ADMINISTRATOR') {
-          roleVal = Role.ADMINISTRATOR;
-        } else if (rawRole === 'FINANCE' || rawRole === 'KEUANGAN') {
-          roleVal = Role.FINANCE;
-        } else if (rawRole === 'MANAGER') {
-          roleVal = Role.MANAGER;
-        } else if (rawRole === 'DIREKTUR' || rawRole === 'DIRECTOR') {
-          roleVal = Role.DIREKTUR;
+          const rawPassword = (colIdx.password !== -1 && row[colIdx.password] !== undefined ? String(row[colIdx.password]) : '').trim();
+
+          const rawAksesBBM = colIdx.aksesBBM !== -1 && row[colIdx.aksesBBM] !== undefined ? String(row[colIdx.aksesBBM]).trim().toUpperCase() : '';
+          const isAksesBBM = rawAksesBBM === 'TRUE' || rawAksesBBM === 'YA' || rawAksesBBM === '1';
+
+          const rawMobile = colIdx.mobile !== -1 && row[colIdx.mobile] !== undefined ? String(row[colIdx.mobile]).trim().toUpperCase() : '';
+          const isMobile = rawMobile === 'TRUE' || rawMobile === 'YA' || rawMobile === '1';
+
+          const rawSubDiv = (colIdx.subDivisi !== -1 && row[colIdx.subDivisi] !== undefined ? String(row[colIdx.subDivisi]) : '').trim();
+          const subUpper = rawSubDiv.toUpperCase();
+          const cleanSubDiv = (subUpper === 'TRUE' || subUpper === 'FALSE' || subUpper === 'YA' || subUpper === 'TIDAK' || subUpper === '1' || subUpper === '0' || subUpper === 'NULL' || subUpper === 'UNDEFINED' || subUpper === '-') ? '' : rawSubDiv;
+
+          return {
+            userId: rawUserId || (rawEmail ? rawEmail.split('@')[0] : ''),
+            storedPassword: rawPassword,
+            nama: (colIdx.nama !== -1 && row[colIdx.nama] !== undefined ? String(row[colIdx.nama]) : '').trim(),
+            email: rawEmail,
+            role: roleVal,
+            managerEmail: (colIdx.managerEmail !== -1 && row[colIdx.managerEmail] !== undefined ? String(row[colIdx.managerEmail]) : '').trim(),
+            divisi: (colIdx.divisi !== -1 && row[colIdx.divisi] !== undefined ? String(row[colIdx.divisi]) : '').trim(),
+            subDivisi: cleanSubDiv,
+            aksesBBM: isAksesBBM,
+            mobile: isMobile,
+            deviceId: (colIdx.deviceId !== -1 && row[colIdx.deviceId] !== undefined ? String(row[colIdx.deviceId]) : '').trim(),
+            fotoProfile: (colIdx.fotoProfile !== -1 && row[colIdx.fotoProfile] !== undefined ? String(row[colIdx.fotoProfile]) : '').trim(),
+            fotoProfileFileId: (colIdx.fotoProfileFileId !== -1 && row[colIdx.fotoProfileFileId] !== undefined ? String(row[colIdx.fotoProfileFileId]) : '').trim(),
+            pushSubscriptions: (colIdx.pushSubscriptions !== -1 && row[colIdx.pushSubscriptions] !== undefined ? String(row[colIdx.pushSubscriptions]) : '').trim()
+          };
         }
+      }
+      return null;
+    };
 
-        const rawPassword = (colIdx.password !== -1 && row[colIdx.password] !== undefined ? String(row[colIdx.password]) : '').trim();
+    let foundUser = findMatchingUserInRows(values);
 
-        const rawAksesBBM = colIdx.aksesBBM !== -1 && row[colIdx.aksesBBM] !== undefined ? String(row[colIdx.aksesBBM]).trim().toUpperCase() : '';
-        const isAksesBBM = rawAksesBBM === 'TRUE' || rawAksesBBM === 'YA' || rawAksesBBM === '1';
-
-        const rawMobile = colIdx.mobile !== -1 && row[colIdx.mobile] !== undefined ? String(row[colIdx.mobile]).trim().toUpperCase() : '';
-        const isMobile = rawMobile === 'TRUE' || rawMobile === 'YA' || rawMobile === '1';
-
-        const rawSubDiv = (colIdx.subDivisi !== -1 && row[colIdx.subDivisi] !== undefined ? String(row[colIdx.subDivisi]) : '').trim();
-        const subUpper = rawSubDiv.toUpperCase();
-        const cleanSubDiv = (subUpper === 'TRUE' || subUpper === 'FALSE' || subUpper === 'YA' || subUpper === 'TIDAK' || subUpper === '1' || subUpper === '0' || subUpper === 'NULL' || subUpper === 'UNDEFINED' || subUpper === '-') ? '' : rawSubDiv;
-
-        foundUser = {
-          userId: rawUserId || (rawEmail ? rawEmail.split('@')[0] : ''),
-          storedPassword: rawPassword,
-          nama: (colIdx.nama !== -1 && row[colIdx.nama] !== undefined ? String(row[colIdx.nama]) : '').trim(),
-          email: rawEmail,
-          role: roleVal,
-          managerEmail: (colIdx.managerEmail !== -1 && row[colIdx.managerEmail] !== undefined ? String(row[colIdx.managerEmail]) : '').trim(),
-          divisi: (colIdx.divisi !== -1 && row[colIdx.divisi] !== undefined ? String(row[colIdx.divisi]) : '').trim(),
-          subDivisi: cleanSubDiv,
-          aksesBBM: isAksesBBM,
-          mobile: isMobile,
-          deviceId: (colIdx.deviceId !== -1 && row[colIdx.deviceId] !== undefined ? String(row[colIdx.deviceId]) : '').trim(),
-          fotoProfile: (colIdx.fotoProfile !== -1 && row[colIdx.fotoProfile] !== undefined ? String(row[colIdx.fotoProfile]) : '').trim(),
-          fotoProfileFileId: (colIdx.fotoProfileFileId !== -1 && row[colIdx.fotoProfileFileId] !== undefined ? String(row[colIdx.fotoProfileFileId]) : '').trim(),
-          pushSubscriptions: (colIdx.pushSubscriptions !== -1 && row[colIdx.pushSubscriptions] !== undefined ? String(row[colIdx.pushSubscriptions]) : '').trim()
-        };
-        break;
+    // If login fails against warm cache (e.g., Admin just edited password or added user directly in Google Sheets),
+    // refresh Users sheet once from Google Sheets before rejecting.
+    if (usedCache && (!foundUser || !foundUser.storedPassword || foundUser.storedPassword !== cleanInputPassword)) {
+      const liveRes = await fetchLiveUsersRows();
+      if (liveRes.ok && liveRes.values && liveRes.values.length >= 2) {
+        foundUser = findMatchingUserInRows(liveRes.values);
       }
     }
 

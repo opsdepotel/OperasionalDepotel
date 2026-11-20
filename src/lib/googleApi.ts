@@ -1389,6 +1389,7 @@ export async function fetchActiveItemReviewHistories(
   try {
     const url = `/api/history?activeOnly=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}${forceRefresh ? '&forceRefresh=true' : ''}`;
     const res = await fetch(url, {
+      ...(forceRefresh ? { cache: 'no-store' as RequestCache } : {}),
       headers: {
         Authorization: `Bearer ${authToken}`,
         ...(forceRefresh ? { 'Cache-Control': 'no-cache' } : {})
@@ -1454,6 +1455,7 @@ export async function fetchHistoryForUid(
   try {
     const url = `/api/history?uid=${encodeURIComponent(cleanUid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}${forceRefresh ? '&forceRefresh=true' : ''}`;
     const res = await fetch(url, {
+      ...(forceRefresh ? { cache: 'no-store' as RequestCache } : {}),
       headers: {
         Authorization: `Bearer ${authToken}`,
         ...(forceRefresh ? { 'Cache-Control': 'no-cache' } : {})
@@ -1492,6 +1494,14 @@ export function getCachedClosedUsageItems(uid: string): UsageReportItem[] | unde
   return closedUsageItemsMemoryCache.get(uid.toUpperCase().trim());
 }
 
+export function invalidateClosedUsageItemsCache(uid?: string): void {
+  if (uid) {
+    closedUsageItemsMemoryCache.delete(uid.toUpperCase().trim());
+  } else {
+    closedUsageItemsMemoryCache.clear();
+  }
+}
+
 /**
  * High-performance on-demand loader for a specific UID's usage report items (Laporan).
  * Checks in-memory cache first (0ms), then queries the fast server endpoint /api/laporan?uid=...,
@@ -1500,15 +1510,19 @@ export function getCachedClosedUsageItems(uid: string): UsageReportItem[] | unde
 export async function fetchUsageItemsForUid(
   token: string,
   spreadsheetId: string,
-  uid: string
+  uid: string,
+  options?: { forceFresh?: boolean }
 ): Promise<UsageReportItem[]> {
   if (!uid) return [];
   const cleanUid = uid.trim().toUpperCase();
+  const forceFresh = Boolean(options?.forceFresh);
 
-  // 1. Check in-memory cache first (instant if already cached)
-  const cached = closedUsageItemsMemoryCache.get(cleanUid);
-  if (cached && cached.length > 0) {
-    return cached;
+  // 1. Check in-memory cache first (instant if already cached), unless forceFresh is requested
+  if (!forceFresh) {
+    const cached = closedUsageItemsMemoryCache.get(cleanUid);
+    if (cached && cached.length > 0) {
+      return cached;
+    }
   }
 
   if (token === 'mock_demo_token') {
@@ -1523,8 +1537,13 @@ export async function fetchUsageItemsForUid(
 
   // 2. Fetch from backend /api/laporan endpoint
   try {
-    const res = await fetch(`/api/laporan?uid=${encodeURIComponent(cleanUid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`, {
-      headers: { Authorization: `Bearer ${authToken}` }
+    const refreshParam = forceFresh ? '&forceRefresh=true' : '';
+    const headers: Record<string, string> = { Authorization: `Bearer ${authToken}` };
+    if (forceFresh) {
+      headers['Cache-Control'] = 'no-cache';
+    }
+    const res = await fetch(`/api/laporan?uid=${encodeURIComponent(cleanUid)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}${refreshParam}`, {
+      headers
     });
     if (res.ok) {
       const json = await res.json();
@@ -1593,6 +1612,8 @@ export function splitAndSummarizeUsageItems(
     }
   }
 
+  // Clear previous closed memory cache so direct edits/status changes on Google Sheets never leave stale entries
+  closedUsageItemsMemoryCache.clear();
   // Populate memory cache for all closed requests so clicking any closed request is instant
   for (const [reqIdUpper, items] of closedItemsByReq.entries()) {
     closedUsageItemsMemoryCache.set(reqIdUpper, items);
@@ -1641,7 +1662,11 @@ export function splitAndSummarizeUsageItems(
  * combined with high-speed On-Demand active history loading from /api/history.
  * Eliminates 94% of history payload by excluding closed UIDs during initial sync.
  */
-export async function fetchAllDatabaseTables(token: string, spreadsheetId: string): Promise<AllDatabaseTables> {
+export async function fetchAllDatabaseTables(
+  token: string,
+  spreadsheetId: string,
+  forceRefresh = false
+): Promise<AllDatabaseTables> {
   if (token === 'mock_demo_token') {
     return {
       requests: getMockData<BudgetRequest[]>('mock_db_pengajuan', defaultRequests),
@@ -1668,10 +1693,11 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
 
     const [res, activeHistories] = await Promise.all([
       fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query}`, {
+        cache: 'no-store',
         headers: { Authorization: `Bearer ${token}` },
         timeout: 60000
       }),
-      fetchActiveItemReviewHistories(token, spreadsheetId).catch(() => [])
+      fetchActiveItemReviewHistories(token, spreadsheetId, forceRefresh).catch(() => [])
     ]);
 
     if (res.status === 401) {
@@ -1731,7 +1757,7 @@ export async function fetchAllDatabaseTables(token: string, spreadsheetId: strin
     fetchSites(token, spreadsheetId),
     fetchUserActivities(token, spreadsheetId),
     fetchResetDeviceLogs(token, spreadsheetId),
-    fetchActiveItemReviewHistories(token, spreadsheetId)
+    fetchActiveItemReviewHistories(token, spreadsheetId, forceRefresh)
   ]);
 
   const summarizedUsageItems = splitAndSummarizeUsageItems(allReqs, allItems);

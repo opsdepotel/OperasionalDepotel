@@ -227,8 +227,9 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
         // If Finance rejects any item, it goes back to User for reporting/correction
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        // If Finance approves all items, Dana Talangan moves to PENDING_TALANGAN_TRANSFER for reimbursement transfer & closing
-        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
+        // If Finance approves all items, Dana Talangan moves to PENDING_TALANGAN_TRANSFER for reimbursement transfer & closing;
+        // standard OP- stays in REVIEW_ADMIN until Closing modal confirms CLOSED (preventing overlap with reopened REPORTING UIDs)
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REVIEW_ADMIN;
       }
     }
 

@@ -44,12 +44,11 @@ export const initAuth = async (
       cachedAccessToken = saData.token;
       cachedTokenTimestamp = Date.now();
 
-      // Clean up legacy localStorage tokens
+      // Clean up legacy localStorage tokens (preserve g_user_oauth_token for verified depotel@vgd4.my.id session)
       try {
         localStorage.removeItem('g_access_token');
         localStorage.removeItem('g_token_timestamp');
         localStorage.removeItem('g_is_service_account');
-        localStorage.removeItem('g_user_oauth_token');
       } catch {}
 
       const saUser = {

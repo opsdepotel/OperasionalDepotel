@@ -3,6 +3,9 @@ import { createPortal } from 'react-dom';
 import { UserProfile, SiteInfo, Role } from '../types';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
+import { resolveStrictDepotelToken, verifyTokenAccountEmail } from '../lib/photoMigration';
+import { requestGoogleAccessTokenClientSide } from '../lib/googleClientAuth';
+import { googleSignIn } from '../lib/firebase';
 import {
   X,
   Calendar,
@@ -18,7 +21,8 @@ import {
   ShieldCheck,
   Search,
   Sparkles,
-  Info
+  Info,
+  LogIn
 } from 'lucide-react';
 
 export interface ManualActivitySubmitData {
@@ -91,6 +95,130 @@ export const AdminManualActivityModal: React.FC<AdminManualActivityModalProps> =
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  // Strict Drive Ownership Safeguard State (depotel@vgd4.my.id)
+  const [isCheckingTokenOwner, setIsCheckingTokenOwner] = useState<boolean>(false);
+  const [driveTokenEmail, setDriveTokenEmail] = useState<string | null>(null);
+  const [isDriveTokenDepotel, setIsDriveTokenDepotel] = useState<boolean | null>(null);
+  const [isConnectingDepotel, setIsConnectingDepotel] = useState<boolean>(false);
+  const [showManualTokenBox, setShowManualTokenBox] = useState<boolean>(false);
+  const [manualTokenInput, setManualTokenInput] = useState<string>('');
+
+  const checkDriveOwnershipToken = async () => {
+    setIsCheckingTokenOwner(true);
+    try {
+      const res = await resolveStrictDepotelToken();
+      setDriveTokenEmail(res.email);
+      setIsDriveTokenDepotel(res.isDepotel);
+    } catch {
+      setIsDriveTokenDepotel(false);
+    } finally {
+      setIsCheckingTokenOwner(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      void checkDriveOwnershipToken();
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    const handleTokenUpdate = () => {
+      if (isOpen) {
+        void checkDriveOwnershipToken();
+      }
+    };
+    window.addEventListener('google_user_token_updated', handleTokenUpdate);
+    return () => {
+      window.removeEventListener('google_user_token_updated', handleTokenUpdate);
+    };
+  }, [isOpen]);
+
+  const handleConnectDepotelSession = async () => {
+    setIsConnectingDepotel(true);
+    setErrorMsg(null);
+    try {
+      let res: { accessToken: string; user?: { email?: string } } | null = null;
+      try {
+        const gisRes = await requestGoogleAccessTokenClientSide('depotel@vgd4.my.id');
+        res = { accessToken: gisRes.accessToken, user: gisRes.user };
+      } catch (gisErr: any) {
+        const msg = String(gisErr?.message || '');
+        if (msg.includes('dibatalkan') || msg.includes('ditutup') || msg.includes('popup-closed')) {
+          throw gisErr;
+        }
+        const fbRes = await googleSignIn();
+        if (fbRes) {
+          res = { accessToken: fbRes.accessToken, user: { email: fbRes.user.email || undefined } };
+        }
+      }
+
+      if (res && res.accessToken) {
+        const info = await verifyTokenAccountEmail(res.accessToken);
+        const email = info?.email || String(res.user?.email || '').trim().toLowerCase();
+        const isDep = email === 'depotel@vgd4.my.id';
+        setDriveTokenEmail(email || null);
+        setIsDriveTokenDepotel(isDep);
+        if (isDep) {
+          try {
+            localStorage.setItem('g_user_oauth_token', res.accessToken);
+            window.dispatchEvent(
+              new CustomEvent('google_user_token_updated', {
+                detail: { token: res.accessToken, email }
+              })
+            );
+          } catch {}
+          setShowManualTokenBox(false);
+          setErrorMsg(null);
+        } else {
+          setErrorMsg(
+            `Akun yang dipilih (${email || 'tidak dikenal'}) bukan 'depotel@vgd4.my.id'. Silakan pilih akun 'depotel@vgd4.my.id' agar kepemilikan foto di Google Drive sesuai.`
+          );
+        }
+      }
+    } catch (err: any) {
+      const errStr = String(err?.message || err || '');
+      if (!errStr.includes('dibatalkan') && !errStr.includes('ditutup') && !errStr.includes('popup-closed')) {
+        setShowManualTokenBox(true);
+        setErrorMsg(`Gagal membuka login otomatis (${errStr}). Anda juga dapat menempelkan Access Token depotel@vgd4.my.id secara manual di bawah.`);
+      }
+    } finally {
+      setIsConnectingDepotel(false);
+    }
+  };
+
+  const handleApplyManualDepotelToken = async () => {
+    const cleanTok = manualTokenInput.trim();
+    if (!cleanTok) return;
+    setIsCheckingTokenOwner(true);
+    setErrorMsg(null);
+    try {
+      const info = await verifyTokenAccountEmail(cleanTok);
+      if (info && info.isDepotel) {
+        localStorage.setItem('g_user_oauth_token', cleanTok);
+        window.dispatchEvent(
+          new CustomEvent('google_user_token_updated', {
+            detail: { token: cleanTok, email: info.email }
+          })
+        );
+        setDriveTokenEmail(info.email);
+        setIsDriveTokenDepotel(true);
+        setShowManualTokenBox(false);
+        setManualTokenInput('');
+      } else {
+        setDriveTokenEmail(info?.email || null);
+        setIsDriveTokenDepotel(false);
+        setErrorMsg(
+          info?.email
+            ? `Token tersebut milik '${info.email}', bukan 'depotel@vgd4.my.id'.`
+            : 'Token tidak valid atau telah kedaluwarsa.'
+        );
+      }
+    } finally {
+      setIsCheckingTokenOwner(false);
+    }
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const siteContainerRef = useRef<HTMLDivElement>(null);
@@ -413,6 +541,18 @@ export const AdminManualActivityModal: React.FC<AdminManualActivityModalProps> =
 
     setIsSubmitting(true);
     try {
+      // Pastikan token penyimpanan Drive benar-benar milik depotel@vgd4.my.id sebelum mengunggah
+      const ownerCheck = await resolveStrictDepotelToken();
+      setDriveTokenEmail(ownerCheck.email);
+      setIsDriveTokenDepotel(ownerCheck.isDepotel);
+      if (!ownerCheck.isDepotel) {
+        setErrorMsg(
+          `Pengaman Kepemilikan Drive: Sesi token saat ini terhubung ke '${ownerCheck.email || 'ops.depotel@gmail.com'}' (bukan 'depotel@vgd4.my.id'). Silakan klik tombol 'Hubungkan Sesi depotel@vgd4.my.id' di bagian atas form ini agar foto tercatat milik depotel@vgd4.my.id.`
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
       await onSubmitManualActivity(
         {
           userEmail: selectedUserEmail.trim(),
@@ -506,13 +646,87 @@ export const AdminManualActivityModal: React.FC<AdminManualActivityModalProps> =
             </div>
           )}
 
-          {/* Banner Audit Trail */}
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex items-start gap-3">
-            <Info className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
-            <div className="text-[11px] text-slate-600 leading-relaxed">
-              <strong className="text-slate-800 font-semibold block">Prinsip Audit & Transparansi:</strong>
-              Laporan yang diinput secara manual oleh Administrator akan secara otomatis diberi tanda watermark khusus dan dicatat dalam audit trail sistem dengan status resmi input susulan.
+          {/* Banner Audit Trail & Pengaman Kepemilikan Drive depotel@vgd4.my.id */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2.5">
+            <div className="flex items-start gap-3">
+              <Info className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+              <div className="text-[11px] text-slate-600 leading-relaxed flex-1">
+                <strong className="text-slate-800 font-semibold block">Prinsip Audit & Pengaman Kepemilikan Drive:</strong>
+                Laporan yang diinput secara manual oleh Administrator diberi watermark khusus dan diwajibkan tersimpan di Google Drive atas nama <strong className="text-slate-800">depotel@vgd4.my.id</strong>.
+              </div>
             </div>
+
+            {isCheckingTokenOwner ? (
+              <div className="flex items-center gap-2 text-[11px] text-slate-500 bg-white border border-slate-200 rounded-xl px-3 py-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                <span>Memverifikasi kepemilikan token Google Drive...</span>
+              </div>
+            ) : isDriveTokenDepotel ? (
+              <div className="flex items-center justify-between gap-2 text-[11px] bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl px-3 py-2">
+                <span className="flex items-center gap-1.5 font-semibold">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>Owner Google Drive Terverifikasi: <strong>depotel@vgd4.my.id</strong></span>
+                </span>
+                <span className="text-[10px] font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300/60">
+                  100% Aman
+                </span>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-300 rounded-xl p-3 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="text-[11px] text-amber-900 leading-relaxed">
+                    <span className="font-bold block text-amber-950">
+                      ⚠️ Token Drive Saat Ini: {driveTokenEmail || 'ops.depotel@gmail.com'} (Bukan depotel@vgd4.my.id)
+                    </span>
+                    <span>
+                      Agar file foto bukti kegiatan tercatat sebagai milik <strong>depotel@vgd4.my.id</strong> (bukan {driveTokenEmail || 'ops.depotel@gmail.com'}), hubungkan sesi <strong>depotel@vgd4.my.id</strong> terlebih dahulu:
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleConnectDepotelSession}
+                    disabled={isConnectingDepotel}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] px-3 py-1.5 rounded-lg shadow-2xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all"
+                  >
+                    {isConnectingDepotel ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <LogIn className="w-3.5 h-3.5" />
+                    )}
+                    <span>Hubungkan Sesi depotel@vgd4.my.id</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowManualTokenBox(prev => !prev)}
+                    className="text-[11px] font-semibold text-amber-900 hover:text-amber-950 underline px-2 py-1 cursor-pointer"
+                  >
+                    {showManualTokenBox ? 'Tutup Input Token Manual' : 'Input Token Manual'}
+                  </button>
+                </div>
+
+                {showManualTokenBox && (
+                  <div className="pt-1.5 flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={manualTokenInput}
+                      onChange={(e) => setManualTokenInput(e.target.value)}
+                      placeholder="Tempel Access Token (ya29...) milik depotel@vgd4.my.id..."
+                      className="flex-1 px-2.5 py-1.5 text-[11px] border border-amber-300 rounded-lg bg-white text-slate-800 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleApplyManualDepotelToken}
+                      disabled={!manualTokenInput.trim() || isCheckingTokenOwner}
+                      className="bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg cursor-pointer disabled:opacity-50"
+                    >
+                      Terapkan
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Section 1: Target Pengguna */}

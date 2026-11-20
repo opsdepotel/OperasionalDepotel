@@ -299,7 +299,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       if (hasRejections) {
         nextRequestStatus = RequestStatus.REPORTING;
       } else {
-        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REPORTING;
+        nextRequestStatus = isTalangan ? RequestStatus.PENDING_TALANGAN_TRANSFER : RequestStatus.REVIEW_ADMIN;
       }
     }
 
