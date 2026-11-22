@@ -4564,7 +4564,96 @@ export default function App() {
     }
   };
 
-  const getStatusLabel = (status: RequestStatus, userEmail?: string) => {
+  const parseHistoryTimestampMs = (rawTime?: string | null, historyId?: string): number => {
+    if (rawTime && rawTime !== '-') {
+      const trimmed = String(rawTime).trim();
+      if (/^\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/.test(trimmed)) {
+        const d = new Date(trimmed.replace(/\//g, '-').replace(' ', 'T'));
+        if (!isNaN(d.getTime())) return d.getTime();
+      }
+      const idMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[,\s]+(\d{1,2})[\.:](\d{1,2})(?:[\.:](\d{1,2}))?)?/);
+      if (idMatch) {
+        const [, day, month, year, hour = '0', min = '0', sec = '0'] = idMatch;
+        const d = new Date(
+          parseInt(year, 10),
+          parseInt(month, 10) - 1,
+          parseInt(day, 10),
+          parseInt(hour, 10),
+          parseInt(min, 10),
+          parseInt(sec, 10)
+        );
+        if (!isNaN(d.getTime())) return d.getTime();
+      }
+      const parsed = new Date(trimmed);
+      if (!isNaN(parsed.getTime())) return parsed.getTime();
+    }
+    if (historyId) {
+      const histEpochMatch = historyId.match(/^HIST-(\d{13})/);
+      if (histEpochMatch) return Number(histEpochMatch[1]) || 0;
+    }
+    return 0;
+  };
+
+  const getRejectorTitle = (req: BudgetRequest, defaultSupervisorTitle: string): string => {
+    const reqIdUpper = (req.id || '').trim().toUpperCase();
+    const reqItemIds = new Set(
+      (usageItemsByRequestIdMap.get(req.id) || []).map(i => (i.id || '').trim().toUpperCase())
+    );
+
+    const reqRejectionLogs = itemReviewHistories.filter(h => {
+      const hReqUid = (h.requestUid || '').trim().toUpperCase();
+      const hItemUid = (h.itemUid || '').trim().toUpperCase();
+      const matchesReq = hReqUid === reqIdUpper || hItemUid === reqIdUpper;
+      const isReqLevel = !hItemUid || hItemUid === reqIdUpper || hItemUid === hReqUid || !reqItemIds.has(hItemUid);
+      if (!matchesReq || !isReqLevel) return false;
+
+      const act = (h.actionType || '').toString().trim().toUpperCase();
+      const st = (h.status || '').toString().trim().toUpperCase();
+      return (
+        (act.includes('REVISI') || act.includes('REJECT') || st === 'REVISI' || st === 'REJECTED') &&
+        !act.includes('ITEM')
+      );
+    });
+
+    if (reqRejectionLogs.length > 0) {
+      let latestLog: ItemReviewHistory = reqRejectionLogs[0];
+      let latestMs = parseHistoryTimestampMs(latestLog.timestamp, latestLog.id);
+      let latestIdEpoch = Number((latestLog.id || '').match(/^HIST-(\d{13})/)?.[1] || 0);
+
+      for (let i = 1; i < reqRejectionLogs.length; i++) {
+        const candidate = reqRejectionLogs[i];
+        const candidateMs = parseHistoryTimestampMs(candidate.timestamp, candidate.id);
+        const candidateIdEpoch = Number((candidate.id || '').match(/^HIST-(\d{13})/)?.[1] || 0);
+        if (
+          candidateMs > latestMs ||
+          (candidateMs === latestMs && candidateIdEpoch > latestIdEpoch)
+        ) {
+          latestLog = candidate;
+          latestMs = candidateMs;
+          latestIdEpoch = candidateIdEpoch;
+        }
+      }
+
+      const act = (latestLog.actionType || '').toString().trim().toUpperCase();
+      const role = (latestLog.actorRole || '').toString().trim().toUpperCase();
+      if (act === 'REVISI_FINANCE' || role === 'FINANCE') return 'Finance';
+      if (act === 'REVISI_DIREKTUR' || role === 'DIREKTUR') return 'Direktur';
+      if (act === 'REVISI_MANAGER' || role === 'MANAGER') return 'Manager';
+    }
+
+    const adminCommentTrim = (req.adminComment || '').trim();
+    const managerCommentTrim = (req.managerComment || '').trim();
+    if (
+      adminCommentTrim.length > 0 &&
+      (!managerCommentTrim || adminCommentTrim === managerCommentTrim || (req.managerActionAmount || 0) > 0)
+    ) {
+      return 'Finance';
+    }
+
+    return defaultSupervisorTitle;
+  };
+
+  const getStatusLabel = (status: RequestStatus, userEmail?: string, req?: BudgetRequest) => {
     let requesterProfile = userEmail ? profiles.find(p => p.email.trim().toLowerCase() === userEmail.trim().toLowerCase()) : null;
     if (!requesterProfile && userProfile) {
       if (activeRole === Role.MANAGER || activeRole === Role.FINANCE) {
@@ -4580,7 +4669,10 @@ export default function App() {
       case RequestStatus.PENDING_APPROVAL: return `Menunggu Review ${supervisorTitle}`;
       case RequestStatus.APPROVED: return `Disetujui oleh ${supervisorTitle}`;
       case RequestStatus.PARTIALLY_APPROVED: return `Disetujui Sebagian oleh ${supervisorTitle}`;
-      case RequestStatus.REJECTED: return `Diminta Revisi ${supervisorTitle}`;
+      case RequestStatus.REJECTED: {
+        const rejectorTitle = req ? getRejectorTitle(req, supervisorTitle) : supervisorTitle;
+        return `Diminta Revisi ${rejectorTitle}`;
+      }
       case RequestStatus.TRANSFERRED: return 'Dana Ditransfer Finance';
       case RequestStatus.REPORTING: return 'Pelaporan Penggunaan';
       case RequestStatus.REVIEW_MANAGER: return `Review Laporan (${supervisorTitle})`;
@@ -5389,7 +5481,7 @@ export default function App() {
                                     {/* Indikator / Badge Notifikasi Baru Removed for cleaner UI */}
                                   </div>
                                   <span className={`text-[9px] font-mono font-bold bg-slate-100 border border-slate-200 px-2 py-0.5 rounded ${getStatusTextColor(req.status)}`}>
-                                    {getStatusLabel(req.status, req.userEmail)}
+                                    {getStatusLabel(req.status, req.userEmail, req)}
                                   </span>
                                 </div>
                                 <h4 className="text-xs font-bold text-slate-800 mt-1 whitespace-pre-wrap">{req.keterangan}</h4>

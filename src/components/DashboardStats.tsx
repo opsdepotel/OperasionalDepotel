@@ -2817,6 +2817,69 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </p>
           </div>
 
+          {/* Kartu Pintasan: Tabel Response Waktu Pengajuan & Transfer - FINANCE */}
+          {(() => {
+            const financeOpBiasaCount = requests.reduce(
+              (acc, r) => (r.id && r.id.startsWith('OP-') && !r.id.startsWith('OPT-') ? acc + 1 : acc),
+              0
+            );
+            return (
+              <div
+                id="finance-response-time-shortcut-card"
+                onClick={() => {
+                  if (onOpenResponseTimeTable) {
+                    onOpenResponseTimeTable();
+                  } else {
+                    setIsResponseTimeModalOpen(true);
+                  }
+                }}
+                className="p-5 rounded-2xl border border-teal-200 bg-gradient-to-br from-teal-50/90 via-white to-emerald-50/60 shadow-md hover:shadow-lg hover:border-teal-400 transition-all cursor-pointer group flex items-center justify-between gap-4 select-none col-span-2"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (onOpenResponseTimeTable) {
+                      onOpenResponseTimeTable();
+                    } else {
+                      setIsResponseTimeModalOpen(true);
+                    }
+                  }
+                }}
+                title="Klik untuk membuka Tabel Response Waktu Pengajuan & Transfer (SLA)"
+              >
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-teal-600 to-emerald-700 text-white flex items-center justify-center shrink-0 shadow-md shadow-teal-200 group-hover:scale-105 transition-transform">
+                    <Clock className="w-6 h-6 text-white" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-display font-bold text-slate-900 text-sm group-hover:text-teal-600 transition-colors">
+                        Tabel Response Waktu Pengajuan &amp; Transfer
+                      </h3>
+                      <span className="text-[9px] font-bold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full border border-teal-200 flex items-center gap-1">
+                        <TrendingUp className="w-3 h-3 text-teal-600" />
+                        SLA Timeline
+                      </span>
+                      <span className="text-[9px] font-medium bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">
+                        {financeOpBiasaCount} UID (OP-)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="hidden sm:inline-block text-xs font-semibold text-teal-700 group-hover:text-teal-900 transition-colors">
+                    Buka Tabel
+                  </span>
+                  <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+                    &rarr;
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm col-span-2">
             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">TOTAL REKONSILIASI KEUANGAN</p>
             <div className="grid grid-cols-2 gap-4 pt-3 border-t border-slate-100">
@@ -2853,6 +2916,19 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           usageItems={usageItems}
           currentRole={role}
           currentUserEmail={email}
+        />
+      </Suspense>
+    )}
+
+    {/* Modal Response Time Table (Finance Fallback) */}
+    {isResponseTimeModalOpen && (
+      <Suspense fallback={null}>
+        <AdminResponseTimeModal
+          isOpen={isResponseTimeModalOpen}
+          onClose={() => setIsResponseTimeModalOpen(false)}
+          requests={requests}
+          histories={histories}
+          profiles={profiles}
         />
       </Suspense>
     )}
@@ -2991,9 +3067,6 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
                   {opBiasaCount} UID (OP-)
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-medium mt-1">
-                Tabel timeline proses khusus UID Pengajuan (prefix OP-): Submit, Approved Manager, Approved Finance, dan Transferred (format DD/MM/YYYY hh:mm).
-              </p>
             </div>
           </div>
 

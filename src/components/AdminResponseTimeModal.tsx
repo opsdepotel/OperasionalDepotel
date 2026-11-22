@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ArrowLeft,
   Download,
@@ -8,9 +8,13 @@ import {
   CheckCircle2,
   AlertCircle,
   CreditCard,
-  User
+  User,
+  BarChart3,
+  Table2
 } from 'lucide-react';
 import { BudgetRequest, ItemReviewHistory, UserProfile, RequestStatus } from '../types';
+import { fetchAllItemReviewHistories } from '../lib/googleApi';
+import { ResponseTimeHourlyChart } from './ResponseTimeHourlyChart';
 
 interface AdminResponseTimeModalProps {
   isOpen?: boolean;
@@ -114,6 +118,9 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
   histories = [],
   profiles
 }) => {
+  // View tab state: 'table' (Tabel Response Waktu) | 'chart' (Grafik Waktu Per-Jam)
+  const [activeTab, setActiveTab] = useState<'table' | 'chart'>('table');
+
   // Filter states
   const [selectedDivisi, setSelectedDivisi] = useState<string>('ALL');
   const [selectedSubDivisi, setSelectedSubDivisi] = useState<string>('ALL');
@@ -122,6 +129,38 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 30;
+
+  // Full history records (active + closed) loaded on-demand from warm server cache
+  const [allHistories, setAllHistories] = useState<ItemReviewHistory[] | null>(null);
+  const [isLoadingFullHistory, setIsLoadingFullHistory] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setIsLoadingFullHistory(true);
+    fetchAllItemReviewHistories()
+      .then((records) => {
+        if (!cancelled && records.length > 0) {
+          setAllHistories(records);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingFullHistory(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  const effectiveHistories = useMemo(() => {
+    if (allHistories && allHistories.length > 0) {
+      // Merge with prop histories in case new in-session events exist
+      const seenIds = new Set(allHistories.map((h) => h.id));
+      const extras = histories.filter((h) => h.id && !seenIds.has(h.id));
+      return extras.length > 0 ? [...extras, ...allHistories] : allHistories;
+    }
+    return histories;
+  }, [allHistories, histories]);
 
   // Filter requests strictly to UID Pengajuan (prefix OP-) only
   const opRequests = useMemo(() => {
@@ -142,7 +181,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
   // Build history lookup indexed by RequestUID
   const historyByRequestUid = useMemo(() => {
     const map = new Map<string, ItemReviewHistory[]>();
-    histories.forEach((h) => {
+    effectiveHistories.forEach((h) => {
       const uid = (h.requestUid || '').trim();
       if (!uid) return;
       if (!map.has(uid)) {
@@ -151,7 +190,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
       map.get(uid)!.push(h);
     });
     return map;
-  }, [histories]);
+  }, [effectiveHistories]);
 
   // Available unique divisions, subdivisions, and years for OP- requests
   const { availableDivisions, availableSubDivisions, availableYears } = useMemo(() => {
@@ -194,9 +233,12 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
       const subDivisi = profile?.subDivisi || '-';
 
       const reqHistories = historyByRequestUid.get(req.id) || [];
+      const reqLevelHistories = reqHistories.filter(
+        (h) => !h.itemUid || h.itemUid === req.id || h.itemUid === h.requestUid
+      );
 
       // 1. Submit (DD/MM/YYYY hh:mm)
-      const createdHistory = reqHistories.find((h) => h.actionType === 'PENGAJUAN_CREATED');
+      const createdHistory = reqLevelHistories.find((h) => h.actionType === 'PENGAJUAN_CREATED');
       const diajukanDate =
         parseDateSafe(createdHistory?.timestamp) ||
         parseDateSafe(req.createdAt) ||
@@ -204,12 +246,19 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
         parseDateSafe(req.tanggalPemakaian);
 
       // 2. Approved Manager (DD/MM/YYYY hh:mm)
-      const managerHistory = reqHistories
-        .filter((h) => (h.actionType === 'APPROVAL_MANAGER' || h.actionType === 'APPROVAL_DIREKTUR') && h.status === 'APPROVED')
+      const managerHistory = reqLevelHistories
+        .filter((h) => {
+          const act = (h.actionType || '').toString().toUpperCase();
+          const st = (h.status || '').toString().toUpperCase();
+          return (
+            (act === 'APPROVAL_MANAGER' || act === 'APPROVAL_DIREKTUR') &&
+            (st === 'APPROVED' || st === 'DISETUJUI')
+          );
+        })
         .sort((a, b) => {
           const tA = parseDateSafe(a.timestamp)?.getTime() || 0;
           const tB = parseDateSafe(b.timestamp)?.getTime() || 0;
-          return tA - tB;
+          return tB - tA;
         })[0];
 
       let approvedManagerDate = parseDateSafe(managerHistory?.timestamp);
@@ -226,12 +275,16 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
       }
 
       // 3. Approved Finance (DD/MM/YYYY hh:mm)
-      const financeHistory = reqHistories
-        .filter((h) => h.actionType === 'APPROVAL_FINANCE' && h.status === 'APPROVED')
+      const financeHistory = reqLevelHistories
+        .filter((h) => {
+          const act = (h.actionType || '').toString().toUpperCase();
+          const st = (h.status || '').toString().toUpperCase();
+          return act === 'APPROVAL_FINANCE' && (st === 'APPROVED' || st === 'DISETUJUI');
+        })
         .sort((a, b) => {
           const tA = parseDateSafe(a.timestamp)?.getTime() || 0;
           const tB = parseDateSafe(b.timestamp)?.getTime() || 0;
-          return tA - tB;
+          return tB - tA;
         })[0];
 
       let approvedFinanceDate = parseDateSafe(financeHistory?.timestamp);
@@ -245,7 +298,20 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
       }
 
       // 4. Transferred (DD/MM/YYYY hh:mm)
-      const transferDate = parseDateSafe(req.adminActionTime) ||
+      const transferHistory = reqLevelHistories
+        .filter((h) => {
+          const st = (h.status || '').toString().toUpperCase();
+          return st === 'TRANSFERRED';
+        })
+        .sort((a, b) => {
+          const tA = parseDateSafe(a.timestamp)?.getTime() || 0;
+          const tB = parseDateSafe(b.timestamp)?.getTime() || 0;
+          return tA - tB;
+        })[0];
+
+      const transferDate =
+        parseDateSafe(req.adminActionTime) ||
+        parseDateSafe(transferHistory?.timestamp) ||
         (req.status === RequestStatus.TRANSFERRED || req.status === RequestStatus.CLOSED || req.status === RequestStatus.TRANSFER_BERTAHAP
           ? parseDateSafe(req.timestamp)
           : null);
@@ -288,8 +354,8 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
     });
   }, [opRequests, profileMap, historyByRequestUid]);
 
-  // Filtered rows
-  const filteredRows = useMemo(() => {
+  // Rows filtered strictly by Divisi, Sub Divisi, Bulan, dan Tahun (shared for Chart & base for Table)
+  const dimensionFilteredRows = useMemo(() => {
     return allRows.filter((row) => {
       // Divisi filter
       if (selectedDivisi !== 'ALL' && row.divisi !== selectedDivisi) {
@@ -315,22 +381,23 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
         }
       }
 
-      // Search query
-      if (searchQuery.trim() !== '') {
-        const q = searchQuery.toLowerCase().trim();
-        const matchId = row.id.toLowerCase().includes(q);
-        const matchUser = row.pemohonNama.toLowerCase().includes(q) || row.userEmail.toLowerCase().includes(q);
-        const matchSite = row.siteId.toLowerCase().includes(q);
-        const matchKet = row.keterangan.toLowerCase().includes(q);
-        const matchStatus = row.statusLabel.toLowerCase().includes(q);
-        if (!matchId && !matchUser && !matchSite && !matchKet && !matchStatus) {
-          return false;
-        }
-      }
-
       return true;
     });
-  }, [allRows, selectedDivisi, selectedSubDivisi, selectedMonth, selectedYear, searchQuery]);
+  }, [allRows, selectedDivisi, selectedSubDivisi, selectedMonth, selectedYear]);
+
+  // Filtered rows (includes search query for the table view)
+  const filteredRows = useMemo(() => {
+    if (searchQuery.trim() === '') return dimensionFilteredRows;
+    const q = searchQuery.toLowerCase().trim();
+    return dimensionFilteredRows.filter((row) => {
+      const matchId = row.id.toLowerCase().includes(q);
+      const matchUser = row.pemohonNama.toLowerCase().includes(q) || row.userEmail.toLowerCase().includes(q);
+      const matchSite = row.siteId.toLowerCase().includes(q);
+      const matchKet = row.keterangan.toLowerCase().includes(q);
+      const matchStatus = row.statusLabel.toLowerCase().includes(q);
+      return matchId || matchUser || matchSite || matchKet || matchStatus;
+    });
+  }, [dimensionFilteredRows, searchQuery]);
 
   // Pagination
   const totalPages = Math.ceil(filteredRows.length / itemsPerPage) || 1;
@@ -436,8 +503,8 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
         </div>
       </div>
 
-      {/* Overview & Title Card */}
-      <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-2">
+      {/* Overview & Title Card + Menu Switcher */}
+      <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 space-y-3">
         <div className="flex items-center justify-between flex-wrap gap-2">
           <div>
             <h3 className="font-display font-black text-slate-800 text-xs tracking-wide uppercase flex items-center gap-1.5">
@@ -445,32 +512,78 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
               <span>Tabel Response Waktu Pengajuan &amp; Transfer</span>
             </h3>
             <p className="text-[11px] text-slate-500 leading-relaxed font-medium mt-0.5">
-              Daftar seluruh timeline khusus UID Pengajuan (prefix OP-): Waktu Submit, Approved Manager, Approved Finance, dan Transferred.
+              {activeTab === 'table'
+                ? 'Daftar seluruh timeline khusus UID Pengajuan (prefix OP-): Waktu Submit, Approved Manager, Approved Finance, dan Transferred.'
+                : 'Grafik distribusi waktu per-jam (00:00 – 23:00) untuk series User Submit, Approved Manager, Approved Finance, dan Transfer.'}
             </p>
           </div>
-          <span className="text-xs font-mono font-bold text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-lg shadow-2xs">
-            Total Terfilter: <strong className="text-indigo-600">{filteredRows.length} UID OP-</strong>
-          </span>
+          <div className="flex items-center gap-2 flex-wrap">
+            {isLoadingFullHistory && (
+              <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg animate-pulse">
+                Memuat riwayat lengkap...
+              </span>
+            )}
+            <span className="text-xs font-mono font-bold text-slate-700 bg-white border border-slate-200 px-3 py-1 rounded-lg shadow-2xs">
+              Total Terfilter:{' '}
+              <strong className="text-indigo-600">
+                {(activeTab === 'table' ? filteredRows : dimensionFilteredRows).length} UID OP-
+              </strong>
+            </span>
+          </div>
+        </div>
+
+        {/* Menu Tab Switcher: Tabel Response Waktu vs Grafik Waktu Per-Jam */}
+        <div className="flex items-center gap-2 pt-1 border-t border-slate-200/70 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setActiveTab('table')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+              activeTab === 'table'
+                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-900/20'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Table2 className="w-4 h-4" />
+            <span>Tabel Response Waktu</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('chart')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+              activeTab === 'chart'
+                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-900/20'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Grafik Waktu Per-Jam</span>
+          </button>
         </div>
       </div>
 
       {/* Filter Controls Bar */}
       <div className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
-          {/* Search */}
-          <div className="lg:col-span-2 relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setCurrentPage(1);
-              }}
-              placeholder="Cari UID OP-, pemohon, status..."
-              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 shadow-2xs font-medium"
-            />
-          </div>
+        <div
+          className={`grid grid-cols-1 sm:grid-cols-2 ${
+            activeTab === 'table' ? 'lg:grid-cols-6' : 'lg:grid-cols-4'
+          } gap-2.5`}
+        >
+          {/* Search (Tabel mode only) */}
+          {activeTab === 'table' && (
+            <div className="lg:col-span-2 relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
+                placeholder="Cari UID OP-, pemohon, status..."
+                className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 shadow-2xs font-medium"
+              />
+            </div>
+          )}
 
           {/* Divisi */}
           <div>
@@ -556,23 +669,48 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5 border-t border-slate-100">
-          <span>
-            Format Tanggal &amp; Waktu:{' '}
-            <code className="text-slate-700 font-semibold font-mono bg-slate-100 px-2 py-0.5 rounded">
-              DD/MM/YYYY hh:mm
-            </code>
-          </span>
-          <span className="text-[11px] text-slate-400">
-            Halaman {currentPage} dari {totalPages} ({filteredRows.length} UID)
-          </span>
-        </div>
+        {activeTab === 'table' ? (
+          <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5 border-t border-slate-100">
+            <span>
+              Format Tanggal &amp; Waktu:{' '}
+              <code className="text-slate-700 font-semibold font-mono bg-slate-100 px-2 py-0.5 rounded">
+                DD/MM/YYYY hh:mm
+              </code>
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Halaman {currentPage} dari {totalPages} ({filteredRows.length} UID)
+            </span>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5 border-t border-slate-100 flex-wrap gap-2">
+            <span>
+              Pengelompokan Waktu:{' '}
+              <code className="text-slate-700 font-semibold font-mono bg-slate-100 px-2 py-0.5 rounded">
+                Per-Jam (00:00 – 23:00)
+              </code>
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Sumber Data: {dimensionFilteredRows.length} UID OP- sesuai filter
+            </span>
+          </div>
+        )}
       </div>
 
-      {/* Table Content Area (Full Width Card with Horizontal Scroll) */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-xs min-w-[960px]">
+      {/* Main Content Area: Grafik Waktu Per-Jam OR Tabel Response Waktu */}
+      {activeTab === 'chart' ? (
+        <ResponseTimeHourlyChart
+          rows={dimensionFilteredRows}
+          filterSummary={{
+            divisi: selectedDivisi === 'ALL' ? 'Semua Divisi' : selectedDivisi,
+            subDivisi: selectedSubDivisi === 'ALL' ? 'Semua Sub Divisi' : selectedSubDivisi,
+            monthLabel: MONTH_NAMES[selectedMonth] || 'Semua Bulan',
+            year: selectedYear === 'ALL' ? 'Semua Tahun' : selectedYear
+          }}
+        />
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-left text-xs min-w-[960px]">
             <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 select-none">
               <tr>
                 <th className="py-3.5 px-4 w-14 text-center">No</th>
@@ -744,6 +882,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 

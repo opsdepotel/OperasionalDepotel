@@ -1341,8 +1341,60 @@ let clientActiveHistoriesCache: {
 } | null = null;
 const CLIENT_ACTIVE_HISTORIES_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
 
+let clientAllHistoriesCache: {
+  data: ItemReviewHistory[];
+  timestamp: number;
+} | null = null;
+
 export function invalidateClientActiveHistoriesCache(): void {
   clientActiveHistoriesCache = null;
+  clientAllHistoriesCache = null;
+}
+
+/**
+ * Fetches full ItemReviewHistory records (active + closed) on-demand for Admin SLA Analytics.
+ * Reads directly from the warm server /api/history?all=true cache and caches client-side for 5 minutes.
+ */
+export async function fetchAllItemReviewHistories(
+  forceRefresh = false
+): Promise<ItemReviewHistory[]> {
+  const now = Date.now();
+  if (
+    !forceRefresh &&
+    clientAllHistoriesCache &&
+    now - clientAllHistoriesCache.timestamp < CLIENT_ACTIVE_HISTORIES_TTL_MS
+  ) {
+    return clientAllHistoriesCache.data;
+  }
+
+  const sessionToken = getStoredSessionToken();
+  if (!sessionToken) return [];
+
+  try {
+    const url = `/api/history?all=true${forceRefresh ? '&forceRefresh=true' : ''}`;
+    const res = await fetch(url, {
+      ...(forceRefresh ? { cache: 'no-store' as RequestCache } : {}),
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+        ...(forceRefresh ? { 'Cache-Control': 'no-cache' } : {})
+      }
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        const records = json.data as ItemReviewHistory[];
+        clientAllHistoriesCache = {
+          data: records,
+          timestamp: Date.now()
+        };
+        return records;
+      }
+    }
+  } catch (err) {
+    console.warn('[fetchAllItemReviewHistories] /api/history?all=true failed:', err);
+  }
+
+  return [];
 }
 
 /**
