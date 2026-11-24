@@ -30,8 +30,17 @@ const readyPromise = (async () => {
       expressApp.use(vite.middlewares);
     } else {
       const distPath = path.join(process.cwd(), 'dist');
-      expressApp.use(express.static(distPath));
+      expressApp.use(
+        express.static(distPath, {
+          setHeaders: (res, filePath) => {
+            if (filePath.endsWith('version.json') || filePath.endsWith('index.html')) {
+              res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+            }
+          },
+        })
+      );
       expressApp.get('*', (_req, res) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
         res.sendFile(path.join(distPath, 'index.html'));
       });
     }

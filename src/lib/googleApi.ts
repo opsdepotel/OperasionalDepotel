@@ -132,7 +132,8 @@ const LAPORAN_HEADERS = [
   'ItemUID', 'UID', 'TanggalPenggunaan', 'Nominal', 'Keterangan',
   'BuktiUrl', 'BuktiFileId', 'StatusManager', 'ManagerComment',
   'StatusAdmin', 'AdminComment', 'UpdatedAt',
-  'Timestamp'
+  'Timestamp',
+  'IsBBM', 'PlatNomorKendaraan'
 ];
 
 const USERS_HEADERS = [
@@ -143,7 +144,8 @@ const ACTIVITY_HEADERS = [
   'ActivityID', 'UserEmail', 'Tanggal', 'CreatedAt', 'SiteID', 'SiteName', 'CoordinatesDb', 'CoordinatesActual', 'Keterangan', 'BuktiUrl', 'BuktiFileId',
   'IndikasiFake', 'FakeReason',
   'AiRecaptureVerdict', 'AiRecaptureConfidence', 'AiRecaptureSummary', 'AiRecaptureIndicators', 'AiRecaptureCheckedAt',
-  'Timestamp'
+  'Timestamp',
+  'JenisKendaraan', 'PlatNomor'
 ];
 
 const RESET_DEVICE_LOG_HEADERS = [
@@ -284,6 +286,17 @@ function mapToBudgetRequest(row: Record<string, any>): BudgetRequest {
 function mapToUsageItem(row: Record<string, any>): UsageReportItem {
   const ts = String(row.Timestamp || row.timestamp || row.UpdatedAt || '');
   const rawNominal = row.Nominal ?? row.nominal ?? row['Nominal (Rp)'] ?? row['Nominal (Rupiah)'] ?? row.Jumlah ?? row.JumlahPengajuan;
+  const rawIsBbm =
+    row.IsBBM ?? row.isBBM ?? row.isBbm ?? row['Is BBM'] ?? row['Pengisian BBM'] ??
+    (Array.isArray(row._rawRow) && row._rawRow.length > 13 ? row._rawRow[13] : '');
+  const isBbmStr = String(rawIsBbm ?? '').trim().toUpperCase();
+  const isBBM = rawIsBbm === true || isBbmStr === 'TRUE' || isBbmStr === 'YA' || isBbmStr === 'YES' || isBbmStr === '1';
+
+  const rawPlat =
+    row.PlatNomorKendaraan ?? row.platNomorKendaraan ?? row['Plat Nomor Kendaraan'] ?? row.PlatNomor ?? row.platNomor ??
+    (Array.isArray(row._rawRow) && row._rawRow.length > 14 ? row._rawRow[14] : '');
+  const platNomorKendaraan = String(rawPlat ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+
   return {
     id: String(row.ItemUID || row.itemUid || row.ItemID || row.id || ''),
     requestId: String(row.UID || row.uid || row.requestId || ''),
@@ -297,7 +310,9 @@ function mapToUsageItem(row: Record<string, any>): UsageReportItem {
     statusAdmin: (row.StatusAdmin as ItemStatus) || (row.statusAdmin as ItemStatus) || ItemStatus.PENDING,
     adminComment: String(row.AdminComment || row.adminComment || ''),
     updatedAt: String(row.UpdatedAt || row.updatedAt || ''),
-    timestamp: ts
+    timestamp: ts,
+    isBBM,
+    platNomorKendaraan
   };
 }
 
@@ -498,7 +513,16 @@ function mapToUserActivity(row: Record<string, any>): UserActivity {
     aiRecaptureConfidence: confidenceVal,
     aiRecaptureSummary: rawSummary || undefined,
     aiRecaptureIndicators: rawIndicators || undefined,
-    aiRecaptureCheckedAt: rawCheckedAt || undefined
+    aiRecaptureCheckedAt: rawCheckedAt || undefined,
+    jenisKendaraan:
+      getVal('JenisKendaraan', 'jenisKendaraan', 'Jenis Kendaraan') ||
+      (rawRow.length >= 20 && rawRow[19] ? String(rawRow[19]).trim() : '') ||
+      undefined,
+    platNomor:
+      (
+        getVal('PlatNomor', 'platNomor', 'Plat Nomor') ||
+        (rawRow.length >= 21 && rawRow[20] ? String(rawRow[20]).trim() : '')
+      ).toUpperCase() || undefined
   };
 }
 
@@ -695,9 +719,9 @@ export async function ensureSheetsAndHeaders(token: string, sheetId: string): Pr
     // Set headers only for newly added sheets
     const headerMap: Record<string, { range: string; values: string[][] }> = {
       Pengajuan: { range: 'Pengajuan!A1:Q1', values: [PENGAJUAN_HEADERS] },
-      Laporan: { range: 'Laporan!A1:M1', values: [LAPORAN_HEADERS] },
+      Laporan: { range: 'Laporan!A1:O1', values: [LAPORAN_HEADERS] },
       Users: { range: 'Users!A1:N1', values: [USERS_HEADERS] },
-      Activity: { range: 'Activity!A1:S1', values: [ACTIVITY_HEADERS] },
+      Activity: { range: 'Activity!A1:U1', values: [ACTIVITY_HEADERS] },
       ResetDeviceLog: { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
       ItemReviewHistory: { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
     };
@@ -1248,6 +1272,7 @@ export async function fetchProfiles(token: string, spreadsheetId: string): Promi
     return getMockData<UserProfile[]>('mock_db_users', []);
   }
   const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`, {
+    cache: 'no-store',
     headers: { Authorization: `Bearer ${token}` }
   });
   if (res.status === 401) {
@@ -1546,6 +1571,48 @@ export function getCachedClosedUsageItems(uid: string): UsageReportItem[] | unde
   return closedUsageItemsMemoryCache.get(uid.toUpperCase().trim());
 }
 
+export function getAllCachedClosedUsageItems(): UsageReportItem[] {
+  const result: UsageReportItem[] = [];
+  for (const list of closedUsageItemsMemoryCache.values()) {
+    if (Array.isArray(list) && list.length > 0) {
+      result.push(...list);
+    }
+  }
+  return result;
+}
+
+export async function fetchBbmUsageItemsByPlate(
+  platNomor: string,
+  spreadsheetId: string = SPREADSHEET_ID
+): Promise<UsageReportItem[]> {
+  const cleanPlat = String(platNomor || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!cleanPlat) return [];
+
+  const sessionToken = getStoredSessionToken();
+  if (!sessionToken || sessionToken === 'mock_demo_token') {
+    return [];
+  }
+
+  try {
+    const res = await fetch(
+      `/api/laporan?plat=${encodeURIComponent(cleanPlat)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`,
+      {
+        headers: { Authorization: `Bearer ${sessionToken}` }
+      }
+    );
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data as UsageReportItem[];
+      }
+    }
+  } catch (err) {
+    console.warn(`[fetchBbmUsageItemsByPlate] /api/laporan?plat=${cleanPlat} failed:`, err);
+  }
+
+  return [];
+}
+
 export function invalidateClosedUsageItemsCache(uid?: string): void {
   if (uid) {
     closedUsageItemsMemoryCache.delete(uid.toUpperCase().trim());
@@ -1633,6 +1700,48 @@ export async function fetchUsageItemsForUid(
   return [];
 }
 
+function parseUsageItemDateMs(dateStr?: string): number {
+  if (!dateStr) return NaN;
+  const trimmed = dateStr.trim();
+  if (!trimmed) return NaN;
+
+  if (/^\d{4}-\d{2}-\d{2}T.*(?:[Zz]|[+-]\d{2}:?\d{2})$/.test(trimmed)) {
+    const isoParsed = Date.parse(trimmed);
+    if (!isNaN(isoParsed)) return isoParsed;
+  }
+
+  const idMatch = trimmed.match(
+    /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[,\s]+(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?/
+  );
+  if (idMatch) {
+    const day = parseInt(idMatch[1], 10);
+    const month = parseInt(idMatch[2], 10) - 1;
+    const year = parseInt(idMatch[3], 10);
+    const hour = idMatch[4] ? parseInt(idMatch[4], 10) : 0;
+    const minute = idMatch[5] ? parseInt(idMatch[5], 10) : 0;
+    const second = idMatch[6] ? parseInt(idMatch[6], 10) : 0;
+    const d = new Date(year, month, day, hour, minute, second);
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+
+  const ymdMatch = trimmed.match(
+    /^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s]+(\d{1,2})[:.](\d{2})(?:[:.](\d{2}))?)?/
+  );
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10) - 1;
+    const day = parseInt(ymdMatch[3], 10);
+    const hour = ymdMatch[4] ? parseInt(ymdMatch[4], 10) : 0;
+    const minute = ymdMatch[5] ? parseInt(ymdMatch[5], 10) : 0;
+    const second = ymdMatch[6] ? parseInt(ymdMatch[6], 10) : 0;
+    const d = new Date(year, month, day, hour, minute, second);
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+
+  const parsed = Date.parse(trimmed);
+  return isNaN(parsed) ? NaN : parsed;
+}
+
 /**
  * Splits raw usage items into:
  * 1. Full detail items for ACTIVE requests
@@ -1687,6 +1796,35 @@ export function splitAndSummarizeUsageItems(
                   (req?.siteId || '').toUpperCase().includes('DUREN SAWIT');
 
     if (totalApproved > 0) {
+      let latestUpdatedAt = '';
+      let latestUpdatedAtMs = -Infinity;
+
+      for (const item of items) {
+        const rawUpdatedAt = (item.updatedAt || '').trim();
+        if (!rawUpdatedAt) continue;
+        const ms = parseUsageItemDateMs(rawUpdatedAt);
+        if (!isNaN(ms) && ms > latestUpdatedAtMs) {
+          latestUpdatedAtMs = ms;
+          latestUpdatedAt = rawUpdatedAt;
+        }
+      }
+
+      if (!latestUpdatedAt) {
+        for (const item of items) {
+          const rawTs = (item.timestamp || '').trim();
+          if (!rawTs) continue;
+          const ms = parseUsageItemDateMs(rawTs);
+          if (!isNaN(ms) && ms > latestUpdatedAtMs) {
+            latestUpdatedAtMs = ms;
+            latestUpdatedAt = rawTs;
+          }
+        }
+      }
+
+      if (!latestUpdatedAt) {
+        latestUpdatedAt = req?.createdAt || '';
+      }
+
       closedSummaries.push({
         id: `summary_${reqIdUpper}`,
         requestId: req?.id || reqIdUpper,
@@ -1699,8 +1837,8 @@ export function splitAndSummarizeUsageItems(
         adminComment: '',
         buktiFileId: '',
         buktiUrl: '',
-        updatedAt: new Date().toISOString(),
-        timestamp: req?.createdAt || new Date().toISOString()
+        updatedAt: latestUpdatedAt,
+        timestamp: req?.createdAt || latestUpdatedAt
       });
     }
   }
@@ -2228,6 +2366,10 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
   const nowTimestamp = item.timestamp ? formatTimestamp(item.timestamp) : formatTimestamp(new Date());
   item.timestamp = nowTimestamp;
 
+  const cleanPlatNomor = item.isBBM
+    ? String(item.platNomorKendaraan || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    : '';
+
   const rowData = objectToRow(LAPORAN_HEADERS, {
     ItemUID: item.id,
     UID: item.requestId,
@@ -2241,7 +2383,9 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
     StatusAdmin: item.statusAdmin,
     AdminComment: item.adminComment,
     UpdatedAt: item.updatedAt || nowTimestamp,
-    Timestamp: nowTimestamp
+    Timestamp: nowTimestamp,
+    IsBBM: item.isBBM ? 'TRUE' : 'FALSE',
+    PlatNomorKendaraan: cleanPlatNomor
   });
 
   let appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:append?valueInputOption=USER_ENTERED`, {
@@ -2305,6 +2449,10 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
   item.timestamp = nowTimestamp;
 
   const sheetRowIdx = rowIdx + 1;
+  const cleanPlatNomor = item.isBBM
+    ? String(item.platNomorKendaraan || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    : '';
+
   const rowData = objectToRow(LAPORAN_HEADERS, {
     ItemUID: item.id,
     UID: item.requestId,
@@ -2318,10 +2466,12 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
     StatusAdmin: item.statusAdmin,
     AdminComment: item.adminComment,
     UpdatedAt: item.updatedAt || nowTimestamp,
-    Timestamp: nowTimestamp
+    Timestamp: nowTimestamp,
+    IsBBM: item.isBBM ? 'TRUE' : 'FALSE',
+    PlatNomorKendaraan: cleanPlatNomor
   });
 
-  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:M${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:O${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -2488,7 +2638,9 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
     AiRecaptureSummary: activity.aiRecaptureSummary || '',
     AiRecaptureIndicators: activity.aiRecaptureIndicators || '',
     AiRecaptureCheckedAt: activity.aiRecaptureCheckedAt || '',
-    Timestamp: nowTimestamp
+    Timestamp: nowTimestamp,
+    JenisKendaraan: activity.jenisKendaraan || '',
+    PlatNomor: (activity.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
   });
 
   const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:append?valueInputOption=USER_ENTERED`, {
@@ -2520,9 +2672,9 @@ export async function updateUserActivity(token: string, spreadsheetId: string, a
     return;
   }
 
-  // Ensure headers if row 1 does not have the 19 columns
+  // Ensure headers if row 1 does not have the 21 columns (A..U)
   try {
-    const headerCheckRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:S1`, {
+    const headerCheckRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:U1`, {
       headers: { Authorization: `Bearer ${token}` }
     });
     if (headerCheckRes.ok) {
@@ -2530,7 +2682,7 @@ export async function updateUserActivity(token: string, spreadsheetId: string, a
       const existingHeaders = headerData.values?.[0] || [];
       const hasVerdictHeader = existingHeaders.some((h: any) => String(h).toLowerCase().includes('recapture') || String(h).toLowerCase().includes('verdict'));
       if (!hasVerdictHeader || existingHeaders.length < ACTIVITY_HEADERS.length) {
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:S1?valueInputOption=USER_ENTERED`, {
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:U1?valueInputOption=USER_ENTERED`, {
           method: 'PUT',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -2581,10 +2733,12 @@ export async function updateUserActivity(token: string, spreadsheetId: string, a
     AiRecaptureSummary: activity.aiRecaptureSummary || '',
     AiRecaptureIndicators: activity.aiRecaptureIndicators || '',
     AiRecaptureCheckedAt: activity.aiRecaptureCheckedAt || '',
-    Timestamp: nowTimestamp
+    Timestamp: nowTimestamp,
+    JenisKendaraan: activity.jenisKendaraan || '',
+    PlatNomor: (activity.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
   });
 
-  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A${sheetRowIdx}:S${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A${sheetRowIdx}:U${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -2869,6 +3023,11 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
         values: [rowData]
       })
     });
+  }
+
+  // Invalidate backend Users/Role fallback caches immediately after any profile change
+  if (typeof window !== 'undefined') {
+    fetch('/api/auth/invalidate-users-cache', { method: 'POST' }).catch(() => {});
   }
 }
 

@@ -3,6 +3,7 @@ import { getServerAccessToken } from '../lib/serverGoogleAuth.js';
 import { readServerConfig } from './expressApp.js';
 import { Role, UserProfile } from '../types.js';
 import { createSessionToken, verifySessionToken } from './sessionToken.js';
+import { invalidateServerRoleCache } from './authMiddleware.js';
 
 export const authRouter = express.Router();
 
@@ -13,29 +14,40 @@ function normalizeHeader(h: string): string {
   return (h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// Server-side In-Memory Cache for Users sheet (reduces Vercel CPU Time & Google Sheets API load)
+// Server-side In-Memory Fallback Cache for Users sheet (used ONLY if live Google Sheets fetch fails)
 interface UsersSheetCache {
   spreadsheetId: string;
   timestamp: number;
   values: any[][];
 }
 let usersSheetCache: UsersSheetCache | null = null;
-const USERS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes TTL
+const USERS_FALLBACK_CACHE_MAX_AGE_MS = 5 * 60 * 1000; // 5 minutes max fallback age on network error
 
 /**
  * Helper to invalidate Users sheet cache manually (e.g. when profiles are updated)
  */
 export function invalidateUsersSheetCache() {
   usersSheetCache = null;
+  invalidateServerRoleCache();
 }
+
+/**
+ * Endpoint to clear server-side Users & Role fallback caches immediately after profile edits.
+ */
+authRouter.post('/invalidate-users-cache', (_req, res) => {
+  invalidateUsersSheetCache();
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  return res.json({ success: true });
+});
 
 /**
  * Backend Login Verification Endpoint: /api/auth/login
  * 
- * Verifies credentials directly on the server against Google Sheets (Users tab).
- * Uses a short 3-minute in-memory cache to minimize Vercel CPU execution time and network wait time.
+ * Verifies credentials directly on the server against live Google Sheets (Users tab)
+ * so any database edit in Google Sheets is read immediately.
  */
 authRouter.post('/login', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   try {
     const { userId, password, spreadsheetId: customSheetId } = req.body;
 
@@ -76,6 +88,7 @@ authRouter.post('/login', async (req, res) => {
       const sheetRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`,
         {
+          cache: 'no-store',
           headers: {
             Authorization: `Bearer ${token}`
           }
@@ -115,25 +128,24 @@ authRouter.post('/login', async (req, res) => {
     let values: any[][] = [];
     let usedCache = false;
 
-    // 2. Check In-Memory Cache first (0ms CPU Execution time if warm cache)
-    const now = Date.now();
-    if (
+    // 2. Always fetch LIVE Users sheet so edits in Google Sheets are reflected immediately
+    const liveRes = await fetchLiveUsersRows();
+    if (liveRes.ok && liveRes.values) {
+      values = liveRes.values;
+    } else if (
       usersSheetCache &&
       usersSheetCache.spreadsheetId === spreadsheetId &&
-      now - usersSheetCache.timestamp < USERS_CACHE_TTL_MS &&
+      Date.now() - usersSheetCache.timestamp < USERS_FALLBACK_CACHE_MAX_AGE_MS &&
       usersSheetCache.values.length >= 2
     ) {
+      // Graceful fallback ONLY if live Google Sheets request fails transiently
       values = usersSheetCache.values;
       usedCache = true;
     } else {
-      const liveRes = await fetchLiveUsersRows();
-      if (!liveRes.ok || !liveRes.values) {
-        return res.status(liveRes.status || 502).json({
-          success: false,
-          error: liveRes.error || 'Database operasional Google Sheets sedang tidak dapat dijangkau.'
-        });
-      }
-      values = liveRes.values;
+      return res.status(liveRes.status || 502).json({
+        success: false,
+        error: liveRes.error || 'Database operasional Google Sheets sedang tidak dapat dijangkau.'
+      });
     }
 
     if (values.length < 2) {
@@ -299,6 +311,7 @@ authRouter.post('/login', async (req, res) => {
  * Automatically renews the token if within the sliding expiration window (remaining < 7 days).
  */
 authRouter.post('/verify-session', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
   try {
     const authHeader = req.headers.authorization;
     const bearerToken = (authHeader && authHeader.startsWith('Bearer ')) ? authHeader.slice(7).trim() : '';
@@ -360,41 +373,18 @@ authRouter.post('/verify-session', async (req, res) => {
       ? customSheetId.trim()
       : config.spreadsheetId;
 
-    // 3. Fetch Users sheet (Check in-memory cache first to minimize Vercel CPU execution time)
+    // 3. Always fetch LIVE Users sheet so edits in Google Sheets are reflected immediately
     const now = Date.now();
     let values: any[][] = [];
-    if (
-      usersSheetCache &&
-      usersSheetCache.spreadsheetId === spreadsheetId &&
-      now - usersSheetCache.timestamp < USERS_CACHE_TTL_MS &&
-      usersSheetCache.values.length >= 2
-    ) {
-      values = usersSheetCache.values;
-    } else {
-      const sheetRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      if (!sheetRes.ok) {
-        if (verifiedPayload) {
-          return res.json({
-            success: true,
-            user: {
-              userId: verifiedPayload.userId,
-              email: verifiedPayload.email,
-              role: verifiedPayload.role,
-              deviceId: verifiedPayload.deviceId
-            },
-            sessionToken
-          });
-        }
-        return res.status(502).json({
-          success: false,
-          error: 'Database operasional Google Sheets sedang tidak dapat dijangkau. Silakan coba beberapa saat lagi.'
-        });
+    const sheetRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:Z`,
+      {
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${token}` }
       }
+    );
 
+    if (sheetRes.ok) {
       const sheetData = await sheetRes.json();
       values = sheetData.values || [];
       if (values.length >= 2) {
@@ -404,6 +394,31 @@ authRouter.post('/verify-session', async (req, res) => {
           values
         };
       }
+    } else if (
+      usersSheetCache &&
+      usersSheetCache.spreadsheetId === spreadsheetId &&
+      now - usersSheetCache.timestamp < USERS_FALLBACK_CACHE_MAX_AGE_MS &&
+      usersSheetCache.values.length >= 2
+    ) {
+      // Graceful fallback ONLY if live Google Sheets request fails transiently
+      values = usersSheetCache.values;
+    } else {
+      if (verifiedPayload) {
+        return res.json({
+          success: true,
+          user: {
+            userId: verifiedPayload.userId,
+            email: verifiedPayload.email,
+            role: verifiedPayload.role,
+            deviceId: verifiedPayload.deviceId
+          },
+          sessionToken
+        });
+      }
+      return res.status(502).json({
+        success: false,
+        error: 'Database operasional Google Sheets sedang tidak dapat dijangkau. Silakan coba beberapa saat lagi.'
+      });
     }
 
     if (values.length < 2) {
@@ -502,9 +517,17 @@ authRouter.post('/verify-session', async (req, res) => {
       });
     }
 
-    // Auto-renew token if sliding window reached or if one-time legacy migration
+    // Auto-renew token if sliding window reached, one-time legacy migration, or user role/identity changed in Users DB
+    const hasIdentityChanged = Boolean(
+      verifiedPayload && (
+        verifiedPayload.role !== foundUser.role ||
+        (verifiedPayload.email || '').trim().toLowerCase() !== (foundUser.email || '').trim().toLowerCase() ||
+        (verifiedPayload.userId || '').trim().toLowerCase() !== (foundUser.userId || '').trim().toLowerCase() ||
+        (verifiedPayload.deviceId || '').trim() !== (foundUser.deviceId || '').trim()
+      )
+    );
     let currentTokenStr = sessionToken;
-    if (needsRenewal || !currentTokenStr) {
+    if (needsRenewal || !currentTokenStr || hasIdentityChanged) {
       currentTokenStr = createSessionToken({
         userId: foundUser.userId,
         email: foundUser.email,

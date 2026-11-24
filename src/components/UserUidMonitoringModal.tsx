@@ -259,10 +259,10 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
       doc.setTextColor(15, 23, 42);
       doc.text(`${totalUserMurni} User`, 20, 35);
 
-      // Stat 2: User Dibatasi (> 1 UID / > Rp 300 rb)
+      // Stat 2: User Dibatasi (> 1 UID)
       doc.setFontSize(8);
       doc.setTextColor(190, 18, 60);
-      doc.text('User Dibatasi (> 1 UID / > 300rb)', 75, 29);
+      doc.text('User Dibatasi (> 1 UID)', 75, 29);
       doc.setFontSize(11);
       doc.text(`${blockedUsersCount} User`, 75, 35);
 
@@ -382,7 +382,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
           doc.setFont('helvetica', 'normal');
           doc.setTextColor(148, 163, 184);
           doc.text(
-            '* Aturan Sistem: User Murni (Role USER) diblokir dari pengajuan baru jika memiliki > 1 UID belum lapor atau total transfer UID belum lapor > Rp 300.000.',
+            '* Aturan Sistem: User Murni (Role USER) diblokir dari pengajuan baru jika memiliki > 1 UID belum dilaporkan.',
             14,
             202
           );
@@ -637,7 +637,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                   Monitoring UID User Murni
                 </h3>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/30 text-rose-200 border border-rose-400/40">
-                  Batas &gt; 1 UID / &gt; Rp 300 rb
+                  Batas &gt; 1 UID
                 </span>
               </div>
               <p className="text-[11px] text-slate-300/90 truncate mt-0.5">
@@ -687,7 +687,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-xl font-black font-display text-rose-700">{blockedUsersCount}</span>
-              <span className="text-xs text-rose-500 font-medium truncate">User (&gt; 1 UID / &gt; 300rb)</span>
+              <span className="text-xs text-rose-500 font-medium truncate">User (&gt; 1 UID)</span>
             </div>
           </div>
 
@@ -845,9 +845,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                             {item.unreportedCount} UID
                           </span>
                           {item.unreportedCount > 0 && (
-                            <span className={`text-[10px] font-mono font-bold ${
-                              item.unreportedTotalAmount > 300000 ? 'text-rose-700' : 'text-slate-500'
-                            }`}>
+                            <span className="text-[10px] font-mono font-bold text-slate-500">
                               {formatIDR(item.unreportedTotalAmount)}
                             </span>
                           )}
@@ -905,7 +903,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
 
         {/* Footer Info */}
         <div className="p-3.5 bg-slate-50 border-t border-slate-200 text-center text-[11px] text-slate-500 shrink-0">
-          * Aturan Pembatasan: User Murni (Role USER) yang memiliki &gt; 1 UID belum dilaporkan atau total transfer UID belum dilaporkan &gt; Rp 300.000, otomatis diblokir dari membuat Pengajuan Operasional maupun Dana Talangan baru.
+          * Aturan Pembatasan: User Murni (Role USER) yang memiliki &gt; 1 UID belum dilaporkan, otomatis diblokir dari membuat Pengajuan Operasional maupun Dana Talangan baru.
         </div>
       </div>
 
@@ -1076,7 +1074,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
             {/* Modal Footer */}
             <div className="p-3.5 sm:p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
               <p className="text-[10px] text-slate-400 leading-tight">
-                * User Murni dengan &gt; 1 UID belum dilaporkan atau total transfer belum dilaporkan &gt; Rp 300.000 otomatis dibatasi dari pengajuan baru.
+                * User Murni dengan &gt; 1 UID belum dilaporkan otomatis dibatasi dari pengajuan baru.
               </p>
               <div className="flex items-center gap-2 shrink-0">
                 <button

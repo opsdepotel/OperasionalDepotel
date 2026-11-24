@@ -102,23 +102,16 @@ export interface UserMurniBlockEvaluation {
 
 /**
  * Evaluates blocking thresholds for User Murni:
- * Blocked if unreported UIDs > 1 OR total transferred amount of unreported UIDs > Rp 300.000.
+ * Blocked strictly if unreported UIDs > 1 (total transfer amount threshold > Rp 300.000 is disabled).
  */
 export function evaluateUserMurniBlocking(unreportedUids: BudgetRequest[]): UserMurniBlockEvaluation {
   const count = unreportedUids.length;
   const totalTransferredAmount = getUnreportedTransferredTotal(unreportedUids);
   const isBlockedByCount = count > USER_MURNI_MAX_UNREPORTED_UIDS;
-  const isBlockedByAmount = totalTransferredAmount > USER_MURNI_MAX_UNREPORTED_TRANSFER_AMOUNT;
-  const isBlocked = isBlockedByCount || isBlockedByAmount;
+  const isBlockedByAmount = false;
+  const isBlocked = isBlockedByCount;
 
-  let blockReasonShort = '';
-  if (isBlockedByCount && isBlockedByAmount) {
-    blockReasonShort = '> 1 UID & > Rp 300 rb';
-  } else if (isBlockedByCount) {
-    blockReasonShort = '> 1 UID';
-  } else if (isBlockedByAmount) {
-    blockReasonShort = '> Rp 300 rb';
-  }
+  const blockReasonShort = isBlockedByCount ? '> 1 UID' : '';
 
   return {
     isBlocked,
@@ -132,7 +125,7 @@ export function evaluateUserMurniBlocking(unreportedUids: BudgetRequest[]): User
 
 /**
  * Validates whether a User Murni is blocked from submitting new requests.
- * Rule: Blocked if User Murni has > 1 unreported transferred UID OR total transferred amount of unreported UIDs > Rp 300.000.
+ * Rule: Blocked if User Murni has > 1 unreported transferred UID.
  */
 export function checkUserMurniSubmissionStatus(
   userProfile: UserProfile | null | undefined,

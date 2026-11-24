@@ -129,7 +129,7 @@ interface CachedRole {
   cachedAt: number;
 }
 const roleCache = new Map<string, CachedRole>();
-const ROLE_CACHE_TTL_MS = 3 * 60 * 1000; // 3 minutes
+const ROLE_CACHE_TTL_MS = 15 * 1000; // 15 seconds so Users sheet role changes take effect immediately
 
 export function invalidateServerRoleCache(email?: string) {
   if (email) {
@@ -169,6 +169,7 @@ export async function resolveUserRole(email: string): Promise<Role> {
       const spreadsheetId = serverConfig.spreadsheetId;
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:N`;
       const res = await fetch(url, {
+        cache: 'no-store',
         headers: { Authorization: `Bearer ${tokenRes.token}` }
       });
 

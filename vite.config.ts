@@ -1,11 +1,51 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, type Plugin} from 'vite';
+
+function createBuildVersion(): string {
+  const commitSha = (
+    process.env.VERCEL_GIT_COMMIT_SHA ||
+    process.env.GIT_COMMIT_SHA ||
+    ''
+  ).slice(0, 8);
+  const stamp = Date.now().toString(36);
+  return commitSha ? `${commitSha}-${stamp}` : `v-${stamp}`;
+}
+
+function appVersionManifestPlugin(buildVersion: string): Plugin {
+  const payload = JSON.stringify({
+    version: buildVersion,
+    builtAt: new Date().toISOString(),
+  });
+
+  return {
+    name: 'dioms-app-version-manifest',
+    configureServer(server) {
+      server.middlewares.use('/version.json', (_req, res) => {
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        res.end(payload);
+      });
+    },
+    generateBundle() {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: payload,
+      });
+    },
+  };
+}
 
 export default defineConfig(() => {
+  const buildVersion = createBuildVersion();
+
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), appVersionManifestPlugin(buildVersion)],
+    define: {
+      __APP_BUILD_VERSION__: JSON.stringify(buildVersion),
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

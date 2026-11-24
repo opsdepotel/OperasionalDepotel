@@ -7,8 +7,8 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, RequestStatus } from '../types';
-import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
-import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles, ShieldCheck, AlertTriangle, Send, Coins, Lock, AlertCircle, UploadCloud } from 'lucide-react';
+import { parseNumericValue, generateUniqueUID, getCachedClosedUsageItems, fetchUsageItemsForUid, SPREADSHEET_ID } from '../lib/googleApi';
+import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles, ShieldCheck, AlertTriangle, Send, Coins, Lock, AlertCircle, UploadCloud, Loader2 } from 'lucide-react';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture } from '../lib/aiRecapture';
 import { AiBbmReceiptModal } from './AiBbmReceiptModal';
@@ -83,15 +83,14 @@ const extractDriveFileId = (url?: string, fileId?: string): string | null => {
 
 // Helper to get printable image src URL for <img> tags
 const getImageSrc = (rawUrl?: string, rawFileId?: string): string => {
-  if (!rawUrl) return '';
-  if (rawUrl.startsWith('data:')) return rawUrl;
+  if (rawUrl && rawUrl.startsWith('data:')) return rawUrl;
 
   const driveId = extractDriveFileId(rawUrl, rawFileId);
   if (driveId) {
     return `https://drive.google.com/thumbnail?sz=w1000&id=${driveId}`;
   }
 
-  return rawUrl;
+  return rawUrl || '';
 };
 
 export const BbmListModal: React.FC<BbmListModalProps> = ({
@@ -145,6 +144,16 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedPhotoUrl, setSelectedPhotoUrl] = useState<string | null>(null);
   const [imageErrorMap, setImageErrorMap] = useState<Record<string, boolean>>({});
+
+  // Nota BBM Preview Modal State (Role Administrator & Role Finance)
+  const [notaBbmModal, setNotaBbmModal] = useState<{
+    req: BudgetRequest;
+    userName: string;
+    photoUrl: string;
+    rawUrl: string;
+    isLoading: boolean;
+    error: string | null;
+  } | null>(null);
 
   // Selected User Activity popup modal
   const [selectedUserActivityModal, setSelectedUserActivityModal] = useState<{
@@ -296,9 +305,102 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
   };
 
   useBackHandler(!!selectedPhotoUrl, () => setSelectedPhotoUrl(null), 'bbmList_photoUrl');
+  useBackHandler(!!notaBbmModal, () => setNotaBbmModal(null), 'bbmList_notaBbmModal');
   useBackHandler(!!selectedUserActivityModal, () => setSelectedUserActivityModal(null), 'bbmList_userActivity');
   useBackHandler(isAiRecaptureModalOpen, () => setIsAiRecaptureModalOpen(false), 'bbmList_aiRecapture');
   useBackHandler(isAiBbmModalOpen, () => setIsAiBbmModalOpen(false), 'bbmList_aiBbmReceipt');
+
+  // Resolve and open user's Nota BBM receipt preview (supports both active & CLOSED cached/on-demand Laporan items)
+  const handleOpenNotaBbm = async (
+    req: BudgetRequest,
+    userName: string,
+    usageItem?: UsageReportItem
+  ) => {
+    const pickProofFromItems = (list?: UsageReportItem[]) => {
+      if (!list || list.length === 0) return null;
+      const withProof = list.find(i => !i.id.startsWith('summary_') && (i.buktiUrl || (i.buktiFileId && !i.buktiFileId.startsWith('BBM_NOTA_'))));
+      if (withProof) {
+        return { url: withProof.buktiUrl || '', fileId: withProof.buktiFileId || '' };
+      }
+      return null;
+    };
+
+    const cachedClosed = getCachedClosedUsageItems(req.id);
+    const localItems = usageItems.filter(
+      item => item.requestId === req.id || item.id.startsWith(req.id) || (item.requestId && req.id.includes(item.requestId))
+    );
+    const proofFromClosedCache = pickProofFromItems(cachedClosed);
+    const proofFromPropItem = usageItem && !usageItem.id.startsWith('summary_') && (usageItem.buktiUrl || (usageItem.buktiFileId && !usageItem.buktiFileId.startsWith('BBM_NOTA_')))
+      ? { url: usageItem.buktiUrl || '', fileId: usageItem.buktiFileId || '' }
+      : null;
+    const proofFromLocalList = pickProofFromItems(localItems);
+    const firstBuktiUrl = req.buktiTransferUrl ? req.buktiTransferUrl.split('||')[0].trim() : '';
+    const firstFileId = req.buktiTransferFileId ? req.buktiTransferFileId.split('||')[0].trim() : '';
+
+    const immediateProof =
+      proofFromClosedCache ||
+      proofFromPropItem ||
+      proofFromLocalList ||
+      (firstBuktiUrl || firstFileId ? { url: firstBuktiUrl, fileId: firstFileId } : null);
+
+    if (immediateProof) {
+      const displayUrl = getImageSrc(immediateProof.url, immediateProof.fileId);
+      setNotaBbmModal({
+        req,
+        userName,
+        photoUrl: displayUrl || immediateProof.url,
+        rawUrl: immediateProof.url,
+        isLoading: false,
+        error: null
+      });
+      return;
+    }
+
+    // Fallback: fetch real Laporan items on-demand for this BBM UID
+    setNotaBbmModal({
+      req,
+      userName,
+      photoUrl: '',
+      rawUrl: '',
+      isLoading: true,
+      error: null
+    });
+
+    try {
+      const storedToken = typeof localStorage !== 'undefined' ? (localStorage.getItem('g_access_token') || '') : '';
+      const fetchedItems = await fetchUsageItemsForUid(storedToken, SPREADSHEET_ID, req.id);
+      const fetchedProof = pickProofFromItems(fetchedItems);
+      if (fetchedProof) {
+        const displayUrl = getImageSrc(fetchedProof.url, fetchedProof.fileId);
+        setNotaBbmModal({
+          req,
+          userName,
+          photoUrl: displayUrl || fetchedProof.url,
+          rawUrl: fetchedProof.url,
+          isLoading: false,
+          error: null
+        });
+      } else {
+        setNotaBbmModal({
+          req,
+          userName,
+          photoUrl: '',
+          rawUrl: '',
+          isLoading: false,
+          error: 'Bukti nota BBM tidak ditemukan pada transaksi ini.'
+        });
+      }
+    } catch (err: any) {
+      setNotaBbmModal({
+        req,
+        userName,
+        photoUrl: '',
+        rawUrl: '',
+        isLoading: false,
+        error: err?.message || 'Gagal memuat bukti Nota BBM dari server.'
+      });
+    }
+  };
 
   const handleRunAiBbmReceiptCheck = async (
     req: BudgetRequest,
@@ -809,43 +911,21 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
 
                   {/* Action Buttons Row */}
                   <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-2 flex-wrap">
-                    {/* Administrator AI BBM Receipt Check Button */}
-                    {role === Role.ADMINISTRATOR && (() => {
-                      const aiBbmRes = aiBbmReceiptResults[req.id];
-                      let btnStyle = 'bg-gradient-to-r from-amber-500/10 via-amber-600/10 to-orange-500/10 hover:from-amber-500/20 hover:to-orange-500/20 text-amber-900 border-amber-300/80';
-                      let btnText = 'Cek AI Nota BBM';
-                      let btnTitle = 'Periksa kesesuaian nominal nota BBM Duren Sawit vs nominal input sistem';
+                    {/* Role Administrator & Role Finance: Nota BBM button */}
+                    {(role === Role.ADMINISTRATOR || role === Role.FINANCE) && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenNotaBbm(req, userName, usageItem)}
+                        className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                        title="Lihat bukti Nota BBM yang dimasukkan User"
+                      >
+                        <ImageIcon className="w-3.5 h-3.5 text-amber-600" />
+                        <span>Nota BBM</span>
+                      </button>
+                    )}
 
-                      if (aiBbmRes) {
-                        if (aiBbmRes.statusKesesuaian === 'SESUAI') {
-                          btnStyle = 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300 ring-1 ring-emerald-200';
-                          btnText = '🟢 Nota Sesuai';
-                          btnTitle = `Nota Sesuai 100% (${formatIDR(aiBbmRes.nominalNota)})`;
-                        } else if (aiBbmRes.statusKesesuaian === 'TIDAK_SESUAI') {
-                          btnStyle = 'bg-rose-50 hover:bg-rose-100 text-rose-800 border-rose-300 ring-1 ring-rose-200';
-                          btnText = `🔴 Beda Nominal (${formatIDR(aiBbmRes.nominalNota)})`;
-                          btnTitle = `Terdeteksi Perbedaan Nominal: Nota ${formatIDR(aiBbmRes.nominalNota)} vs Input ${formatIDR(aiBbmRes.nominalInput)}`;
-                        } else {
-                          btnStyle = 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300 ring-1 ring-amber-200';
-                          btnText = '🟡 Nota Tidak Terbaca';
-                          btnTitle = 'Foto nota buram / tidak terbaca jelas oleh AI';
-                        }
-                      }
-
-                      return (
-                        <button
-                          type="button"
-                          onClick={() => handleRunAiBbmReceiptCheck(req, usageItem)}
-                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs border ${btnStyle}`}
-                          title={btnTitle}
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                          <span>{btnText}</span>
-                        </button>
-                      );
-                    })()}
-
-                    {rawBuktiPhoto && (
+                    {/* Existing Lihat Nota button for other roles */}
+                    {rawBuktiPhoto && role !== Role.ADMINISTRATOR && role !== Role.FINANCE && (
                       <button
                         type="button"
                         onClick={() => setSelectedPhotoUrl(displayImgUrl || rawBuktiPhoto)}
@@ -1031,6 +1111,90 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
                 darkTheme={true}
                 maxHeightClass="max-h-[65vh]"
               />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Nota BBM Preview Modal (Role Administrator & Role Finance) */}
+      {notaBbmModal && (
+        <div
+          className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in"
+          onClick={() => setNotaBbmModal(null)}
+        >
+          <div
+            className="relative bg-slate-900 rounded-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700 my-auto flex flex-col animate-scale-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 p-3.5 border-b border-slate-800 bg-slate-950/60">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">
+                    <Fuel className="w-3 h-3" />
+                    Nota BBM
+                  </span>
+                  <span className="text-[11px] font-mono text-slate-300 font-bold truncate">{notaBbmModal.req.id}</span>
+                </div>
+                <p className="text-xs font-bold text-white mt-1 truncate">
+                  {notaBbmModal.userName} • <span className="text-amber-400">{formatIDR(notaBbmModal.req.jumlahPengajuan)}</span>
+                </p>
+                <p className="text-[10px] text-slate-400 truncate">
+                  Tanggal: {formatShortDateDisplay(notaBbmModal.req.tanggalPemakaian)} • {notaBbmModal.req.keterangan || '-'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setNotaBbmModal(null)}
+                className="w-8 h-8 rounded-full bg-slate-800 text-white hover:bg-slate-700 flex items-center justify-center transition-all cursor-pointer shrink-0"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 flex flex-col items-center justify-center min-h-[260px] overflow-y-auto">
+              {notaBbmModal.isLoading ? (
+                <div className="flex flex-col items-center justify-center gap-2.5 py-10 text-slate-300">
+                  <Loader2 className="w-7 h-7 animate-spin text-amber-400" />
+                  <p className="text-xs font-semibold">Memuat bukti Nota BBM...</p>
+                </div>
+              ) : notaBbmModal.photoUrl ? (
+                <ZoomableImage
+                  src={notaBbmModal.photoUrl}
+                  alt={`Bukti Nota BBM ${notaBbmModal.req.id}`}
+                  darkTheme={true}
+                  maxHeightClass="max-h-[65vh]"
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center gap-2 py-10 px-4 text-center">
+                  <AlertCircle className="w-8 h-8 text-amber-400" />
+                  <p className="text-xs font-semibold text-slate-200">
+                    {notaBbmModal.error || 'Bukti Nota BBM tidak tersedia untuk transaksi ini.'}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between gap-2">
+              {notaBbmModal.rawUrl && /^https?:\/\//i.test(notaBbmModal.rawUrl) ? (
+                <a
+                  href={notaBbmModal.rawUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 text-xs font-bold transition-all"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Buka Sumber Asli</span>
+                </a>
+              ) : (
+                <span />
+              )}
+              <button
+                type="button"
+                onClick={() => setNotaBbmModal(null)}
+                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold transition-all cursor-pointer"
+              >
+                Tutup
+              </button>
             </div>
           </div>
         </div>

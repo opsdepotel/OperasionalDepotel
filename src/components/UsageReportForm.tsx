@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, ItemStatus, RequestStatus, Role, SiteInfo, UserActivity, UserProfile, ItemReviewHistory, formatTimestamp } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
+import { ReviewBbmActivityModal } from './ReviewBbmActivityModal';
 import { ZoomableImage } from './ZoomableImage';
 import { FormProgressOverlay } from './FormProgressOverlay';
 import { uploadReceiptFile, parseNumericValue, getCachedClosedUsageItems, fetchUsageItemsForUid, SPREADSHEET_ID } from '../lib/googleApi';
@@ -201,6 +202,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
   // Track BBM popup item view state
   const [viewingBbmItem, setViewingBbmItem] = useState<{ item: UsageReportItem; date: string; userEmail: string; userName: string } | null>(null);
+  const [reviewBbmItem, setReviewBbmItem] = useState<UsageReportItem | null>(null);
 
   // Track review decisions locally before submitting
   // Format: { [itemId]: { status: ItemStatus, comment: string } }
@@ -381,6 +383,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [tanggal, setTanggal] = useState(() => new Date().toISOString().split('T')[0]);
   const [nominal, setNominal] = useState('');
   const [keterangan, setKeterangan] = useState('');
+  const [isBBM, setIsBBM] = useState(false);
+  const [platNomorKendaraan, setPlatNomorKendaraan] = useState('');
+  const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [savingStep, setSavingStep] = useState<string>('Menyimpan item...');
@@ -490,6 +495,11 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       setActionError('Keterangan penggunaan wajib diisi.');
       return;
     }
+    const cleanedPlatNomor = isBBM ? sanitizePlatNomor(platNomorKendaraan) : '';
+    if (isBBM && !cleanedPlatNomor) {
+      setActionError('Plat Nomor Kendaraan wajib diisi jika Pengisian BBM dicentang.');
+      return;
+    }
 
     // Online-only enforcement for Budget Reports & Dana Talangan receipts
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -533,7 +543,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           statusAdmin: ItemStatus.PENDING,
           managerComment: '',
           adminComment: '',
-          updatedAt: timestamp
+          updatedAt: timestamp,
+          isBBM,
+          platNomorKendaraan: cleanedPlatNomor
         };
         await onUpdateItem(updated);
         setEditingItem(null);
@@ -551,7 +563,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           managerComment: '',
           statusAdmin: ItemStatus.PENDING,
           adminComment: '',
-          updatedAt: timestamp
+          updatedAt: timestamp,
+          isBBM,
+          platNomorKendaraan: cleanedPlatNomor
         };
         await onAddItem(newItem);
       }
@@ -563,6 +577,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       // Reset form
       setNominal('');
       setKeterangan('');
+      setIsBBM(false);
+      setPlatNomorKendaraan('');
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (cameraInputRef.current) cameraInputRef.current.value = '';
@@ -592,6 +608,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     setTanggal(item.tanggalPenggunaan);
     setNominal(String(item.nominal));
     setKeterangan(item.keterangan);
+    setIsBBM(Boolean(item.isBBM));
+    setPlatNomorKendaraan(item.isBBM ? sanitizePlatNomor(item.platNomorKendaraan || '') : '');
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (cameraInputRef.current) cameraInputRef.current.value = '';
@@ -604,6 +622,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     setTanggal(new Date().toISOString().split('T')[0]);
     setNominal('');
     setKeterangan('');
+    setIsBBM(false);
+    setPlatNomorKendaraan('');
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (cameraInputRef.current) cameraInputRef.current.value = '';
@@ -894,6 +914,17 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         <Calendar className="w-3.5 h-3.5 text-slate-400" />
                         {item.tanggalPenggunaan}
                       </p>
+                      {item.isBBM && (
+                        <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200/80 text-[10px] font-bold text-amber-800">
+                          <Fuel className="w-3 h-3 text-amber-600 shrink-0" />
+                          <span>Pengisian BBM</span>
+                          {item.platNomorKendaraan && (
+                            <span className="font-mono bg-white px-1.5 py-0.2 rounded border border-amber-200 text-slate-800">
+                              {item.platNomorKendaraan}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="text-right">
                       <span className="text-xs font-bold text-slate-700 block">{formatIDR(item.nominal)}</span>
@@ -1129,6 +1160,18 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         </button>
                       )}
 
+                      {(role === Role.MANAGER || role === Role.FINANCE) && item.isBBM && (
+                        <button
+                          type="button"
+                          onClick={() => setReviewBbmItem(item)}
+                          className="text-orange-700 hover:text-orange-900 font-semibold flex items-center gap-1 cursor-pointer border-l border-slate-200 pl-3"
+                          title="Review Aktivitas Kendaraan berdasarkan Plat Nomor sejak pembelian BBM ini"
+                        >
+                          <span>Review BBM</span>
+                          <Fuel className="w-3.5 h-3.5 text-orange-600" />
+                        </button>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => setHistoryModalItem(item)}
@@ -1202,6 +1245,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 setTanggal(new Date().toISOString().split('T')[0]);
                 setNominal('');
                 setKeterangan('');
+                setIsBBM(false);
+                setPlatNomorKendaraan('');
                 setSelectedFile(null);
                 setActionError(null);
                 setIsFormOpen(true);
@@ -1482,6 +1527,75 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                   />
                   <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 </div>
+              </div>
+
+              {/* Pengisian BBM Checkbox & Plat Nomor Kendaraan */}
+              <div className="space-y-2.5 bg-slate-50/80 border border-slate-200/80 p-3.5 rounded-2xl">
+                <label
+                  htmlFor="usage-is-bbm-checkbox"
+                  className="flex items-center gap-2.5 cursor-pointer select-none"
+                >
+                  <input
+                    id="usage-is-bbm-checkbox"
+                    type="checkbox"
+                    checked={isBBM}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setIsBBM(checked);
+                      if (!checked) {
+                        setPlatNomorKendaraan('');
+                      }
+                      if (actionError) setActionError(null);
+                    }}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <Fuel className={`w-3.5 h-3.5 ${isBBM ? 'text-amber-600' : 'text-slate-400'}`} />
+                    <span className="text-xs font-bold text-slate-700">Pengisian BBM</span>
+                  </div>
+                </label>
+
+                {isBBM && (
+                  <div className="space-y-1.5 pt-1 animate-fade-in">
+                    <div className="flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="usage-plat-nomor-input"
+                        className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider"
+                      >
+                        Plat Nomor Kendaraan <span className="text-red-500">*</span>
+                      </label>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                        Wajib diisi
+                      </span>
+                    </div>
+                    <input
+                      id="usage-plat-nomor-input"
+                      type="text"
+                      value={platNomorKendaraan}
+                      onChange={(e) => {
+                        setPlatNomorKendaraan(sanitizePlatNomor(e.target.value));
+                        if (actionError) setActionError(null);
+                      }}
+                      onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
+                        const nativeEvent = e.nativeEvent as InputEvent;
+                        if (nativeEvent?.data && /[^a-zA-Z0-9]/.test(nativeEvent.data)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      placeholder="Contoh: B1234XYZ"
+                      required
+                      pattern="[A-Z0-9]+"
+                      title="Hanya huruf A-Z dan angka 0-9 tanpa spasi atau simbol"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      className="w-full px-3 py-2 text-xs font-mono font-bold uppercase tracking-wider bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                    />
+                    <p className="text-[10px] text-slate-400 font-medium">
+                      Hanya huruf <strong className="text-slate-500">A–Z</strong> dan angka <strong className="text-slate-500">0–9</strong> tanpa spasi atau simbol.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Bukti File / Nota Source Selection */}
@@ -2345,6 +2459,20 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           </div>
         </div>,
         document.body
+      )}
+
+      {/* Review BBM Vehicle Activities Modal (Manager & Finance) */}
+      {(role === Role.MANAGER || role === Role.FINANCE) && (
+        <ReviewBbmActivityModal
+          isOpen={!!reviewBbmItem}
+          onClose={() => setReviewBbmItem(null)}
+          item={reviewBbmItem}
+          request={request}
+          allUsageItems={items}
+          allRequests={requests}
+          activities={activities}
+          profiles={profiles}
+        />
       )}
     </div>
   );

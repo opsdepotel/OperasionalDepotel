@@ -45,6 +45,8 @@ export interface OfflineActivityItem {
   coordinatesDb: string;
   coordinatesActual: string;
   keterangan: string;
+  jenisKendaraan?: string;
+  platNomor?: string;
   indikasiFake?: boolean;
   fakeReason?: string;
   userEmail: string;
@@ -601,6 +603,8 @@ export async function saveOfflineActivityLog(
     coordinatesDb: string;
     coordinatesActual: string;
     keterangan: string;
+    jenisKendaraan?: string;
+    platNomor?: string;
     indikasiFake?: boolean;
     fakeReason?: string;
     userEmail: string;
@@ -629,6 +633,8 @@ export async function saveOfflineActivityLog(
     coordinatesDb: data.coordinatesDb,
     coordinatesActual: data.coordinatesActual,
     keterangan: data.keterangan,
+    jenisKendaraan: data.jenisKendaraan || '',
+    platNomor: (data.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
     indikasiFake: data.indikasiFake,
     fakeReason: data.fakeReason,
     userEmail: data.userEmail,

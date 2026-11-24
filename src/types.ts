@@ -68,6 +68,8 @@ export interface UsageReportItem {
   adminComment: string;
   updatedAt: string;
   timestamp?: string;
+  isBBM?: boolean;
+  platNomorKendaraan?: string;
 }
 
 export interface UserProfile {
@@ -115,6 +117,9 @@ export interface UserActivity {
   aiRecaptureSummary?: string;
   aiRecaptureIndicators?: string; // JSON array or comma-separated string
   aiRecaptureCheckedAt?: string;
+  // Kendaraan Operasional (Google Sheet Activity columns T & U)
+  jenisKendaraan?: string;
+  platNomor?: string;
 }
 
 export interface ResetDeviceLog {

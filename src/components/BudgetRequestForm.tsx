@@ -11,7 +11,7 @@ import { checkUserMurniSubmissionStatus } from './UserUidMonitoringModal';
 import {
   Plus, Calendar, MapPin, Coins, FileText, AlertCircle, Sparkles,
   Camera, UploadCloud, X, Image as ImageIcon, AlertTriangle, ShieldCheck, CheckCircle2, Lock,
-  ChevronLeft, ArrowRight, Edit3
+  ChevronLeft, ArrowRight, Edit3, Fuel
 } from 'lucide-react';
 
 interface BudgetRequestFormProps {
@@ -120,6 +120,9 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   });
   const [itemNominal, setItemNominal] = useState<string>('');
   const [itemKeterangan, setItemKeterangan] = useState<string>('');
+  const [itemIsBBM, setItemIsBBM] = useState<boolean>(false);
+  const [itemPlatNomorKendaraan, setItemPlatNomorKendaraan] = useState<string>('');
+  const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -238,16 +241,20 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
     let talanganAmount = 0;
     let firstItem: UsageReportItem | undefined = undefined;
 
+    const cleanedItemPlatNomor = itemIsBBM ? sanitizePlatNomor(itemPlatNomorKendaraan) : '';
+
     if (isTalangan && !initialRequest) {
       const parsedItemAmount = parseNumericValue(itemNominal);
       const hasNominal = parsedItemAmount > 0;
       const hasKeterangan = !!itemKeterangan.trim();
       const hasProof = !!selectedFile;
+      const hasPlatIfBbm = !itemIsBBM || cleanedItemPlatNomor.length > 0;
 
-      if (!hasNominal || !hasKeterangan || !hasProof) {
+      if (!hasNominal || !hasKeterangan || !hasProof || !hasPlatIfBbm) {
         let reasons: string[] = [];
         if (!hasNominal) reasons.push('Nominal pengeluaran (> Rp 0)');
         if (!hasKeterangan) reasons.push('Keterangan / Uraian nota');
+        if (!hasPlatIfBbm) reasons.push('Plat Nomor Kendaraan (wajib karena Pengisian BBM dicentang)');
         if (!hasProof) reasons.push('Foto bukti nota / kuitansi pembayaran');
 
         setMissingItemReason(`Harap lengkapi: ${reasons.join(', ')}.`);
@@ -269,15 +276,10 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       finalAmount = initialRequest ? parseNumericValue(jumlahPengajuan) : talanganAmount;
     }
 
-    // Enforcement: User Murni Pembatasan UID Belum Dilaporkan (> 1 UID atau total transfer > Rp 300.000)
+    // Enforcement: User Murni Pembatasan UID Belum Dilaporkan (> 1 UID)
     if (userMurniStatus.isBlocked && !initialRequest) {
-      const totalFormatted = new Intl.NumberFormat('id-ID', {
-        style: 'currency',
-        currency: 'IDR',
-        minimumFractionDigits: 0
-      }).format(userMurniStatus.totalTransferredAmount);
       setError(
-        `Pengajuan Dibatasi: Anda memiliki ${userMurniStatus.count} UID belum dilaporkan dengan total transfer ${totalFormatted}. Sesuai aturan sistem, User Murni tidak dapat membuat Pengajuan Operasional maupun Dana Talangan baru jika memiliki > 1 UID belum dilaporkan atau total transfer UID belum dilaporkan > Rp 300.000.`
+        `Pengajuan Dibatasi: Anda memiliki ${userMurniStatus.count} UID belum dilaporkan. Sesuai aturan sistem, User Murni tidak dapat membuat Pengajuan Operasional maupun Dana Talangan baru jika memiliki lebih dari 1 UID belum dilaporkan.`
       );
       return;
     }
@@ -329,7 +331,9 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           statusAdmin: ItemStatus.PENDING,
           adminComment: '',
           updatedAt: timestamp,
-          timestamp: timestamp
+          timestamp: timestamp,
+          isBBM: itemIsBBM,
+          platNomorKendaraan: cleanedItemPlatNomor
         };
       }
 
@@ -417,7 +421,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           </div>
         )}
 
-        {/* Banner Peringatan Pembatasan UID Belum Dilaporkan (> 1 UID atau > Rp 300.000) */}
+        {/* Banner Peringatan Pembatasan UID Belum Dilaporkan (> 1 UID) */}
         {userMurniStatus.isBlocked && !initialRequest && (
           <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 rounded-2xl p-4 text-xs space-y-2 shadow-xs animate-slide-up">
             <div className="flex items-start gap-2.5">
@@ -431,7 +435,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                   <strong>
                     {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(userMurniStatus.totalTransferredAmount)}
                   </strong>{' '}
-                  namun belum dilaporkan sama sekali. Sesuai aturan sistem, User Murni tidak dapat melakukan Pengajuan Operasional maupun Dana Talangan baru jika memiliki lebih dari 1 UID belum dilaporkan <strong>atau</strong> total transfer UID belum dilaporkan lebih dari <strong>Rp 300.000</strong>.
+                  namun belum dilaporkan sama sekali. Sesuai aturan sistem, User Murni tidak dapat melakukan Pengajuan Operasional maupun Dana Talangan baru jika memiliki lebih dari 1 UID belum dilaporkan.
                 </p>
               </div>
             </div>
@@ -793,6 +797,75 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                   />
                   <FileText className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
                 </div>
+              </div>
+
+              {/* Pengisian BBM Checkbox & Plat Nomor Kendaraan */}
+              <div className="space-y-2.5 bg-slate-50/80 border border-slate-200/80 p-3.5 rounded-2xl">
+                <label
+                  htmlFor="talangan-first-item-is-bbm-checkbox"
+                  className="flex items-center gap-2.5 cursor-pointer select-none"
+                >
+                  <input
+                    id="talangan-first-item-is-bbm-checkbox"
+                    type="checkbox"
+                    checked={itemIsBBM}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setItemIsBBM(checked);
+                      if (!checked) {
+                        setItemPlatNomorKendaraan('');
+                      }
+                      if (error) setError(null);
+                    }}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <Fuel className={`w-3.5 h-3.5 ${itemIsBBM ? 'text-amber-600' : 'text-slate-400'}`} />
+                    <span className="text-xs font-bold text-slate-700">Pengisian BBM</span>
+                  </div>
+                </label>
+
+                {itemIsBBM && (
+                  <div className="space-y-1.5 pt-1 animate-fade-in">
+                    <div className="flex items-center justify-between gap-2">
+                      <label
+                        htmlFor="talangan-first-item-plat-nomor-input"
+                        className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider"
+                      >
+                        Plat Nomor Kendaraan <span className="text-rose-500">*</span>
+                      </label>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                        Wajib diisi
+                      </span>
+                    </div>
+                    <input
+                      id="talangan-first-item-plat-nomor-input"
+                      type="text"
+                      value={itemPlatNomorKendaraan}
+                      onChange={(e) => {
+                        setItemPlatNomorKendaraan(sanitizePlatNomor(e.target.value));
+                        if (error) setError(null);
+                      }}
+                      onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
+                        const nativeEvent = e.nativeEvent as InputEvent;
+                        if (nativeEvent?.data && /[^a-zA-Z0-9]/.test(nativeEvent.data)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      placeholder="Contoh: B1234XYZ"
+                      required
+                      pattern="[A-Z0-9]+"
+                      title="Hanya huruf A-Z dan angka 0-9 tanpa spasi atau simbol"
+                      autoCapitalize="characters"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      className="w-full px-3 py-2 text-xs font-mono font-bold uppercase tracking-wider bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                    />
+                    <p className="text-[10px] text-slate-400 font-medium">
+                      Hanya huruf <strong className="text-slate-500">A–Z</strong> dan angka <strong className="text-slate-500">0–9</strong> tanpa spasi atau simbol.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Upload Foto Nota */}

@@ -22,7 +22,8 @@ import {
   Search,
   Sparkles,
   Info,
-  LogIn
+  LogIn,
+  Car
 } from 'lucide-react';
 
 export interface ManualActivitySubmitData {
@@ -36,6 +37,8 @@ export interface ManualActivitySubmitData {
   coordinatesActual: string;
   keterangan: string;
   alasanSusulan: string;
+  jenisKendaraan?: string;
+  platNomor?: string;
 }
 
 interface AdminManualActivityModalProps {
@@ -82,8 +85,13 @@ export const AdminManualActivityModal: React.FC<AdminManualActivityModalProps> =
   const [customCoordinates, setCustomCoordinates] = useState<string>('');
   const [showSiteSuggestions, setShowSiteSuggestions] = useState<boolean>(false);
   const [keterangan, setKeterangan] = useState<string>('');
+  const [jenisKendaraan, setJenisKendaraan] = useState<string>('');
+  const [platNomor, setPlatNomor] = useState<string>('');
   const [alasanCategory, setAlasanCategory] = useState<string>('Lupa input pada saat kegiatan');
   const [alasanDetail, setAlasanDetail] = useState<string>('');
+
+  const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const isPlatNomorRequired = jenisKendaraan === 'Mobil' || jenisKendaraan === 'Sepeda Motor';
   
   // File & Watermark State
   const [rawPhotoFile, setRawPhotoFile] = useState<File | null>(null);
@@ -528,6 +536,15 @@ export const AdminManualActivityModal: React.FC<AdminManualActivityModalProps> =
       setErrorMsg('Uraian keterangan kegiatan wajib diisi.');
       return;
     }
+    if (!jenisKendaraan) {
+      setErrorMsg('Wajib memilih Jenis Kendaraan Operasional terlebih dahulu.');
+      return;
+    }
+    const cleanPlatNomor = sanitizePlatNomor(platNomor);
+    if (isPlatNomorRequired && !cleanPlatNomor) {
+      setErrorMsg('Plat Nomor Kendaraan wajib diisi untuk jenis kendaraan Mobil atau Sepeda Motor.');
+      return;
+    }
     if (!watermarkedFile && !rawPhotoFile) {
       setErrorMsg('Foto bukti kegiatan wajib diunggah.');
       return;
@@ -564,7 +581,9 @@ export const AdminManualActivityModal: React.FC<AdminManualActivityModalProps> =
           coordinatesDb: customCoordinates.trim(),
           coordinatesActual: `[MANUAL ADMIN] ${customCoordinates.trim() || 'Koordinat Master Site'}`,
           keterangan: keterangan.trim(),
-          alasanSusulan: finalAlasan
+          alasanSusulan: finalAlasan,
+          jenisKendaraan,
+          platNomor: cleanPlatNomor
         },
         fileToUpload
       );
@@ -1010,6 +1029,96 @@ export const AdminManualActivityModal: React.FC<AdminManualActivityModalProps> =
               required
               id="manual-keterangan-input"
             />
+          </div>
+
+          {/* Section 4B: Kendaraan Operasional (Jenis Kendaraan & Plat Nomor) */}
+          <div className="space-y-3 bg-slate-50/80 border border-slate-200/80 p-4 rounded-2xl">
+            <span className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <Car className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Kendaraan Operasional</span>
+            </span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Jenis Kendaraan Dropdown */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="manual-jenis-kendaraan-select"
+                  className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block"
+                >
+                  JENIS KENDARAAN <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  id="manual-jenis-kendaraan-select"
+                  value={jenisKendaraan}
+                  onChange={(e) => {
+                    setJenisKendaraan(e.target.value);
+                    if (errorMsg) setErrorMsg(null);
+                  }}
+                  required
+                  className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-semibold bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                >
+                  <option value="">-- Pilih Jenis Kendaraan --</option>
+                  <option value="Mobil">Mobil</option>
+                  <option value="Sepeda Motor">Sepeda Motor</option>
+                  <option value="Gabung Kendaraan">Gabung Kendaraan</option>
+                  <option value="Kegiatan Non Kendaraan">Kegiatan Non Kendaraan</option>
+                </select>
+              </div>
+
+              {/* Plat Nomor Kendaraan */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <label
+                    htmlFor="manual-plat-nomor-input"
+                    className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block"
+                  >
+                    PLAT NOMOR KENDARAAN {isPlatNomorRequired && <span className="text-rose-500">*</span>}
+                  </label>
+                  {jenisKendaraan && (
+                    <span
+                      className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                        isPlatNomorRequired
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                          : 'bg-slate-100 text-slate-500 border border-slate-200'
+                      }`}
+                    >
+                      {isPlatNomorRequired ? 'Wajib diisi' : 'Opsional'}
+                    </span>
+                  )}
+                </div>
+                <input
+                  id="manual-plat-nomor-input"
+                  type="text"
+                  value={platNomor}
+                  onChange={(e) => {
+                    setPlatNomor(sanitizePlatNomor(e.target.value));
+                    if (errorMsg) setErrorMsg(null);
+                  }}
+                  onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
+                    const nativeEvent = e.nativeEvent as InputEvent;
+                    if (nativeEvent?.data && /[^a-zA-Z0-9]/.test(nativeEvent.data)) {
+                      e.preventDefault();
+                    }
+                  }}
+                  required={isPlatNomorRequired}
+                  pattern={isPlatNomorRequired ? '[A-Z0-9]+' : '[A-Z0-9]*'}
+                  title="Hanya huruf A-Z dan angka 0-9 tanpa spasi atau simbol"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  placeholder={
+                    !isPlatNomorRequired && jenisKendaraan
+                      ? 'Opsional (boleh dikosongkan)'
+                      : 'Contoh: B1234XYZ'
+                  }
+                  className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs font-mono font-bold uppercase tracking-wider bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                />
+              </div>
+            </div>
+
+            <p className="text-[10px] text-slate-400 font-medium">
+              Hanya huruf <strong className="text-slate-500">A–Z</strong> dan angka <strong className="text-slate-500">0–9</strong> tanpa spasi atau simbol.
+            </p>
           </div>
 
           {/* Section 5: Alasan Input Susulan (Audit Trail) */}

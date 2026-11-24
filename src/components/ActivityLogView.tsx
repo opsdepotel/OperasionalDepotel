@@ -14,7 +14,7 @@ import {
   dataURLtoFile,
   OfflineActivityItem
 } from '../lib/offlineReportStorage';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone, Wifi, WifiOff, CloudOff, Send, Trash2, CheckCircle2, HardDrive } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone, Wifi, WifiOff, CloudOff, Send, Trash2, CheckCircle2, HardDrive, Car } from 'lucide-react';
 
 
 import { detectFakeGps, recordGpsFixSample, PreviousActivityReference } from '../lib/fakeGpsDetector';
@@ -74,6 +74,8 @@ interface ActivityLogViewProps {
     coordinatesDb: string;
     coordinatesActual: string;
     keterangan: string;
+    jenisKendaraan?: string;
+    platNomor?: string;
     indikasiFake?: boolean;
     fakeReason?: string;
   }, photoFile?: File) => Promise<void>;
@@ -187,6 +189,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       coordinatesDb: string;
       coordinatesActual: string;
       keterangan: string;
+      jenisKendaraan?: string;
+      platNomor?: string;
       indikasiFake?: boolean;
       fakeReason?: string;
     },
@@ -226,6 +230,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             coordinatesDb: item.coordinatesDb,
             coordinatesActual: item.coordinatesActual,
             keterangan: item.keterangan,
+            jenisKendaraan: item.jenisKendaraan,
+            platNomor: item.platNomor,
             indikasiFake: item.indikasiFake,
             fakeReason: item.fakeReason
           },
@@ -535,6 +541,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [coordinatesActual, setCoordinatesActual] = useState('');
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
   const [keterangan, setKeterangan] = useState('');
+  const [jenisKendaraan, setJenisKendaraan] = useState('');
+  const [platNomor, setPlatNomor] = useState('');
+  const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const isPlatNomorRequired = jenisKendaraan === 'Mobil' || jenisKendaraan === 'Sepeda Motor';
+  const isVehicleValid = Boolean(jenisKendaraan) && (!isPlatNomorRequired || sanitizePlatNomor(platNomor).length > 0);
   const [originalPhotoFile, setOriginalPhotoFile] = useState<File | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -586,6 +597,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     setIsCameraModalOpen(false);
     setCameraFallbackReason(null);
     setShowAddForm(false);
+    setJenisKendaraan('');
+    setPlatNomor('');
     setPhotoValidationFlags([]);
     setCapturedGpsSnapshot(null);
     formOpenPositionRef.current = null;
@@ -824,6 +837,14 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const handleOpenLiveCamera = () => {
     if (!selectedSiteId.trim() || !keterangan.trim()) {
       setErrorMsg('Wajib mengisi SiteID dan Keterangan Kegiatan terlebih dahulu.');
+      return;
+    }
+    if (!jenisKendaraan) {
+      setErrorMsg('Wajib memilih Jenis Kendaraan Operasional terlebih dahulu.');
+      return;
+    }
+    if (isPlatNomorRequired && !sanitizePlatNomor(platNomor)) {
+      setErrorMsg('Wajib mengisi Plat Nomor Kendaraan untuk jenis kendaraan Mobil atau Sepeda Motor.');
       return;
     }
     if (!isValidGpsCoordinates(coordinatesActual)) {
@@ -1398,6 +1419,16 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       inputEl.value = '';
       return;
     }
+    if (!jenisKendaraan) {
+      setErrorMsg('Wajib memilih Jenis Kendaraan Operasional terlebih dahulu.');
+      inputEl.value = '';
+      return;
+    }
+    if (isPlatNomorRequired && !sanitizePlatNomor(platNomor)) {
+      setErrorMsg('Wajib mengisi Plat Nomor Kendaraan untuk jenis kendaraan Mobil atau Sepeda Motor.');
+      inputEl.value = '';
+      return;
+    }
     if (!isValidGpsCoordinates(coordinatesActual)) {
       setErrorMsg('Data koordinat GPS wajib ada sebelum mengambil foto bukti kegiatan. Silakan aktifkan lokasi (GPS) dan klik "Ambil Ulang GPS".');
       inputEl.value = '';
@@ -1506,6 +1537,15 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setErrorMsg('Keterangan kegiatan wajib diisi.');
       return;
     }
+    if (!jenisKendaraan) {
+      setErrorMsg('Jenis Kendaraan operasional wajib dipilih.');
+      return;
+    }
+    const cleanPlatNomor = sanitizePlatNomor(platNomor);
+    if (isPlatNomorRequired && !cleanPlatNomor) {
+      setErrorMsg('Plat Nomor Kendaraan wajib diisi untuk jenis kendaraan Mobil atau Sepeda Motor.');
+      return;
+    }
     if (!photoFile) {
       setErrorMsg('Wajib mengambil foto bukti kegiatan langsung.');
       return;
@@ -1596,6 +1636,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         coordinatesDb,
         coordinatesActual,
         keterangan: keterangan.trim(),
+        jenisKendaraan,
+        platNomor: cleanPlatNomor,
         indikasiFake: combinedIndikasiFake,
         fakeReason: combinedFakeReason
       };
@@ -1610,6 +1652,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         setCoordinatesActual('');
         setGpsAccuracy(null);
         setKeterangan('');
+        setJenisKendaraan('');
+        setPlatNomor('');
         setOriginalPhotoFile(null);
         setPhotoFile(null);
         setPhotoPreview(null);
@@ -1821,6 +1865,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     coordinatesDb: q.coordinatesDb,
     coordinatesActual: q.coordinatesActual,
     keterangan: q.keterangan,
+    jenisKendaraan: q.jenisKendaraan,
+    platNomor: q.platNomor,
     buktiUrl: q.photoDataUrl,
     indikasiFake: q.indikasiFake,
     fakeReason: q.fakeReason,
@@ -1905,6 +1951,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               setCoordinatesDb('');
               setCoordinatesActual('');
               setKeterangan('');
+              setJenisKendaraan('');
+              setPlatNomor('');
               setOriginalPhotoFile(null);
               setPhotoFile(null);
               setPhotoPreview(null);
@@ -2048,12 +2096,111 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                 />
               </div>
 
+              {/* Kendaraan Operasional */}
+              <div className="space-y-3 bg-slate-50/80 border border-slate-200/80 p-3.5 rounded-2xl">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                  <Car className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>KENDARAAN OPERASIONAL</span>
+                </span>
+
+                {/* Jenis Kendaraan Dropdown */}
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="activity-jenis-kendaraan-select"
+                    className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block"
+                  >
+                    JENIS KENDARAAN <span className="text-red-500">*</span>
+                  </label>
+                  <select
+                    id="activity-jenis-kendaraan-select"
+                    value={jenisKendaraan}
+                    onChange={(e) => {
+                      setJenisKendaraan(e.target.value);
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    disabled={!isGpsReady}
+                    required
+                    className={`w-full px-3 py-2 border rounded-xl text-xs font-semibold focus:outline-none transition-all ${
+                      !isGpsReady
+                        ? 'bg-slate-100/70 border-slate-200 text-slate-400 cursor-not-allowed'
+                        : 'bg-white border-slate-200 text-slate-800 focus:ring-1 focus:ring-indigo-500'
+                    }`}
+                  >
+                    <option value="">-- Pilih Jenis Kendaraan --</option>
+                    <option value="Mobil">Mobil</option>
+                    <option value="Sepeda Motor">Sepeda Motor</option>
+                    <option value="Gabung Kendaraan">Gabung Kendaraan</option>
+                    <option value="Kegiatan Non Kendaraan">Kegiatan Non Kendaraan</option>
+                  </select>
+                </div>
+
+                {/* Plat Nomor Kendaraan (Selalu Huruf Besar) */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor="activity-plat-nomor-input"
+                      className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block"
+                    >
+                      PLAT NOMOR KENDARAAN {isPlatNomorRequired && <span className="text-red-500">*</span>}
+                    </label>
+                    {jenisKendaraan && (
+                      <span
+                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                          isPlatNomorRequired
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200'
+                        }`}
+                      >
+                        {isPlatNomorRequired ? 'Wajib diisi' : 'Opsional'}
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    id="activity-plat-nomor-input"
+                    type="text"
+                    value={platNomor}
+                    onChange={(e) => {
+                      setPlatNomor(sanitizePlatNomor(e.target.value));
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
+                      const nativeEvent = e.nativeEvent as InputEvent;
+                      if (nativeEvent?.data && /[^a-zA-Z0-9]/.test(nativeEvent.data)) {
+                        e.preventDefault();
+                      }
+                    }}
+                    disabled={!isGpsReady}
+                    required={isPlatNomorRequired}
+                    pattern={isPlatNomorRequired ? '[A-Z0-9]+' : '[A-Z0-9]*'}
+                    title="Hanya huruf A-Z dan angka 0-9 tanpa spasi atau simbol"
+                    autoCapitalize="characters"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    placeholder={
+                      !isGpsReady
+                        ? 'Form terkunci: Tunggu GPS aktif...'
+                        : !isPlatNomorRequired && jenisKendaraan
+                          ? 'Opsional (boleh dikosongkan)'
+                          : 'Contoh: B1234XYZ'
+                    }
+                    className={`w-full px-3 py-2 border rounded-xl text-xs font-mono font-bold uppercase tracking-wider focus:outline-none transition-all ${
+                      !isGpsReady
+                        ? 'bg-slate-100/70 border-slate-200 text-slate-400 cursor-not-allowed'
+                        : 'bg-white border-slate-200 text-slate-800 focus:ring-1 focus:ring-indigo-500'
+                    }`}
+                  />
+                  <p className="text-[10px] text-slate-400 font-medium">
+                    Hanya huruf <strong className="text-slate-500">A–Z</strong> dan angka <strong className="text-slate-500">0–9</strong> tanpa spasi atau simbol.
+                  </p>
+                </div>
+              </div>
+
               {/* Camera Capture Only input */}
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
                   AMBIL FOTO BUKTI (KAMERA HP LANGSUNG)
                 </label>
-                <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim() || !isGpsReady)) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
+                <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim() || !isVehicleValid || !isGpsReady)) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
                   {photoPreview ? (
                     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100">
                       <img 
@@ -2076,7 +2223,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         Ulangi Foto
                       </button>
                     </div>
-                  ) : (!selectedSiteId.trim() || !keterangan.trim() || !isGpsReady) ? (
+                  ) : (!selectedSiteId.trim() || !keterangan.trim() || !isVehicleValid || !isGpsReady) ? (
                     <div className="flex flex-col items-center justify-center py-5 w-full text-slate-400 select-none">
                       <Camera className="w-8 h-8 text-slate-300 mb-2" />
                       <span className="text-xs font-bold text-slate-400">Buka Kamera HP (Terkunci)</span>
@@ -2087,7 +2234,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           </span>
                         ) : (
                           <span>
-                            Silakan pilih <strong className="text-slate-500 font-bold">Site ID</strong> dan isi <strong className="text-slate-500 font-bold">Keterangan Kegiatan</strong> terlebih dahulu untuk mengaktifkan kamera.
+                            Silakan isi <strong className="text-slate-500 font-bold">Site ID</strong>, <strong className="text-slate-500 font-bold">Keterangan Kegiatan</strong>, dan <strong className="text-slate-500 font-bold">Kendaraan Operasional</strong> terlebih dahulu untuk mengaktifkan kamera.
                           </span>
                         )}
                       </span>
@@ -2673,6 +2820,20 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                             <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md uppercase tracking-wider">
                               Site: {act.siteId}
                             </span>
+                            {(act.jenisKendaraan || act.platNomor) && (
+                              <span
+                                className="text-[10px] font-bold text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1"
+                                title="Kendaraan Operasional"
+                              >
+                                <Car className="w-3 h-3 text-indigo-600 shrink-0" />
+                                <span>{act.jenisKendaraan || 'Kendaraan'}</span>
+                                {act.platNomor && (
+                                  <span className="font-mono font-extrabold text-indigo-700">
+                                    • {act.platNomor}
+                                  </span>
+                                )}
+                              </span>
+                            )}
                             {(() => {
                               const isManualAdmin = act.keterangan?.includes('[INPUT SUSULAN ADMIN') ||
                                                     act.coordinatesActual?.includes('[MANUAL ADMIN]') ||

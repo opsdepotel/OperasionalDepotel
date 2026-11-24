@@ -496,8 +496,28 @@ export default function App() {
         if (!isMounted) return;
 
         if (result.success && result.user) {
-          setUserProfile(result.user);
-          setActiveRole(result.user.role);
+          const verifiedUser = result.user;
+          setUserProfile(verifiedUser);
+          setActiveRole(verifiedUser.role);
+          setProfiles(prev => {
+            const targetEmail = (verifiedUser.email || '').trim().toLowerCase();
+            const targetUid = (verifiedUser.userId || '').trim().toLowerCase();
+            let replaced = false;
+            const next = prev.map(p => {
+              const pEmail = (p.email || '').trim().toLowerCase();
+              const pUid = (p.userId || '').trim().toLowerCase();
+              if ((targetEmail && pEmail === targetEmail) || (targetUid && pUid === targetUid)) {
+                replaced = true;
+                return verifiedUser;
+              }
+              return p;
+            });
+            if (!replaced) {
+              next.push(verifiedUser);
+            }
+            safeSetJson('op_app_cached_profiles', next);
+            return next;
+          });
           if (result.sessionToken) {
             storeSessionToken(result.sessionToken);
           }
@@ -1076,6 +1096,54 @@ export default function App() {
     }
   }, [userProfile]);
 
+  // Lightweight live sync of Users table from Google Sheets whenever user returns to app tab (0ms backend CPU)
+  const lastProfilesRefreshRef = useRef<number>(0);
+  useEffect(() => {
+    if (!token || !spreadsheetId) return;
+
+    const refreshProfilesLive = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      const now = Date.now();
+      if (now - lastProfilesRefreshRef.current < 15000) return;
+      lastProfilesRefreshRef.current = now;
+
+      try {
+        const freshProfiles = await fetchProfiles(token, spreadsheetId);
+        if (!freshProfiles || freshProfiles.length === 0) return;
+
+        setProfiles(freshProfiles);
+        safeSetJson('op_app_cached_profiles', freshProfiles);
+        setUserProfile(prev => {
+          if (!prev) return prev;
+          const prevEmail = (prev.email || '').trim().toLowerCase();
+          const prevUid = (prev.userId || '').trim().toLowerCase();
+          const matchedFresh = freshProfiles.find(p =>
+            (prevEmail && p.email && p.email.trim().toLowerCase() === prevEmail) ||
+            (prevUid && p.userId && p.userId.trim().toLowerCase() === prevUid)
+          );
+          if (!matchedFresh) return prev;
+          return matchedFresh;
+        });
+      } catch (err) {
+        console.warn('[ProfilesLiveSync] Background refresh skipped:', err);
+      }
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        refreshProfilesLive();
+      }
+    };
+
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    return () => {
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [token, spreadsheetId]);
+
   // Helper to safely format IDR currency for notifications and workflows
   const formatIDRValue = (num: any) => {
     const val = parseNumericValue(num);
@@ -1463,6 +1531,7 @@ export default function App() {
           }
         }
       }
+      return mergedProfs;
     } catch (err: any) {
       console.error('syncAllData error:', err);
       throw err;
@@ -1989,7 +2058,7 @@ export default function App() {
     setActiveView('dashboard');
   };
 
-  const handleAppLoginSuccess = async (profile: UserProfile, sessionToken?: string) => {
+  const handleAppLoginSuccess = async (profile: UserProfile, sessionToken?: string, freshProfilesList?: UserProfile[]) => {
     setUserProfile(profile);
     if (sessionToken) {
       storeSessionToken(sessionToken);
@@ -2001,10 +2070,25 @@ export default function App() {
         sessionStorage.setItem(LOGGED_IN_USER_KEY, identifier);
       } catch (e) {}
     }
-    safeSetJson('op_app_cached_profiles', profiles.map(p => 
-      (p.email && p.email.toLowerCase() === profile.email.toLowerCase()) ||
-      (p.userId && profile.userId && p.userId.toLowerCase() === profile.userId.toLowerCase()) ? profile : p
-    ));
+    setProfiles(prev => {
+      const baseList = freshProfilesList && freshProfilesList.length > 0 ? freshProfilesList : prev;
+      let replaced = false;
+      const next = baseList.map(p => {
+        const isMatch =
+          (p.email && profile.email && p.email.trim().toLowerCase() === profile.email.trim().toLowerCase()) ||
+          (p.userId && profile.userId && p.userId.trim().toLowerCase() === profile.userId.trim().toLowerCase());
+        if (isMatch) {
+          replaced = true;
+          return profile;
+        }
+        return p;
+      });
+      if (!replaced) {
+        next.push(profile);
+      }
+      safeSetJson('op_app_cached_profiles', next);
+      return next;
+    });
 
     if (pendingSharedRecord) {
       if (profile.role === Role.FINANCE) {
@@ -2146,15 +2230,27 @@ export default function App() {
       setProfiles(updatedProfs);
       safeSetJson('op_app_cached_profiles', updatedProfs);
 
+      let syncedProfiles: UserProfile[] = updatedProfs;
       if (currentToken && sheetId) {
         try {
-          await syncAllData(currentToken, sheetId);
+          const freshSyncedProfs = await syncAllData(currentToken, sheetId);
+          if (freshSyncedProfs && freshSyncedProfs.length > 0) {
+            syncedProfiles = freshSyncedProfs;
+          }
         } catch (syncErr) {
           console.warn('Background sync on login encountered an error, continuing locally:', syncErr);
         }
       }
 
-      handleAppLoginSuccess(finalUser, authData?.sessionToken);
+      const freshLoggedUser = syncedProfiles.find(p =>
+        (finalUser.email && p.email && p.email.trim().toLowerCase() === finalUser.email.trim().toLowerCase()) ||
+        (finalUser.userId && p.userId && p.userId.trim().toLowerCase() === finalUser.userId.trim().toLowerCase())
+      );
+      const mergedFinalUser: UserProfile = freshLoggedUser
+        ? { ...freshLoggedUser, deviceId: finalUser.deviceId || freshLoggedUser.deviceId }
+        : finalUser;
+
+      handleAppLoginSuccess(mergedFinalUser, authData?.sessionToken, syncedProfiles);
     } catch (unexpectedErr: any) {
       console.error('[Login] Uncaught error during login flow:', unexpectedErr);
       const errMsg = unexpectedErr?.message || 'Terjadi kesalahan sistem saat memproses login. Silakan coba beberapa saat lagi.';
@@ -3464,6 +3560,8 @@ export default function App() {
       coordinatesDb: string;
       coordinatesActual: string;
       keterangan: string;
+      jenisKendaraan?: string;
+      platNomor?: string;
       indikasiFake?: boolean;
       fakeReason?: string;
     },
@@ -3537,7 +3635,9 @@ export default function App() {
       buktiUrl: finalBuktiUrl,
       buktiFileId: finalBuktiFileId || undefined,
       indikasiFake: activityData.indikasiFake ?? false,
-      fakeReason: activityData.fakeReason || ''
+      fakeReason: activityData.fakeReason || '',
+      jenisKendaraan: activityData.jenisKendaraan || '',
+      platNomor: (activityData.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
     };
 
     try {
@@ -3673,7 +3773,9 @@ export default function App() {
       buktiUrl: finalBuktiUrl,
       buktiFileId: finalBuktiFileId || undefined,
       indikasiFake: false,
-      fakeReason: `Manual Activity Report oleh Admin: ${adminEmail} (Alasan: ${manualData.alasanSusulan})`
+      fakeReason: `Manual Activity Report oleh Admin: ${adminEmail} (Alasan: ${manualData.alasanSusulan})`,
+      jenisKendaraan: manualData.jenisKendaraan || '',
+      platNomor: (manualData.platNomor || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
     };
 
     try {

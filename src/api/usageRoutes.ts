@@ -33,7 +33,9 @@ const LAPORAN_HEADERS = [
   'statusadmin',
   'catatanadmin',
   'createdat',
-  'updatedat'
+  'updatedat',
+  'isbbm',
+  'platnomorkendaraan'
 ];
 
 function mapRowToUsageItem(row: any[]): UsageReportItem | null {
@@ -41,6 +43,10 @@ function mapRowToUsageItem(row: any[]): UsageReportItem | null {
   const id = String(row[0] || '').trim();
   const requestId = String(row[1] || '').trim();
   if (!id || !requestId) return null;
+
+  const rawIsBbm = String(row[13] || '').trim().toUpperCase();
+  const isBBM = rawIsBbm === 'TRUE' || rawIsBbm === 'YA' || rawIsBbm === 'YES' || rawIsBbm === '1';
+  const platNomorKendaraan = String(row[14] || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
   return {
     id,
@@ -54,7 +60,10 @@ function mapRowToUsageItem(row: any[]): UsageReportItem | null {
     managerComment: String(row[8] || '').trim(),
     statusAdmin: (row[9] as ItemStatus) || ItemStatus.PENDING,
     adminComment: String(row[10] || '').trim(),
-    updatedAt: String(row[12] || String(row[11] || '')).trim()
+    updatedAt: String(row[12] || String(row[11] || '')).trim(),
+    timestamp: String(row[11] || row[12] || '').trim(),
+    isBBM,
+    platNomorKendaraan
   };
 }
 
@@ -115,19 +124,21 @@ async function getOrRefreshUsageCache(spreadsheetId: string, force = false): Pro
 }
 
 /**
- * GET /api/laporan?uid=OP-...
- * Returns all usage report items for a specific UID on demand.
+ * GET /api/laporan?uid=OP-... OR /api/laporan?plat=B1234ABC
+ * Returns usage report items for a specific UID, or all BBM usage items for a specific vehicle plate number.
  */
 usageRouter.get('/', requireFirebaseAuth, async (req, res) => {
   try {
     const spreadsheetId = (req.query.spreadsheetId as string) || readServerConfig().spreadsheetId;
     const forceRefresh = req.query.forceRefresh === 'true' || req.headers['cache-control'] === 'no-cache';
     const targetUid = typeof req.query.uid === 'string' ? req.query.uid.trim() : '';
+    const targetPlatRaw = typeof req.query.plat === 'string' ? req.query.plat.trim() : '';
+    const targetPlat = targetPlatRaw.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-    if (!targetUid) {
+    if (!targetUid && !targetPlat) {
       return res.status(400).json({
         success: false,
-        error: 'Parameter "uid" diperlukan untuk pemuatan on-demand.'
+        error: 'Parameter "uid" atau "plat" diperlukan untuk pemuatan on-demand.'
       });
     }
 
@@ -138,6 +149,21 @@ usageRouter.get('/', requireFirebaseAuth, async (req, res) => {
     }
 
     const usageCache = await getOrRefreshUsageCache(spreadsheetId, forceRefresh);
+
+    if (targetPlat) {
+      const bbmRecords = usageCache.all.filter(item => {
+        if (!item.isBBM) return false;
+        const itemPlat = String(item.platNomorKendaraan || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        return itemPlat === targetPlat;
+      });
+      return res.json({
+        success: true,
+        plat: targetPlat,
+        count: bbmRecords.length,
+        data: bbmRecords
+      });
+    }
+
     const records = usageCache.byUid.get(targetUid.toUpperCase()) || [];
 
     return res.json({

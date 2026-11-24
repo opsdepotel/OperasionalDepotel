@@ -8,6 +8,7 @@ import { createPortal } from 'react-dom';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { BudgetRequest, UsageReportItem, Role, ItemStatus, RequestStatus, UserActivity, UserProfile, ItemReviewHistory } from '../types';
 import { ItemHistoryModal } from './ItemHistoryModal';
+import { ReviewBbmActivityModal } from './ReviewBbmActivityModal';
 import { ZoomableImage } from './ZoomableImage';
 import { FormProgressOverlay } from './FormProgressOverlay';
 import { parseNumericValue } from '../lib/googleApi';
@@ -111,6 +112,7 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
   const [selectedActivityDate, setSelectedActivityDate] = useState<string>('');
   const [previewActivityPhoto, setPreviewActivityPhoto] = useState<{ url: string; fileId?: string; title: string } | null>(null);
   const [historyModalItem, setHistoryModalItem] = useState<UsageReportItem | null>(null);
+  const [reviewBbmItem, setReviewBbmItem] = useState<UsageReportItem | null>(null);
 
   useEffect(() => {
     if (viewingActivityItem) {
@@ -310,6 +312,17 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                     <span className="text-[10px] text-slate-400 font-bold block">ITEM #{idx + 1}</span>
                     <h4 className="text-xs font-bold text-slate-800">{item.keterangan}</h4>
                     <p className="text-[10px] text-slate-500 font-medium">Tanggal: {item.tanggalPenggunaan} | Nominal: <strong>{formatIDR(item.nominal)}</strong></p>
+                    {item.isBBM && (
+                      <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200/80 text-[10px] font-bold text-amber-800">
+                        <Fuel className="w-3 h-3 text-amber-600 shrink-0" />
+                        <span>Pengisian BBM</span>
+                        {item.platNomorKendaraan && (
+                          <span className="font-mono bg-white px-1.5 py-0.2 rounded border border-amber-200 text-slate-800">
+                            {item.platNomorKendaraan}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {/* Status Badge Indikator */}
                   {(item.statusManager === ItemStatus.REJECTED || item.statusAdmin === ItemStatus.REJECTED) ? (
@@ -385,6 +398,18 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                   >
                     <span>BBM Duren Sawit</span>
                     <Fuel className="w-3.5 h-3.5 text-amber-600" />
+                  </button>
+                )}
+
+                {(role === Role.MANAGER || role === Role.FINANCE) && item.isBBM && (
+                  <button
+                    type="button"
+                    onClick={() => setReviewBbmItem(item)}
+                    className="flex-1 py-1.5 bg-orange-50 hover:bg-orange-100 text-orange-800 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-orange-200"
+                    title="Review Aktivitas Kendaraan berdasarkan Plat Nomor sejak pembelian BBM ini"
+                  >
+                    <span>Review BBM</span>
+                    <Fuel className="w-3.5 h-3.5 text-orange-600" />
                   </button>
                 )}
 
@@ -1088,6 +1113,20 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
           histories={histories}
           onClose={() => setHistoryModalItem(null)}
           onPreviewDocument={onPreviewDocument}
+        />
+      )}
+
+      {/* Review BBM Vehicle Activities Modal (Manager & Finance) */}
+      {(role === Role.MANAGER || role === Role.FINANCE) && (
+        <ReviewBbmActivityModal
+          isOpen={!!reviewBbmItem}
+          onClose={() => setReviewBbmItem(null)}
+          item={reviewBbmItem}
+          request={request}
+          allUsageItems={items}
+          allRequests={requests}
+          activities={activities}
+          profiles={profiles}
         />
       )}
       </div>
