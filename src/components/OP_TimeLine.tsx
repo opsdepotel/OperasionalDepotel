@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { BudgetRequest, ItemReviewHistory, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus } from '../types';
 import { getFinanceApprovedAmount } from '../App';
+import { fetchHistoryForUid, getCachedClosedUsageItems, SPREADSHEET_ID } from '../lib/googleApi';
 
 export interface OP_TimeLineProps {
   request: BudgetRequest;
@@ -35,37 +36,44 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       const trimmed = rawTime.trim();
       if (!trimmed || trimmed === '-') return 0;
 
-      const isoClean = trimmed.replace(' ', 'T');
-      const parsedIso = new Date(isoClean);
-      if (!isNaN(parsedIso.getTime())) return parsedIso.getTime();
+      // Strict ISO-8601 with explicit 'T' or timezone indicator (e.g. 2026-11-18T09:22:10.000Z)
+      if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+        const parsedIso = new Date(trimmed);
+        if (!isNaN(parsedIso.getTime())) return parsedIso.getTime();
+      }
+
+      // Indonesian locale string: "DD/MM/YYYY, HH.mm.ss" or "DD/MM/YYYY HH:mm:ss"
+      const dmyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:[,\s]+(\d{1,2})[\.:](\d{1,2})(?:[\.:](\d{1,2}))?)?/);
+      if (dmyMatch) {
+        const [, d, m, y, h = '0', min = '0', sec = '0'] = dmyMatch;
+        const customDate = new Date(
+          parseInt(y, 10),
+          parseInt(m, 10) - 1,
+          parseInt(d, 10),
+          parseInt(h, 10),
+          parseInt(min, 10),
+          parseInt(sec, 10)
+        );
+        if (!isNaN(customDate.getTime())) return customDate.getTime();
+      }
+
+      // Sheet timestamp: "YYYY-MM-DD H:mm:ss" or "YYYY/MM/DD HH:mm:ss"
+      const ymdMatch = trimmed.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})(?:[T\s]+(\d{1,2})[\.:](\d{1,2})(?:[\.:](\d{1,2}))?)?/);
+      if (ymdMatch) {
+        const [, y, m, d, h = '0', min = '0', sec = '0'] = ymdMatch;
+        const customDate = new Date(
+          parseInt(y, 10),
+          parseInt(m, 10) - 1,
+          parseInt(d, 10),
+          parseInt(h, 10),
+          parseInt(min, 10),
+          parseInt(sec, 10)
+        );
+        if (!isNaN(customDate.getTime())) return customDate.getTime();
+      }
 
       const parsed = new Date(trimmed);
       if (!isNaN(parsed.getTime())) return parsed.getTime();
-
-      // Indonesian locale string: "DD/MM/YYYY, HH.mm.ss" or "DD/MM/YYYY HH:mm:ss"
-      const cleanStr = trimmed.replace(',', '');
-      const parts = cleanStr.split(/\s+/);
-      if (parts.length >= 2) {
-        const dateParts = parts[0].split(/[\/\-]/);
-        const timeParts = parts[1].replace(/\./g, ':').split(':');
-        if (dateParts.length === 3 && timeParts.length >= 2) {
-          let day: number, month: number, year: number;
-          if (dateParts[0].length === 4) {
-            year = parseInt(dateParts[0], 10);
-            month = parseInt(dateParts[1], 10) - 1;
-            day = parseInt(dateParts[2], 10);
-          } else {
-            day = parseInt(dateParts[0], 10);
-            month = parseInt(dateParts[1], 10) - 1;
-            year = parseInt(dateParts[2], 10);
-          }
-          const hours = parseInt(timeParts[0], 10) || 0;
-          const minutes = parseInt(timeParts[1], 10) || 0;
-          const seconds = parseInt(timeParts[2], 10) || 0;
-          const customDate = new Date(year, month, day, hours, minutes, seconds);
-          if (!isNaN(customDate.getTime())) return customDate.getTime();
-        }
-      }
     }
     return 0;
   };
@@ -110,22 +118,77 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
   );
   const isRegularOP = !isAdjustment && !isTalangan;
 
-  // Item Laporan Penggunaan
-  const reqUsageItems = usageItems.filter(item => item.requestId === request.id);
+  const reqIdUpper = (request.id || '').trim().toUpperCase();
+
+  // On-demand history fallback (khusus UID CLOSED yang riwayatnya belum ada di prop histories)
+  const [onDemandHistories, setOnDemandHistories] = useState<ItemReviewHistory[]>([]);
+  const hasPropHistoryForReq = (histories || []).some(
+    h => (h.requestUid || '').trim().toUpperCase() === reqIdUpper || (h.itemUid || '').trim().toUpperCase() === reqIdUpper
+  );
+
+  useEffect(() => {
+    if (hasPropHistoryForReq || !request.id) return;
+    let cancelled = false;
+    fetchHistoryForUid('', SPREADSHEET_ID, request.id)
+      .then((records) => {
+        if (!cancelled && records.length > 0) {
+          setOnDemandHistories(records);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id, hasPropHistoryForReq]);
+
+  const effectiveHistories = hasPropHistoryForReq
+    ? (histories || [])
+    : (onDemandHistories.length > 0 ? onDemandHistories : (histories || []));
+
+  // Item Laporan Penggunaan (ambil item asli dari cache CLOSED jika prop masih berupa ringkasan summary_*)
+  const rawReqUsageItems = usageItems.filter(item => item.requestId === request.id);
+  const isSummaryOnlyProp =
+    rawReqUsageItems.length > 0 &&
+    rawReqUsageItems.every(item => (item.id || '').startsWith('summary_'));
+  const cachedClosedItems =
+    isSummaryOnlyProp || (request.status === RequestStatus.CLOSED && rawReqUsageItems.length === 0)
+      ? (getCachedClosedUsageItems(request.id) || [])
+      : [];
+  const reqUsageItems = cachedClosedItems.length > 0 ? cachedClosedItems : rawReqUsageItems;
+  const isSummaryOnlyItems =
+    reqUsageItems.length > 0 &&
+    reqUsageItems.every(item => (item.id || '').startsWith('summary_'));
   const totalItems = reqUsageItems.length;
   const usageItemIds = new Set(reqUsageItems.map(i => i.id));
 
-  // Pemisahan Log Riwayat:
-  // 1. Log Level Request (Pengajuan Anggaran Utama / Siklus 1)
-  const reqLevelHistories = (histories || []).filter(h =>
-    (h.requestUid === request.id || h.itemUid === request.id) &&
-    (!h.itemUid || h.itemUid === request.id || h.itemUid === h.requestUid || !usageItemIds.has(h.itemUid))
-  );
+  // Pemisahan Tegas Log Level Pengajuan (Siklus 1) vs. Log Level Item Laporan (Siklus 2)
+  const isItemLevelHistory = (h: ItemReviewHistory): boolean => {
+    const hItemUpper = (h.itemUid || '').trim().toUpperCase();
+    const hReqUpper = (h.requestUid || '').trim().toUpperCase();
+    const actUpper = (h.actionType || '').toString().toUpperCase();
+    if (actUpper === 'ITEM_CREATED' || actUpper === 'PERBAIKAN_USER') return true;
+    if (!hItemUpper) return false;
+    if (hItemUpper === reqIdUpper || (hReqUpper && hItemUpper === hReqUpper)) return false;
+    return true;
+  };
+
+  // 1. Log Level Request (Pengajuan Anggaran Utama / Siklus 1) — STRICT: tolak semua log item (ITEM-...)
+  const reqLevelHistories = effectiveHistories.filter(h => {
+    const hReqUpper = (h.requestUid || '').trim().toUpperCase();
+    const hItemUpper = (h.itemUid || '').trim().toUpperCase();
+    const belongsToRequest = hReqUpper === reqIdUpper || hItemUpper === reqIdUpper;
+    return belongsToRequest && !isItemLevelHistory(h);
+  });
 
   // 2. Seluruh Log yang Relevan (Termasuk item laporan)
-  const allReqHistories = (histories || []).filter(h =>
-    h.requestUid === request.id || h.itemUid === request.id || (h.itemUid && usageItemIds.has(h.itemUid))
-  );
+  const allReqHistories = effectiveHistories.filter(h => {
+    const hReqUpper = (h.requestUid || '').trim().toUpperCase();
+    const hItemUpper = (h.itemUid || '').trim().toUpperCase();
+    return hReqUpper === reqIdUpper || hItemUpper === reqIdUpper || (h.itemUid && usageItemIds.has(h.itemUid));
+  });
+
+  // 3. Khusus Log Level Item Laporan (Siklus 2)
+  const itemLevelHistories = allReqHistories.filter(isItemLevelHistory);
 
   // =========================================================================
   // SIKLUS 1: SIKLUS PENGAJUAN & REALISASI PENCAIRAN (Disbursement Phase)
@@ -145,8 +208,12 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
     (request.adminActionAmount > 0 && Boolean(request.adminActionTime && request.adminActionTime !== '-'))
   );
 
-  // Evaluasi Siklus Pengajuan (Hanya jika belum masuk tahap transfer)
-  const pengajuanInitialSubmitTime = request.createdAt || request.timestamp || request.date || null;
+  // Evaluasi Siklus Pengajuan — Prioritaskan log PENGAJUAN_CREATED / request.timestamp untuk waktu asli User Submit
+  const pengajuanCreatedLog = reqLevelHistories
+    .filter(h => (h.actionType || '').toString().toUpperCase() === 'PENGAJUAN_CREATED')
+    .sort((a, b) => parseTimeToMs(a.timestamp) - parseTimeToMs(b.timestamp))[0];
+  const pengajuanInitialSubmitTime =
+    pengajuanCreatedLog?.timestamp || request.timestamp || request.createdAt || request.date || null;
   const pengajuanInitialSubmitMs = parseTimeToMs(pengajuanInitialSubmitTime);
 
   // Log revisi khusus pengajuan
@@ -385,11 +452,13 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
     : isDisbursedOrLater;
 
   if (isTransferEligible) {
-    const transferLogs = allReqHistories.filter(h =>
-      ((h.status || '').toString().toUpperCase() === 'TRANSFERRED' ||
-       (h.status || '').toString().toUpperCase() === 'TRANSFER_BERTAHAP' ||
-       (h.actionType || '').toString().toUpperCase().includes('TRANSFER'))
-    );
+    const transferLogs = reqLevelHistories
+      .filter(h =>
+        ((h.status || '').toString().toUpperCase() === 'TRANSFERRED' ||
+         (h.status || '').toString().toUpperCase() === 'TRANSFER_BERTAHAP' ||
+         (h.actionType || '').toString().toUpperCase().includes('TRANSFER'))
+      )
+      .sort((a, b) => parseTimeToMs(a.timestamp) - parseTimeToMs(b.timestamp));
     if (transferLogs.length > 0) {
       transferTime = transferLogs[transferLogs.length - 1].timestamp;
     }
@@ -409,6 +478,52 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
   const getReviewManagerTimestamp = () => {
     if (totalItems === 0) {
       return { totalItems: 0, approvedCount: 0, approvedNominal: 0, time: null, isRejected: false, rejectTime: null, rejectCount: 0 };
+    }
+
+    // Jika hanya tersedia item ringkasan summary_* (UID CLOSED), baca langsung dari log level item (ITEM-...)
+    if (isSummaryOnlyItems) {
+      const summaryNominal = reqUsageItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+      const mgrItemApprLogs = itemLevelHistories.filter(h => {
+        const act = (h.actionType || '').toString().toUpperCase();
+        const st = (h.status || '').toString().toUpperCase();
+        const isMgr = act.includes('MANAGER') || act.includes('DIREKTUR') || (h.actorRole === Role.MANAGER || h.actorRole === Role.DIREKTUR);
+        const isAppr = (act.includes('APPROVAL') || st === 'APPROVED' || st === 'DISETUJUI') && st !== 'TRANSFERRED';
+        return isMgr && isAppr;
+      });
+      if (mgrItemApprLogs.length > 0) {
+        const approvedUids = new Set<string>();
+        let latestMs = 0;
+        let latestTime: string | null = null;
+        mgrItemApprLogs.forEach(h => {
+          if (h.itemUid) approvedUids.add(h.itemUid);
+          const ms = parseTimeToMs(h.timestamp);
+          if (ms >= latestMs) {
+            latestMs = ms;
+            latestTime = h.timestamp;
+          }
+        });
+        const count = approvedUids.size || totalItems;
+        return {
+          totalItems: count,
+          approvedCount: count,
+          approvedNominal: summaryNominal,
+          time: latestTime,
+          isRejected: false,
+          rejectTime: null,
+          rejectCount: 0
+        };
+      }
+      return {
+        totalItems,
+        approvedCount: totalItems,
+        approvedNominal: summaryNominal,
+        time: isRegularOP
+          ? null
+          : ((request.managerActionTime && request.managerActionTime !== '-') ? request.managerActionTime : (request.createdAt || request.timestamp || null)),
+        isRejected: false,
+        rejectTime: null,
+        rejectCount: 0
+      };
     }
 
     let rejectCount = 0;
@@ -529,7 +644,9 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
     }, 0);
 
     const effectiveTime = (approvedCount > 0 && !latestApprovedTime)
-      ? ((request.managerActionTime && request.managerActionTime !== '-') ? request.managerActionTime : (request.createdAt || request.timestamp || null))
+      ? (isRegularOP
+          ? null
+          : ((request.managerActionTime && request.managerActionTime !== '-') ? request.managerActionTime : (request.createdAt || request.timestamp || null)))
       : latestApprovedTime;
 
     return {
@@ -547,6 +664,52 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
   const getReviewFinanceTimestamp = () => {
     if (totalItems === 0) {
       return { totalItems: 0, approvedCount: 0, approvedNominal: 0, time: null, isRejected: false, rejectTime: null, rejectCount: 0 };
+    }
+
+    // Jika hanya tersedia item ringkasan summary_* (UID CLOSED), baca langsung dari log level item (ITEM-...)
+    if (isSummaryOnlyItems) {
+      const summaryNominal = reqUsageItems.reduce((sum, item) => sum + (Number(item.nominal) || 0), 0);
+      const finItemApprLogs = itemLevelHistories.filter(h => {
+        const act = (h.actionType || '').toString().toUpperCase();
+        const st = (h.status || '').toString().toUpperCase();
+        const isFin = act.includes('FINANCE') || h.actorRole === Role.FINANCE;
+        const isAppr = (act.includes('APPROVAL') || st === 'APPROVED' || st === 'DISETUJUI') && st !== 'TRANSFERRED';
+        return isFin && isAppr;
+      });
+      if (finItemApprLogs.length > 0) {
+        const approvedUids = new Set<string>();
+        let latestMs = 0;
+        let latestTime: string | null = null;
+        finItemApprLogs.forEach(h => {
+          if (h.itemUid) approvedUids.add(h.itemUid);
+          const ms = parseTimeToMs(h.timestamp);
+          if (ms >= latestMs) {
+            latestMs = ms;
+            latestTime = h.timestamp;
+          }
+        });
+        const count = approvedUids.size || totalItems;
+        return {
+          totalItems: count,
+          approvedCount: count,
+          approvedNominal: summaryNominal,
+          time: latestTime,
+          isRejected: false,
+          rejectTime: null,
+          rejectCount: 0
+        };
+      }
+      return {
+        totalItems,
+        approvedCount: totalItems,
+        approvedNominal: summaryNominal,
+        time: isRegularOP
+          ? null
+          : ((request.adminActionTime && request.adminActionTime !== '-') ? request.adminActionTime : (request.createdAt || request.timestamp || null)),
+        isRejected: false,
+        rejectTime: null,
+        rejectCount: 0
+      };
     }
 
     let rejectCount = 0;
@@ -659,8 +822,27 @@ export const OP_TimeLine: React.FC<OP_TimeLineProps> = ({
       return sum;
     }, 0);
 
+    let fallbackFinItemTime: string | null = null;
+    if (approvedCount > 0 && !latestApprovedTime) {
+      if (isRegularOP) {
+        let maxItemUpdMs = 0;
+        reqUsageItems.forEach(item => {
+          if (!approvedItemIds.has(item.id) || (item.id || '').startsWith('summary_')) return;
+          const ms = parseTimeToMs(item.updatedAt);
+          if (ms >= maxItemUpdMs && ms > 0) {
+            maxItemUpdMs = ms;
+            fallbackFinItemTime = item.updatedAt || null;
+          }
+        });
+      } else {
+        fallbackFinItemTime = (request.adminActionTime && request.adminActionTime !== '-')
+          ? request.adminActionTime
+          : (request.createdAt || request.timestamp || null);
+      }
+    }
+
     const effectiveTime = (approvedCount > 0 && !latestApprovedTime)
-      ? ((request.adminActionTime && request.adminActionTime !== '-') ? request.adminActionTime : (request.createdAt || request.timestamp || null))
+      ? fallbackFinItemTime
       : latestApprovedTime;
 
     return {

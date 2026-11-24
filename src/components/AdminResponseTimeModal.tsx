@@ -10,17 +10,26 @@ import {
   CreditCard,
   User,
   BarChart3,
-  Table2
+  Table2,
+  Timer,
+  FileText,
+  ArrowUpDown
 } from 'lucide-react';
-import { BudgetRequest, ItemReviewHistory, UserProfile, RequestStatus } from '../types';
-import { fetchAllItemReviewHistories } from '../lib/googleApi';
+import { BudgetRequest, ItemReviewHistory, UsageReportItem, UserProfile, RequestStatus } from '../types';
+import { fetchAllItemReviewHistories, getCachedClosedUsageItems } from '../lib/googleApi';
 import { ResponseTimeHourlyChart } from './ResponseTimeHourlyChart';
+import {
+  ResponseTimeTransferToReportView,
+  formatDurationIndonesian,
+  getResponseTimeBadgeTone
+} from './ResponseTimeTransferToReportView';
 
 interface AdminResponseTimeModalProps {
   isOpen?: boolean;
   isFullPageView?: boolean;
   onClose: () => void;
   requests: BudgetRequest[];
+  usageItems?: UsageReportItem[];
   histories?: ItemReviewHistory[];
   profiles: UserProfile[];
 }
@@ -50,6 +59,14 @@ export interface ResponseTimeRow {
   // Transferred Date (DD/MM/YYYY hh:mm)
   transferDate: Date | null;
   transferFormatted: string;
+  // First User Usage Report Submit Date (DD/MM/YYYY hh:mm)
+  firstReportDate: Date | null;
+  firstReportFormatted: string;
+  // Response Time: Finance Transfer -> First User Report Submit
+  transferToFirstReportMinutes: number | null;
+  transferToFirstReportFormatted: string;
+  isWaitingReport: boolean;
+  waitingReportMinutes: number | null;
 }
 
 /**
@@ -115,11 +132,12 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
   isFullPageView = false,
   onClose,
   requests,
+  usageItems = [],
   histories = [],
   profiles
 }) => {
-  // View tab state: 'table' (Tabel Response Waktu) | 'chart' (Grafik Waktu Per-Jam)
-  const [activeTab, setActiveTab] = useState<'table' | 'chart'>('table');
+  // View tab state: 'table' | 'chart' | 'transfer-to-report'
+  const [activeTab, setActiveTab] = useState<'table' | 'chart' | 'transfer-to-report'>('table');
 
   // Filter states
   const [selectedDivisi, setSelectedDivisi] = useState<string>('ALL');
@@ -127,6 +145,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
   const [selectedMonth, setSelectedMonth] = useState<number>(0); // 0 = All months, 1..12
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [responseTimeSort, setResponseTimeSort] = useState<'default' | 'slowest' | 'fastest'>('default');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const itemsPerPage = 30;
 
@@ -182,7 +201,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
   const historyByRequestUid = useMemo(() => {
     const map = new Map<string, ItemReviewHistory[]>();
     effectiveHistories.forEach((h) => {
-      const uid = (h.requestUid || '').trim();
+      const uid = (h.requestUid || '').trim().toUpperCase();
       if (!uid) return;
       if (!map.has(uid)) {
         map.set(uid, []);
@@ -191,6 +210,21 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
     });
     return map;
   }, [effectiveHistories]);
+
+  // Build real (non-summary) usageItems lookup indexed by RequestUID
+  const usageItemsByRequestUid = useMemo(() => {
+    const map = new Map<string, UsageReportItem[]>();
+    usageItems.forEach((item) => {
+      if (!item || (item.id || '').startsWith('summary_')) return;
+      const uid = (item.requestId || '').trim().toUpperCase();
+      if (!uid) return;
+      if (!map.has(uid)) {
+        map.set(uid, []);
+      }
+      map.get(uid)!.push(item);
+    });
+    return map;
+  }, [usageItems]);
 
   // Available unique divisions, subdivisions, and years for OP- requests
   const { availableDivisions, availableSubDivisions, availableYears } = useMemo(() => {
@@ -232,7 +266,8 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
       const divisi = profile?.divisi || 'Tanpa Divisi';
       const subDivisi = profile?.subDivisi || '-';
 
-      const reqHistories = historyByRequestUid.get(req.id) || [];
+      const reqIdUpper = (req.id || '').trim().toUpperCase();
+      const reqHistories = historyByRequestUid.get(reqIdUpper) || [];
       const reqLevelHistories = reqHistories.filter(
         (h) => !h.itemUid || h.itemUid === req.id || h.itemUid === h.requestUid
       );
@@ -316,6 +351,65 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
           ? parseDateSafe(req.timestamp)
           : null);
 
+      // 5. Pertama kali User Submit Item Laporan Penggunaan (DD/MM/YYYY hh:mm)
+      const firstReportCandidates: Date[] = [];
+
+      // 5a. Dari ItemReviewHistory (actionType = ITEM_CREATED)
+      reqHistories.forEach((h) => {
+        const act = (h.actionType || '').toString().toUpperCase();
+        if (act === 'ITEM_CREATED') {
+          const d = parseDateSafe(h.timestamp);
+          if (d) firstReportCandidates.push(d);
+        }
+      });
+
+      // 5b. Dari UsageReportItem aktif & cache CLOSED (lewati item ringkasan summary_*)
+      const propItems = usageItemsByRequestUid.get(reqIdUpper) || [];
+      const cachedClosedItems = getCachedClosedUsageItems(reqIdUpper) || [];
+      const combinedRealItems = propItems.length > 0 ? propItems : cachedClosedItems;
+
+      combinedRealItems.forEach((item) => {
+        if (!item || (item.id || '').startsWith('summary_')) return;
+        let itemDate = parseDateSafe(item.timestamp);
+        if (!itemDate && item.id) {
+          const epochMatch = item.id.match(/^ITEM-(\d{13})/);
+          if (epochMatch) {
+            const parsedEpoch = new Date(Number(epochMatch[1]));
+            if (!isNaN(parsedEpoch.getTime())) {
+              itemDate = parsedEpoch;
+            }
+          }
+        }
+        if (!itemDate) {
+          itemDate = parseDateSafe(item.updatedAt);
+        }
+        if (itemDate) {
+          firstReportCandidates.push(itemDate);
+        }
+      });
+
+      firstReportCandidates.sort((a, b) => a.getTime() - b.getTime());
+      const firstReportDate = firstReportCandidates.length > 0 ? firstReportCandidates[0] : null;
+
+      let transferToFirstReportMinutes: number | null = null;
+      if (transferDate && firstReportDate) {
+        const diffMs = firstReportDate.getTime() - transferDate.getTime();
+        transferToFirstReportMinutes = Math.max(0, Math.round(diffMs / 60000));
+      }
+
+      const isWaitingReport = Boolean(
+        transferDate &&
+        !firstReportDate &&
+        req.status !== RequestStatus.CLOSED &&
+        req.status !== RequestStatus.CANCELLED &&
+        req.status !== RequestStatus.REJECTED
+      );
+
+      const waitingReportMinutes =
+        isWaitingReport && transferDate
+          ? Math.max(0, Math.round((Date.now() - transferDate.getTime()) / 60000))
+          : null;
+
       let statusLabel = String(req.status || 'PENDING_APPROVAL');
       if (req.status === RequestStatus.PENDING_APPROVAL) statusLabel = 'PENDING APPROVAL';
       else if (req.status === RequestStatus.APPROVED) statusLabel = 'APPROVED MANAGER';
@@ -349,10 +443,16 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
         approvedFinanceFormatted: formatDateWithoutSeconds(approvedFinanceDate),
         approverFinance,
         transferDate,
-        transferFormatted: formatDateWithoutSeconds(transferDate)
+        transferFormatted: formatDateWithoutSeconds(transferDate),
+        firstReportDate,
+        firstReportFormatted: formatDateWithoutSeconds(firstReportDate),
+        transferToFirstReportMinutes,
+        transferToFirstReportFormatted: formatDurationIndonesian(transferToFirstReportMinutes),
+        isWaitingReport,
+        waitingReportMinutes
       };
     });
-  }, [opRequests, profileMap, historyByRequestUid]);
+  }, [opRequests, profileMap, historyByRequestUid, usageItemsByRequestUid]);
 
   // Rows filtered strictly by Divisi, Sub Divisi, Bulan, dan Tahun (shared for Chart & base for Table)
   const dimensionFilteredRows = useMemo(() => {
@@ -385,19 +485,64 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
     });
   }, [allRows, selectedDivisi, selectedSubDivisi, selectedMonth, selectedYear]);
 
-  // Filtered rows (includes search query for the table view)
+  // Filtered rows (includes search query and optional Response Time sort for the table view)
   const filteredRows = useMemo(() => {
-    if (searchQuery.trim() === '') return dimensionFilteredRows;
-    const q = searchQuery.toLowerCase().trim();
-    return dimensionFilteredRows.filter((row) => {
-      const matchId = row.id.toLowerCase().includes(q);
-      const matchUser = row.pemohonNama.toLowerCase().includes(q) || row.userEmail.toLowerCase().includes(q);
-      const matchSite = row.siteId.toLowerCase().includes(q);
-      const matchKet = row.keterangan.toLowerCase().includes(q);
-      const matchStatus = row.statusLabel.toLowerCase().includes(q);
-      return matchId || matchUser || matchSite || matchKet || matchStatus;
+    let base = dimensionFilteredRows;
+    if (searchQuery.trim() !== '') {
+      const q = searchQuery.toLowerCase().trim();
+      base = dimensionFilteredRows.filter((row) => {
+        const matchId = row.id.toLowerCase().includes(q);
+        const matchUser = row.pemohonNama.toLowerCase().includes(q) || row.userEmail.toLowerCase().includes(q);
+        const matchSite = row.siteId.toLowerCase().includes(q);
+        const matchKet = row.keterangan.toLowerCase().includes(q);
+        const matchStatus = row.statusLabel.toLowerCase().includes(q);
+        return matchId || matchUser || matchSite || matchKet || matchStatus;
+      });
+    }
+
+    if (responseTimeSort === 'default') return base;
+
+    return [...base].sort((a, b) => {
+      const aVal = a.transferToFirstReportMinutes;
+      const bVal = b.transferToFirstReportMinutes;
+      if (aVal === null && bVal === null) {
+        return (b.waitingReportMinutes ?? -1) - (a.waitingReportMinutes ?? -1);
+      }
+      if (aVal === null) return 1;
+      if (bVal === null) return -1;
+      return responseTimeSort === 'slowest' ? bVal - aVal : aVal - bVal;
     });
-  }, [dimensionFilteredRows, searchQuery]);
+  }, [dimensionFilteredRows, searchQuery, responseTimeSort]);
+
+  // Quick SLA stats for Transfer -> First User Report Submit (used in Table summary strip)
+  const tableTransferToReportStats = useMemo(() => {
+    const reportedDurations = filteredRows
+      .filter((r) => r.transferToFirstReportMinutes !== null && r.firstReportDate !== null)
+      .map((r) => r.transferToFirstReportMinutes!)
+      .sort((a, b) => a - b);
+    const waitingCount = filteredRows.filter((r) => r.isWaitingReport).length;
+    const avgMinutes =
+      reportedDurations.length > 0
+        ? Math.round(reportedDurations.reduce((acc, v) => acc + v, 0) / reportedDurations.length)
+        : null;
+    const medianMinutes =
+      reportedDurations.length > 0
+        ? reportedDurations.length % 2 === 1
+          ? reportedDurations[Math.floor(reportedDurations.length / 2)]
+          : Math.round(
+              (reportedDurations[reportedDurations.length / 2 - 1] +
+                reportedDurations[reportedDurations.length / 2]) /
+                2
+            )
+        : null;
+
+    return {
+      reportedCount: reportedDurations.length,
+      waitingCount,
+      avgMinutes,
+      medianMinutes
+    };
+  }, [filteredRows]);
 
   // Pagination
   const totalPages = Math.ceil(filteredRows.length / itemsPerPage) || 1;
@@ -420,6 +565,9 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
       'Approved Manager (DD/MM/YYYY hh:mm)',
       'Approved Finance (DD/MM/YYYY hh:mm)',
       'Transferred (DD/MM/YYYY hh:mm)',
+      'Lapor Pertama User (DD/MM/YYYY hh:mm)',
+      'Response Time (Transfer -> Lapor)',
+      'Response Time (Menit)',
       'Status UID',
       'Divisi',
       'Subdivisi',
@@ -440,6 +588,15 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
       escapeCsv(r.approvedManagerFormatted),
       escapeCsv(r.approvedFinanceFormatted),
       escapeCsv(r.transferFormatted),
+      escapeCsv(r.firstReportFormatted),
+      escapeCsv(
+        r.transferToFirstReportMinutes !== null
+          ? r.transferToFirstReportFormatted
+          : r.isWaitingReport
+          ? `Belum Lapor (Menunggu ${formatDurationIndonesian(r.waitingReportMinutes)})`
+          : '-'
+      ),
+      r.transferToFirstReportMinutes ?? '',
       escapeCsv(r.statusLabel),
       escapeCsv(r.divisi),
       escapeCsv(r.subDivisi),
@@ -467,6 +624,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
     setSelectedMonth(0);
     setSelectedYear('ALL');
     setSearchQuery('');
+    setResponseTimeSort('default');
     setCurrentPage(1);
   };
 
@@ -513,8 +671,10 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
             </h3>
             <p className="text-[11px] text-slate-500 leading-relaxed font-medium mt-0.5">
               {activeTab === 'table'
-                ? 'Daftar seluruh timeline khusus UID Pengajuan (prefix OP-): Waktu Submit, Approved Manager, Approved Finance, dan Transferred.'
-                : 'Grafik distribusi waktu per-jam (00:00 – 23:00) untuk series User Submit, Approved Manager, Approved Finance, dan Transfer.'}
+                ? 'Daftar timeline UID Pengajuan (OP-): Submit, Approved Manager, Approved Finance, Transferred, Lapor Pertama User, dan Response Time (Transfer → Lapor).'
+                : activeTab === 'chart'
+                ? 'Grafik distribusi waktu per-jam (00:00 – 23:00) untuk series User Submit, Approved Manager, Approved Finance, dan Transfer.'
+                : 'Analisis Response Time mulai dari Finance Transfer sampai dengan pertama kali User mensubmit laporan penggunaan (nota pertama).'}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -532,7 +692,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
           </div>
         </div>
 
-        {/* Menu Tab Switcher: Tabel Response Waktu vs Grafik Waktu Per-Jam */}
+        {/* Menu Tab Switcher */}
         <div className="flex items-center gap-2 pt-1 border-t border-slate-200/70 flex-wrap">
           <button
             type="button"
@@ -557,6 +717,18 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
           >
             <BarChart3 className="w-4 h-4" />
             <span>Grafik Waktu Per-Jam</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('transfer-to-report')}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer border ${
+              activeTab === 'transfer-to-report'
+                ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm shadow-indigo-900/20'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            <Timer className="w-4 h-4" />
+            <span>Response Time Transfer &rarr; Lapor</span>
           </button>
         </div>
       </div>
@@ -670,7 +842,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
         </div>
 
         {activeTab === 'table' ? (
-          <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5 border-t border-slate-100">
+          <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5 border-t border-slate-100 flex-wrap gap-2">
             <span>
               Format Tanggal &amp; Waktu:{' '}
               <code className="text-slate-700 font-semibold font-mono bg-slate-100 px-2 py-0.5 rounded">
@@ -681,7 +853,7 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
               Halaman {currentPage} dari {totalPages} ({filteredRows.length} UID)
             </span>
           </div>
-        ) : (
+        ) : activeTab === 'chart' ? (
           <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5 border-t border-slate-100 flex-wrap gap-2">
             <span>
               Pengelompokan Waktu:{' '}
@@ -693,10 +865,22 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
               Sumber Data: {dimensionFilteredRows.length} UID OP- sesuai filter
             </span>
           </div>
+        ) : (
+          <div className="flex items-center justify-between text-xs text-slate-500 pt-0.5 border-t border-slate-100 flex-wrap gap-2">
+            <span>
+              Metrik SLA:{' '}
+              <code className="text-slate-700 font-semibold font-mono bg-slate-100 px-2 py-0.5 rounded">
+                Finance Transfer &rarr; Lapor Pertama User
+              </code>
+            </span>
+            <span className="text-[11px] text-slate-400">
+              Sumber Data: {dimensionFilteredRows.length} UID OP- sesuai filter
+            </span>
+          </div>
         )}
       </div>
 
-      {/* Main Content Area: Grafik Waktu Per-Jam OR Tabel Response Waktu */}
+      {/* Main Content Area */}
       {activeTab === 'chart' ? (
         <ResponseTimeHourlyChart
           rows={dimensionFilteredRows}
@@ -707,25 +891,98 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
             year: selectedYear === 'ALL' ? 'Semua Tahun' : selectedYear
           }}
         />
+      ) : activeTab === 'transfer-to-report' ? (
+        <ResponseTimeTransferToReportView
+          rows={dimensionFilteredRows}
+          filterSummary={{
+            divisi: selectedDivisi === 'ALL' ? 'Semua Divisi' : selectedDivisi,
+            subDivisi: selectedSubDivisi === 'ALL' ? 'Semua Sub Divisi' : selectedSubDivisi,
+            monthLabel: MONTH_NAMES[selectedMonth] || 'Semua Bulan',
+            year: selectedYear === 'ALL' ? 'Semua Tahun' : selectedYear
+          }}
+        />
       ) : (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="space-y-3">
+          {/* Compact SLA Summary Strip: Finance Transfer -> First User Report Submit */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Rata-rata Transfer &rarr; Lapor
+              </span>
+              <span className="text-sm font-black font-mono text-indigo-700 mt-0.5 block">
+                {formatDurationIndonesian(tableTransferToReportStats.avgMinutes)}
+              </span>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Median Transfer &rarr; Lapor
+              </span>
+              <span className="text-sm font-black font-mono text-teal-700 mt-0.5 block">
+                {formatDurationIndonesian(tableTransferToReportStats.medianMinutes)}
+              </span>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Sudah Lapor (Terukur)
+              </span>
+              <span className="text-sm font-black font-mono text-emerald-700 mt-0.5 block">
+                {tableTransferToReportStats.reportedCount} UID
+              </span>
+            </div>
+            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Ditransfer Belum Lapor
+              </span>
+              <span
+                className={`text-sm font-black font-mono mt-0.5 block ${
+                  tableTransferToReportStats.waitingCount > 0 ? 'text-rose-600' : 'text-emerald-600'
+                }`}
+              >
+                {tableTransferToReportStats.waitingCount} UID
+              </span>
+            </div>
+          </div>
+
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-xs min-w-[960px]">
+            <table className="w-full border-collapse text-left text-xs min-w-[1260px]">
             <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 select-none">
               <tr>
                 <th className="py-3.5 px-4 w-14 text-center">No</th>
                 <th className="py-3.5 px-4 min-w-[190px]">UID</th>
-                <th className="py-3.5 px-4 min-w-[180px]">Submit (DD/MM/YYYY hh:mm)</th>
-                <th className="py-3.5 px-4 min-w-[200px]">Approved Manager (DD/MM/YYYY hh:mm)</th>
-                <th className="py-3.5 px-4 min-w-[200px]">Approved Finance (DD/MM/YYYY hh:mm)</th>
-                <th className="py-3.5 px-4 min-w-[190px]">Transferred (DD/MM/YYYY hh:mm)</th>
-                <th className="py-3.5 px-4 min-w-[160px] text-center">Status UID</th>
+                <th className="py-3.5 px-4 min-w-[165px]">Submit (DD/MM/YYYY hh:mm)</th>
+                <th className="py-3.5 px-4 min-w-[185px]">Approved Manager (DD/MM/YYYY hh:mm)</th>
+                <th className="py-3.5 px-4 min-w-[185px]">Approved Finance (DD/MM/YYYY hh:mm)</th>
+                <th className="py-3.5 px-4 min-w-[170px]">Transferred (DD/MM/YYYY hh:mm)</th>
+                <th className="py-3.5 px-4 min-w-[180px]">Lapor Pertama User (DD/MM/YYYY hh:mm)</th>
+                <th className="py-3.5 px-4 min-w-[175px] text-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResponseTimeSort((prev) =>
+                        prev === 'default' ? 'slowest' : prev === 'slowest' ? 'fastest' : 'default'
+                      );
+                      setCurrentPage(1);
+                    }}
+                    className="inline-flex items-center justify-center gap-1 hover:text-indigo-600 transition-colors cursor-pointer"
+                    title="Klik untuk mengurutkan berdasarkan Response Time (Default → Terlama → Tercepat)"
+                  >
+                    <span>Response Time (Transfer &rarr; Lapor)</span>
+                    <ArrowUpDown className="w-3.5 h-3.5 shrink-0" />
+                    {responseTimeSort !== 'default' && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">
+                        {responseTimeSort === 'slowest' ? 'Terlama' : 'Tercepat'}
+                      </span>
+                    )}
+                  </button>
+                </th>
+                <th className="py-3.5 px-4 min-w-[150px] text-center">Status UID</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {paginatedRows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-16 text-center text-slate-400">
+                  <td colSpan={9} className="py-16 text-center text-slate-400">
                     <AlertCircle className="w-8 h-8 text-slate-300 mx-auto mb-2" />
                     <p className="font-semibold text-slate-600 text-sm">Tidak ada data pengajuan (OP-) yang cocok dengan filter.</p>
                     <p className="text-[11px] text-slate-400 mt-0.5">Silakan sesuaikan filter divisi, subdivisi, atau rentang bulan-tahun.</p>
@@ -815,6 +1072,46 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
                         )}
                       </td>
 
+                      {/* Lapor Pertama User (DD/MM/YYYY hh:mm) */}
+                      <td className="py-3.5 px-4">
+                        {row.firstReportFormatted !== '-' ? (
+                          <div className="font-mono font-medium text-blue-700 flex items-center gap-1">
+                            <FileText className="w-3 h-3 text-blue-600 shrink-0" />
+                            <span>{row.firstReportFormatted}</span>
+                          </div>
+                        ) : row.isWaitingReport ? (
+                          <span className="text-rose-600 bg-rose-50 px-2 py-0.5 rounded text-[10px] font-semibold border border-rose-200">
+                            Belum Lapor
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">-</span>
+                        )}
+                      </td>
+
+                      {/* Response Time (Finance Transfer -> Lapor Pertama User) */}
+                      <td className="py-3.5 px-4 text-center">
+                        {row.transferToFirstReportMinutes !== null ? (
+                          <span
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold font-mono border ${getResponseTimeBadgeTone(
+                              row.transferToFirstReportMinutes
+                            )}`}
+                            title={`Jeda dari Transfer (${row.transferFormatted}) hingga Lapor Pertama (${row.firstReportFormatted}) = ${row.transferToFirstReportMinutes} menit`}
+                          >
+                            <Timer className="w-3 h-3 shrink-0" />
+                            <span>{row.transferToFirstReportFormatted}</span>
+                          </span>
+                        ) : row.isWaitingReport ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold font-mono bg-rose-50 text-rose-700 border border-rose-200"
+                            title="Belum ada item laporan yang diunggah sejak dana ditransfer"
+                          >
+                            Menunggu {formatDurationIndonesian(row.waitingReportMinutes)}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 italic text-[11px]">-</span>
+                        )}
+                      </td>
+
                       {/* Status UID */}
                       <td className="py-3.5 px-4 text-center">
                         <span
@@ -881,7 +1178,8 @@ export const AdminResponseTimeModal: React.FC<AdminResponseTimeModalProps> = ({
             </button>
           </div>
         </div>
-      </div>
+        </div>
+        </div>
       )}
     </div>
   );

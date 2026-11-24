@@ -5008,6 +5008,7 @@ export default function App() {
               isFullPageView={true}
               onClose={() => setActiveView('dashboard')}
               requests={requests}
+              usageItems={usageItems}
               histories={itemReviewHistories}
               profiles={profiles}
             />

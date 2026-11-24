@@ -269,10 +269,15 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       finalAmount = initialRequest ? parseNumericValue(jumlahPengajuan) : talanganAmount;
     }
 
-    // Enforcement: User Murni Pembatasan UID Belum Dilaporkan (> 1 UID)
+    // Enforcement: User Murni Pembatasan UID Belum Dilaporkan (> 1 UID atau total transfer > Rp 300.000)
     if (userMurniStatus.isBlocked && !initialRequest) {
+      const totalFormatted = new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        minimumFractionDigits: 0
+      }).format(userMurniStatus.totalTransferredAmount);
       setError(
-        `Pengajuan Dibatasi: Anda memiliki ${userMurniStatus.count} UID yang sudah ditransfer namun belum dilaporkan sama sekali. Sesuai aturan sistem, Anda tidak dapat membuat Pengajuan Operasional maupun Dana Talangan baru hingga laporan diselesaikan.`
+        `Pengajuan Dibatasi: Anda memiliki ${userMurniStatus.count} UID belum dilaporkan dengan total transfer ${totalFormatted}. Sesuai aturan sistem, User Murni tidak dapat membuat Pengajuan Operasional maupun Dana Talangan baru jika memiliki > 1 UID belum dilaporkan atau total transfer UID belum dilaporkan > Rp 300.000.`
       );
       return;
     }
@@ -412,17 +417,21 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           </div>
         )}
 
-        {/* Banner Peringatan Pembatasan UID Belum Dilaporkan (> 1 UID) */}
+        {/* Banner Peringatan Pembatasan UID Belum Dilaporkan (> 1 UID atau > Rp 300.000) */}
         {userMurniStatus.isBlocked && !initialRequest && (
           <div className="bg-rose-50 border-2 border-rose-300 text-rose-900 rounded-2xl p-4 text-xs space-y-2 shadow-xs animate-slide-up">
             <div className="flex items-start gap-2.5">
               <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
               <div>
                 <h4 className="font-bold text-rose-950 font-display">
-                  Pengajuan Dibatasi ({userMurniStatus.count} UID Belum Dilaporkan)
+                  Pengajuan Dibatasi ({userMurniStatus.blockReasonShort || `${userMurniStatus.count} UID Belum Dilaporkan`})
                 </h4>
                 <p className="text-[11px] text-rose-800 mt-1 leading-relaxed">
-                  Anda memiliki <strong>{userMurniStatus.count} UID</strong> yang sudah ditransfer oleh Finance namun belum dilaporkan sama sekali. Sesuai aturan sistem, User Murni tidak dapat melakukan Pengajuan Operasional maupun Dana Talangan jika memiliki lebih dari 1 UID yang belum dilaporkan (maksimal 1 UID tanpa laporan; pada UID ke-2 otomatis diblokir).
+                  Anda memiliki <strong>{userMurniStatus.count} UID</strong> yang sudah ditransfer oleh Finance dengan total{' '}
+                  <strong>
+                    {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(userMurniStatus.totalTransferredAmount)}
+                  </strong>{' '}
+                  namun belum dilaporkan sama sekali. Sesuai aturan sistem, User Murni tidak dapat melakukan Pengajuan Operasional maupun Dana Talangan baru jika memiliki lebih dari 1 UID belum dilaporkan <strong>atau</strong> total transfer UID belum dilaporkan lebih dari <strong>Rp 300.000</strong>.
                 </p>
               </div>
             </div>
@@ -881,7 +890,9 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                 <span>
                   {isSubmitting 
                     ? 'Menyimpan Laporan Dana Talangan...' 
-                    : (userMurniStatus.isBlocked && !initialRequest ? 'Pengajuan Dibatasi (≥ 2 UID Belum Lapor)' : 'Simpan Laporan Dana Talangan')}
+                    : (userMurniStatus.isBlocked && !initialRequest
+                        ? `Pengajuan Dibatasi (${userMurniStatus.blockReasonShort || 'Belum Lapor'})`
+                        : 'Simpan Laporan Dana Talangan')}
                 </span>
               </button>
             </div>
@@ -902,7 +913,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
               {isSubmitting 
                 ? 'Menyimpan Pengajuan...' 
                 : (userMurniStatus.isBlocked && !initialRequest
-                    ? 'Pengajuan Dibatasi (≥ 2 UID Belum Lapor)'
+                    ? `Pengajuan Dibatasi (${userMurniStatus.blockReasonShort || 'Belum Lapor'})`
                     : (initialRequest ? 'Kirim Revisi Pengajuan' : 'Kirim Pengajuan Anggaran'))}
             </span>
           </button>

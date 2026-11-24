@@ -1,5 +1,8 @@
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus } from '../types';
 
+export const USER_MURNI_MAX_UNREPORTED_UIDS = 1;
+export const USER_MURNI_MAX_UNREPORTED_TRANSFER_AMOUNT = 300000;
+
 export const isBbmRequest = (r: BudgetRequest): boolean => {
   const reqId = (r.id || '').toUpperCase();
   const siteId = (r.siteId || '').toUpperCase();
@@ -15,6 +18,22 @@ export const isBbmRequest = (r: BudgetRequest): boolean => {
     ket.includes('DUREN SAWIT')
   );
 };
+
+/**
+ * Returns the transferred amount of a request (falls back to jumlahPengajuan if adminActionAmount is 0).
+ */
+export function getRequestTransferredAmount(r: BudgetRequest): number {
+  const adminAmt = Number(r.adminActionAmount) || 0;
+  if (adminAmt > 0) return adminAmt;
+  return Number(r.jumlahPengajuan) || 0;
+}
+
+/**
+ * Sums total transferred amount across a list of unreported UIDs.
+ */
+export function getUnreportedTransferredTotal(unreportedUids: BudgetRequest[]): number {
+  return unreportedUids.reduce((sum, r) => sum + getRequestTransferredAmount(r), 0);
+}
 
 /**
  * Returns list of requests for a user that:
@@ -72,29 +91,85 @@ export function getReportedUnclosedRequests(
   });
 }
 
+export interface UserMurniBlockEvaluation {
+  isBlocked: boolean;
+  isBlockedByCount: boolean;
+  isBlockedByAmount: boolean;
+  count: number;
+  totalTransferredAmount: number;
+  blockReasonShort: string;
+}
+
+/**
+ * Evaluates blocking thresholds for User Murni:
+ * Blocked if unreported UIDs > 1 OR total transferred amount of unreported UIDs > Rp 300.000.
+ */
+export function evaluateUserMurniBlocking(unreportedUids: BudgetRequest[]): UserMurniBlockEvaluation {
+  const count = unreportedUids.length;
+  const totalTransferredAmount = getUnreportedTransferredTotal(unreportedUids);
+  const isBlockedByCount = count > USER_MURNI_MAX_UNREPORTED_UIDS;
+  const isBlockedByAmount = totalTransferredAmount > USER_MURNI_MAX_UNREPORTED_TRANSFER_AMOUNT;
+  const isBlocked = isBlockedByCount || isBlockedByAmount;
+
+  let blockReasonShort = '';
+  if (isBlockedByCount && isBlockedByAmount) {
+    blockReasonShort = '> 1 UID & > Rp 300 rb';
+  } else if (isBlockedByCount) {
+    blockReasonShort = '> 1 UID';
+  } else if (isBlockedByAmount) {
+    blockReasonShort = '> Rp 300 rb';
+  }
+
+  return {
+    isBlocked,
+    isBlockedByCount,
+    isBlockedByAmount,
+    count,
+    totalTransferredAmount,
+    blockReasonShort
+  };
+}
+
 /**
  * Validates whether a User Murni is blocked from submitting new requests.
- * Rule: If User Murni has > 1 UIDs that are already transferred and not reported at all (maksimal 1 UID), submission is blocked.
+ * Rule: Blocked if User Murni has > 1 unreported transferred UID OR total transferred amount of unreported UIDs > Rp 300.000.
  */
 export function checkUserMurniSubmissionStatus(
   userProfile: UserProfile | null | undefined,
   requests: BudgetRequest[],
   usageItems: UsageReportItem[]
-): { isBlocked: boolean; count: number; unreportedUids: BudgetRequest[] } {
-  if (!userProfile) return { isBlocked: false, count: 0, unreportedUids: [] };
+): UserMurniBlockEvaluation & { unreportedUids: BudgetRequest[] } {
+  if (!userProfile) {
+    return {
+      isBlocked: false,
+      isBlockedByCount: false,
+      isBlockedByAmount: false,
+      count: 0,
+      totalTransferredAmount: 0,
+      blockReasonShort: '',
+      unreportedUids: []
+    };
+  }
 
   const role = (userProfile.role || '').toUpperCase();
   // Pembatasan secara ketat hanya berlaku bagi Role USER (User Murni)
   if (role !== Role.USER && role !== 'USER') {
-    return { isBlocked: false, count: 0, unreportedUids: [] };
+    return {
+      isBlocked: false,
+      isBlockedByCount: false,
+      isBlockedByAmount: false,
+      count: 0,
+      totalTransferredAmount: 0,
+      blockReasonShort: '',
+      unreportedUids: []
+    };
   }
 
   const unreportedUids = getUnreportedTransferredRequests(userProfile.email, requests, usageItems);
-  const isBlocked = unreportedUids.length > 1;
+  const evaluation = evaluateUserMurniBlocking(unreportedUids);
 
   return {
-    isBlocked,
-    count: unreportedUids.length,
+    ...evaluation,
     unreportedUids
   };
 }

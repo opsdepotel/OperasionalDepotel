@@ -18,14 +18,18 @@ import {
   isBbmRequest,
   getUnreportedTransferredRequests,
   getReportedUnclosedRequests,
-  checkUserMurniSubmissionStatus
+  checkUserMurniSubmissionStatus,
+  evaluateUserMurniBlocking,
+  getRequestTransferredAmount
 } from '../lib/uidMonitoringUtils';
 
 export {
   isBbmRequest,
   getUnreportedTransferredRequests,
   getReportedUnclosedRequests,
-  checkUserMurniSubmissionStatus
+  checkUserMurniSubmissionStatus,
+  evaluateUserMurniBlocking,
+  getRequestTransferredAmount
 };
 
 interface UserUidMonitoringModalProps {
@@ -149,16 +153,18 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
       );
       const managerName = managerProfile?.nama || (managerProfile as any)?.name || p.managerEmail || '-';
 
-      const isBlocked = unreported.length > 1;
+      const blockEval = evaluateUserMurniBlocking(unreported);
 
       return {
         profile: p,
         managerName,
-        unreportedCount: unreported.length,
+        unreportedCount: blockEval.count,
+        unreportedTotalAmount: blockEval.totalTransferredAmount,
         unreportedList: unreported,
         reportedUnclosedCount: reportedUnclosed.length,
         reportedUnclosedList: reportedUnclosed,
-        isBlocked
+        isBlocked: blockEval.isBlocked,
+        blockReasonShort: blockEval.blockReasonShort
       };
     });
   }, [userMurniProfiles, requests, usageItems, profiles]);
@@ -191,9 +197,15 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
         return name.includes(q) || email.includes(q) || mgr.includes(q) || div.includes(q);
       })
       .sort((a, b) => {
-        // Sort highest unreported count first
+        // Sort blocked users first, then highest unreported count, then highest unreported transfer amount
+        if (Number(b.isBlocked) !== Number(a.isBlocked)) {
+          return Number(b.isBlocked) - Number(a.isBlocked);
+        }
         if (b.unreportedCount !== a.unreportedCount) {
           return b.unreportedCount - a.unreportedCount;
+        }
+        if (b.unreportedTotalAmount !== a.unreportedTotalAmount) {
+          return b.unreportedTotalAmount - a.unreportedTotalAmount;
         }
         return (a.profile.nama || a.profile.email).localeCompare(b.profile.nama || b.profile.email);
       });
@@ -247,10 +259,10 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
       doc.setTextColor(15, 23, 42);
       doc.text(`${totalUserMurni} User`, 20, 35);
 
-      // Stat 2: User Dibatasi (> 1 UID)
+      // Stat 2: User Dibatasi (> 1 UID / > Rp 300 rb)
       doc.setFontSize(8);
       doc.setTextColor(190, 18, 60);
-      doc.text('User Dibatasi (> 1 UID)', 75, 29);
+      doc.text('User Dibatasi (> 1 UID / > 300rb)', 75, 29);
       doc.setFontSize(11);
       doc.text(`${blockedUsersCount} User`, 75, 35);
 
@@ -291,7 +303,9 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
 
         const userDisplay = `${item.profile.nama || (item.profile as any)?.name || 'User'}\n${item.profile.email}`;
         const divisi = item.profile.divisi || '-';
-        const statusLabel = item.isBlocked ? 'DIBATASI (> 1 UID)' : 'DAPAT MENGAJUKAN';
+        const statusLabel = item.isBlocked
+          ? `DIBATASI (${item.blockReasonShort.toUpperCase()})`
+          : 'DAPAT MENGAJUKAN';
 
         return [
           index + 1,
@@ -344,7 +358,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
         },
         didParseCell: (data) => {
           if (data.section === 'body' && data.column.index === 7) {
-            if (data.cell.raw === 'DIBATASI (> 1 UID)') {
+            if (String(data.cell.raw || '').startsWith('DIBATASI')) {
               data.cell.styles.textColor = [190, 18, 60];
               data.cell.styles.fillColor = [255, 241, 242];
             } else {
@@ -368,7 +382,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
           doc.setFont('helvetica', 'normal');
           doc.setTextColor(148, 163, 184);
           doc.text(
-            '* Aturan Sistem: User Murni (Role USER) maksimal memiliki 1 UID belum lapor (pada UID ke-2 otomatis diblokir dari membuat pengajuan baru).',
+            '* Aturan Sistem: User Murni (Role USER) diblokir dari pengajuan baru jika memiliki > 1 UID belum lapor atau total transfer UID belum lapor > Rp 300.000.',
             14,
             202
           );
@@ -431,7 +445,11 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
       doc.text(`Divisi: ${userItem.profile.divisi || '-'}`, 18, 40);
 
       doc.text(`Atasan (Manager): ${userItem.managerName}`, 105, 30);
-      doc.text(`Status: ${userItem.isBlocked ? 'DIBATASI (> 1 UID BELUM LAPOR)' : 'DAPAT MENGAJUKAN'}`, 105, 35);
+      doc.text(
+        `Status: ${userItem.isBlocked ? `DIBATASI (${userItem.blockReasonShort.toUpperCase()})` : 'DAPAT MENGAJUKAN'}`,
+        105,
+        35
+      );
       const totalDanaUnreported = userItem.unreportedList.reduce(
         (sum, r) => sum + (Number(r.adminActionAmount) || Number(r.jumlahPengajuan) || 0),
         0
@@ -619,7 +637,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                   Monitoring UID User Murni
                 </h3>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-500/30 text-rose-200 border border-rose-400/40">
-                  Batas &gt; 1 UID
+                  Batas &gt; 1 UID / &gt; Rp 300 rb
                 </span>
               </div>
               <p className="text-[11px] text-slate-300/90 truncate mt-0.5">
@@ -669,7 +687,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
             </span>
             <div className="flex items-baseline gap-1 mt-1">
               <span className="text-xl font-black font-display text-rose-700">{blockedUsersCount}</span>
-              <span className="text-xs text-rose-500 font-medium truncate">User (&gt; 1 UID)</span>
+              <span className="text-xs text-rose-500 font-medium truncate">User (&gt; 1 UID / &gt; 300rb)</span>
             </div>
           </div>
 
@@ -818,13 +836,22 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
 
                       {/* UID Belum Dilaporkan (Transferred, 0 nota) */}
                       <td className="py-3.5 px-4 text-center">
-                        <span className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold font-mono transition-all ${
-                          item.unreportedCount > 0
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                            : 'bg-slate-100 text-slate-500 border border-slate-200'
-                        }`}>
-                          {item.unreportedCount} UID
-                        </span>
+                        <div className="inline-flex flex-col items-center gap-0.5">
+                          <span className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-xs font-bold font-mono transition-all ${
+                            item.unreportedCount > 0
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                              : 'bg-slate-100 text-slate-500 border border-slate-200'
+                          }`}>
+                            {item.unreportedCount} UID
+                          </span>
+                          {item.unreportedCount > 0 && (
+                            <span className={`text-[10px] font-mono font-bold ${
+                              item.unreportedTotalAmount > 300000 ? 'text-rose-700' : 'text-slate-500'
+                            }`}>
+                              {formatIDR(item.unreportedTotalAmount)}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* UID Dilaporkan Belum CLOSED */}
@@ -843,7 +870,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                         {item.isBlocked ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
                             <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                            <span>Dibatasi (&gt; 1 UID)</span>
+                            <span>Dibatasi ({item.blockReasonShort})</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
@@ -878,7 +905,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
 
         {/* Footer Info */}
         <div className="p-3.5 bg-slate-50 border-t border-slate-200 text-center text-[11px] text-slate-500 shrink-0">
-          * Aturan Pembatasan: User Murni (Role USER) yang memiliki &gt; 1 UID berstatus sudah ditransfer namun belum dilaporkan sama sekali, otomatis diblokir dari membuat Pengajuan Operasional maupun Dana Talangan.
+          * Aturan Pembatasan: User Murni (Role USER) yang memiliki &gt; 1 UID belum dilaporkan atau total transfer UID belum dilaporkan &gt; Rp 300.000, otomatis diblokir dari membuat Pengajuan Operasional maupun Dana Talangan baru.
         </div>
       </div>
 
@@ -944,7 +971,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
                     {selectedDetailUser.isBlocked ? (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1">
                         <AlertTriangle className="w-3 h-3 text-rose-600" />
-                        <span>Dibatasi (&gt; 1 UID)</span>
+                        <span>Dibatasi ({selectedDetailUser.blockReasonShort})</span>
                       </span>
                     ) : (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
@@ -1049,7 +1076,7 @@ export const UserUidMonitoringModal: React.FC<UserUidMonitoringModalProps> = ({
             {/* Modal Footer */}
             <div className="p-3.5 sm:p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3 shrink-0">
               <p className="text-[10px] text-slate-400 leading-tight">
-                * User Murni dengan &gt; 1 UID belum dilaporkan otomatis dibatasi dari pengajuan baru.
+                * User Murni dengan &gt; 1 UID belum dilaporkan atau total transfer belum dilaporkan &gt; Rp 300.000 otomatis dibatasi dari pengajuan baru.
               </p>
               <div className="flex items-center gap-2 shrink-0">
                 <button

@@ -2927,6 +2927,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
           isOpen={isResponseTimeModalOpen}
           onClose={() => setIsResponseTimeModalOpen(false)}
           requests={requests}
+          usageItems={usageItems}
           histories={histories}
           profiles={profiles}
         />
@@ -4055,6 +4056,7 @@ User Agent: ${navigator.userAgent}`;
               isOpen={isResponseTimeModalOpen}
               onClose={() => setIsResponseTimeModalOpen(false)}
               requests={requests}
+              usageItems={usageItems}
               histories={histories}
               profiles={profiles}
             />
