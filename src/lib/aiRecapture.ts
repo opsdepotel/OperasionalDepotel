@@ -1,4 +1,3 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import { AiRecaptureResult } from '../components/AiScreenRecaptureModal';
 import { UserActivity } from '../types';
 import { getAccessToken } from './firebase';
@@ -19,6 +18,36 @@ export interface AiRecapturePayload {
 }
 
 /**
+ * Detects whether a cached/saved AI Recapture result is actually a legacy transient network error
+ * (e.g. confidence 0 + ECONNRESET/Network) that should NOT be treated as a valid audit verdict.
+ */
+export function isTransientFailedAiResult(result?: AiRecaptureResult | null): boolean {
+  if (!result) return false;
+  const summaryLower = String(result.summary || '').toLowerCase();
+  const indicatorsText = Array.isArray(result.indicators)
+    ? result.indicators.join(' ').toLowerCase()
+    : '';
+  const combined = `${summaryLower} ${indicatorsText}`;
+
+  if (
+    combined.includes('econnreset') ||
+    combined.includes('koneksi terputus sementara') ||
+    combined.includes('network reset')
+  ) {
+    return true;
+  }
+
+  if (
+    Number(result.confidence) === 0 &&
+    String(result.verdict || '').toUpperCase().includes('SUSPICIOUS')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Extracts Google Drive file ID from various URL formats or ID string
  */
 export function extractDriveFileId(urlOrId?: string | null): string | null {
@@ -27,18 +56,22 @@ export function extractDriveFileId(urlOrId?: string | null): string | null {
   if (!trimmed.includes('/') && !trimmed.includes('?') && !trimmed.includes(':') && trimmed.length >= 10) {
     return trimmed;
   }
-  const match = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
-                trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
-                trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  const match =
+    trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) ||
+    trimmed.match(/\/d\/([a-zA-Z0-9_-]+)/) ||
+    trimmed.match(/[?&]id=([a-zA-Z0-9_-]+)/);
   return match && match[1] ? match[1] : null;
 }
 
 /**
  * Attempts to download a Google Drive file directly in the browser using the user's OAuth access token
  */
-async function downloadDriveFileAsBase64Client(fileId: string, token?: string | null): Promise<string | null> {
+async function downloadDriveFileAsBase64Client(
+  fileId: string,
+  token?: string | null
+): Promise<string | null> {
   if (!fileId) return null;
-  const authToken = token || await getAccessToken();
+  const authToken = token || (await getAccessToken());
   if (!authToken) return null;
 
   try {
@@ -70,134 +103,6 @@ async function downloadDriveFileAsBase64Client(fileId: string, token?: string | 
 }
 
 /**
- * Client-side direct fallback if backend API is unreachable or returns static HTML on Vercel
- */
-async function clientSideGeminiAnalysis(
-  payload: AiRecapturePayload,
-  clientApiKey: string
-): Promise<AiRecaptureResult> {
-  const ai = new GoogleGenAI({ apiKey: clientApiKey });
-
-  let base64Data = '';
-  let mimeType = 'image/jpeg';
-
-  if (payload.imageBase64) {
-    if (payload.imageBase64.startsWith('data:')) {
-      const parts = payload.imageBase64.split(',');
-      const mimeMatch = parts[0].match(/:(.*?);/);
-      if (mimeMatch) mimeType = mimeMatch[1];
-      base64Data = parts[1];
-    } else {
-      base64Data = payload.imageBase64;
-    }
-  } else {
-    const targetFileId = payload.fileId || extractDriveFileId(payload.imageUrl);
-    if (targetFileId) {
-      const clientDownloaded = await downloadDriveFileAsBase64Client(targetFileId, payload.googleAccessToken);
-      if (clientDownloaded && clientDownloaded.startsWith('data:')) {
-        const parts = clientDownloaded.split(',');
-        const mimeMatch = parts[0].match(/:(.*?);/);
-        if (mimeMatch) mimeType = mimeMatch[1];
-        base64Data = parts[1];
-      }
-    }
-
-    if (!base64Data && payload.imageUrl) {
-      const canvasBase64 = await urlToBase64Client(payload.imageUrl);
-      if (canvasBase64 && canvasBase64.startsWith('data:')) {
-        const parts = canvasBase64.split(',');
-        const mimeMatch = parts[0].match(/:(.*?);/);
-        if (mimeMatch) mimeType = mimeMatch[1];
-        base64Data = parts[1];
-      }
-    }
-  }
-
-  if (!base64Data) {
-    throw new Error('Foto tidak dapat diunduh untuk analisis AI. Pastikan izin akses foto Google Drive terbuka.');
-  }
-
-  const prompt = `Anda adalah seorang ahli forensik digital spesialis Deteksi Pemalsuan & Foto Ulang Layar (Screen Recapture / Spoofing Detection) untuk audit kegiatan operasional lapangan.
-
-Tugas Anda:
-Periksa secara mendalam foto bukti kegiatan operasional terlampir untuk menentukan apakah:
-1. Foto ini adalah FOTO LANGSUNG (AUTHENTIC / DIRECT CAPTURE) dari objek/lokasi fisik nyata di lapangan secara langsung.
-2. ATAU Foto ini adalah FOTO DARI LAYAR PERANGKAT (SCREEN RECAPTURE / SPOOFING) di mana pengguna memotret layar monitor komputer, laptop, smartphone lain, tablet, TV, atau layar presentasi.
-
-Indikator forensik yang wajib diperiksa:
-- **Pola Moiré**: Garis gelombang/interferensi warna atau bayangan melengkung akibat tabrakan sensor kamera dengan grid pixel layar digital.
-- **Bezel / Bingkai Layar**: Tepi monitor, sudut bezel HP/laptop, keyboard, mouse, batas jendela browser/OS, atau tepi layar di pinggir foto.
-- **Karakteristik Layar Digital**: Pantulan backlight, pantulan lampu ruangan pada kaca monitor (glare), struktur sub-pixel RGB, garis refresh scanline, teks antarmuka digital sekunder.
-- **Perspektif & Depth of Field**: Ketiadaan kedalaman ruang alami, distorsi sudut pemotretan ke layar datar, tekstur warna panel LCD/OLED.
-
-${payload.activityInfo ? `Informasi Kegiatan yang Dilaporkan: ${JSON.stringify(payload.activityInfo)}` : ''}
-
-Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
-
-  const candidateModels = [
-    'gemini-3.1-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.8-flash',
-  ];
-
-  let response: any = null;
-  let lastErr: any = null;
-
-  for (const modelName of candidateModels) {
-    try {
-      response = await ai.models.generateContent({
-        model: modelName,
-        contents: {
-          parts: [
-            {
-              inlineData: {
-                data: base64Data,
-                mimeType: mimeType || 'image/jpeg',
-              },
-            },
-            {
-              text: prompt,
-            },
-          ],
-        },
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              isRecapture: { type: Type.BOOLEAN },
-              confidence: { type: Type.NUMBER },
-              verdict: { type: Type.STRING },
-              summary: { type: Type.STRING },
-              indicators: { type: Type.ARRAY, items: { type: Type.STRING } },
-              reasons: { type: Type.STRING },
-              recommendation: { type: Type.STRING },
-            },
-            required: ['isRecapture', 'confidence', 'verdict', 'summary', 'indicators', 'recommendation'],
-          },
-        },
-      });
-
-      if (response && response.text) {
-        break;
-      }
-    } catch (err: any) {
-      lastErr = err;
-    }
-  }
-
-  if (!response || !response.text) {
-    throw lastErr || new Error('Gagal memproses analisis AI dengan model Gemini.');
-  }
-
-  const parsed = JSON.parse(response.text);
-  return {
-    ...parsed,
-    checkedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
-  };
-}
-
-/**
  * Compresses large base64 images before sending over network to avoid payload size limits & ECONNRESET
  */
 async function compressDataUrlIfNeeded(base64DataUrl: string, maxDim = 1024): Promise<string> {
@@ -207,7 +112,7 @@ async function compressDataUrlIfNeeded(base64DataUrl: string, maxDim = 1024): Pr
     // Do NOT set crossOrigin on data: URIs as it causes load failures on some mobile browsers
     img.onload = () => {
       let { width, height } = img;
-      if (width <= maxDim && height <= maxDim && base64DataUrl.length < 400000) {
+      if (width <= maxDim && height <= maxDim && base64DataUrl.length < 350000) {
         return resolve(base64DataUrl);
       }
       if (width > height) {
@@ -227,7 +132,7 @@ async function compressDataUrlIfNeeded(base64DataUrl: string, maxDim = 1024): Pr
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
+        resolve(canvas.toDataURL('image/jpeg', 0.78));
       } else {
         resolve(base64DataUrl);
       }
@@ -238,8 +143,8 @@ async function compressDataUrlIfNeeded(base64DataUrl: string, maxDim = 1024): Pr
 }
 
 /**
-  * Attempts to load an image URL into a client-side canvas to extract compressed Base64 data URL
-  */
+ * Attempts to load an image URL into a client-side canvas to extract compressed Base64 data URL
+ */
 async function urlToBase64Client(url: string, maxDim = 1024): Promise<string | null> {
   if (typeof window === 'undefined' || !url || url.startsWith('data:')) return null;
   return new Promise((resolve) => {
@@ -263,7 +168,7 @@ async function urlToBase64Client(url: string, maxDim = 1024): Promise<string | n
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL('image/jpeg', 0.8));
+          resolve(canvas.toDataURL('image/jpeg', 0.78));
           return;
         }
       } catch {
@@ -277,7 +182,7 @@ async function urlToBase64Client(url: string, maxDim = 1024): Promise<string | n
 }
 
 /**
- * Main AI Screen Recapture caller with resilient Vercel error handling and multi-strategy fallbacks
+ * Server-side AI Screen Recapture caller with resilient retry handling
  */
 export async function requestAiScreenRecapture(
   activity: UserActivity,
@@ -351,7 +256,6 @@ export async function requestAiScreenRecapture(
         throw new Error('Gagal membaca respons dari server AI.');
       }
 
-      // Try parsing JSON first directly
       let data: any = null;
       let isJson = false;
       try {
@@ -366,24 +270,55 @@ export async function requestAiScreenRecapture(
       if (isJson) {
         if (!res.ok || !data?.success) {
           const errorMsg = data?.error || `Gagal menjalankan analisis AI (Status: ${res.status})`;
+          const isRetryable =
+            data?.retryable === true ||
+            data?.upstreamStatus === 503 ||
+            data?.upstreamStatus === 504 ||
+            res.status === 503 ||
+            res.status === 504 ||
+            errorMsg.includes('High Demand') ||
+            errorMsg.includes('ECONNRESET') ||
+            errorMsg.includes('Network Reset') ||
+            errorMsg.includes('Timeout');
+
+          if (isRetryable && fetchAttempts < maxFetchAttempts) {
+            primaryError = errorMsg;
+            await new Promise((r) => setTimeout(r, 1500));
+            continue;
+          }
           throw new Error(errorMsg);
         }
 
-        return {
+        const result: AiRecaptureResult = {
           ...data.data,
           checkedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
         };
+
+        if (isTransientFailedAiResult(result)) {
+          throw new Error(
+            'Koneksi ke server AI terganggu sementara (Network Reset). Silakan klik "Coba Lagi" beberapa detik lagi.'
+          );
+        }
+
+        return result;
       }
 
-      // Check if response is HTML page (typical when a static host returns 404 HTML fallback)
-      const isHtmlResponse = rawText.trim().startsWith('<') || 
-        rawText.includes('<!DOCTYPE html>') || 
+      const isHtmlResponse =
+        rawText.trim().startsWith('<') ||
+        rawText.includes('<!DOCTYPE html>') ||
         rawText.toLowerCase().includes('<html') ||
         rawText.includes('The page could not be found');
 
       if (isHtmlResponse) {
         console.warn('Backend API endpoint returned HTML fallback response:', rawText.slice(0, 150));
-        primaryError = `Endpoint server /api/ai/check-screen-recapture belum terhubung (Status: ${res.status}).`;
+        const isWarmupPage = rawText.includes('Starting Server');
+        primaryError = isWarmupPage
+          ? 'Server AI sedang sibuk sementara atau dalam proses muat ulang. Silakan tunggu beberapa detik lalu klik "Coba Lagi".'
+          : `Endpoint server /api/ai/check-screen-recapture tidak merespons JSON (Status: ${res.status}). Silakan muat ulang halaman lalu coba lagi.`;
+        if (fetchAttempts < maxFetchAttempts) {
+          await new Promise((r) => setTimeout(r, 1500));
+          continue;
+        }
         break;
       } else {
         throw new Error(`Respons server tidak valid (Bukan format JSON yang diharapkan): ${rawText.slice(0, 80)}`);
@@ -391,35 +326,17 @@ export async function requestAiScreenRecapture(
     } catch (apiErr: any) {
       console.warn(`API route call attempt ${fetchAttempts} error:`, apiErr);
       primaryError = apiErr?.message || 'Gagal menghubungi server AI.';
-      if (fetchAttempts < maxFetchAttempts && (primaryError.includes('fetch failed') || primaryError.includes('Failed to fetch'))) {
-        await new Promise((r) => setTimeout(r, 600));
+      const isNetworkErr =
+        primaryError.includes('fetch failed') ||
+        primaryError.includes('Failed to fetch') ||
+        primaryError.includes('NetworkError') ||
+        primaryError.includes('ECONNRESET');
+      if (fetchAttempts < maxFetchAttempts && isNetworkErr) {
+        await new Promise((r) => setTimeout(r, 1000));
       } else {
         break;
       }
     }
-  }
-
-  // Fallback 1: If client-side VITE_GEMINI_API_KEY exists (e.g. configured in Vercel environment variables)
-  const clientKey = (import.meta as any).env?.VITE_GEMINI_API_KEY;
-  if (clientKey) {
-    try {
-      console.info('Attempting client-side Gemini fallback with VITE_GEMINI_API_KEY...');
-      return await clientSideGeminiAnalysis(payload, clientKey);
-    } catch (fallbackErr: any) {
-      console.error('Client-side fallback error:', fallbackErr);
-      const cleanFallbackMsg = fallbackErr?.message || '';
-      if (cleanFallbackMsg.includes('Failed to fetch') || cleanFallbackMsg.includes('NetworkError')) {
-        throw new Error(primaryError || 'Gagal menghubungi server API Gemini. Silakan periksa koneksi dan coba beberapa saat lagi.');
-      }
-      throw new Error(`Gagal analisis AI: ${primaryError || cleanFallbackMsg}`);
-    }
-  }
-
-  // If no client key and API route failed, provide a crystal-clear, step-by-step guidance message for Vercel users
-  if (primaryError?.includes('Endpoint Serverless') || primaryError?.includes('Unexpected token') || primaryError?.includes('The page c')) {
-    throw new Error(
-      'Koneksi API Gemini di Vercel belum aktif. Pastikan:\n1. Tambahkan Environment Variable GEMINI_API_KEY di menu Vercel Project Settings > Environment Variables.\n2. Lakukan Redeploy di dashboard Vercel agar Serverless Function aktif.'
-    );
   }
 
   throw new Error(primaryError || 'Gagal memeriksa keaslian foto dengan AI.');

@@ -10,7 +10,7 @@ import { BudgetRequest, UsageReportItem, UserProfile, UserActivity, Role, Reques
 import { parseNumericValue, generateUniqueUID, getCachedClosedUsageItems, fetchUsageItemsForUid, SPREADSHEET_ID } from '../lib/googleApi';
 import { Fuel, Calendar, Search, MapPin, FileText, X, Image as ImageIcon, CheckCircle2, ChevronRight, Filter, RefreshCw, Activity, Camera, Clock, User, ExternalLink, AlertOctagon, Sparkles, ShieldCheck, AlertTriangle, Send, Coins, Lock, AlertCircle, UploadCloud, Loader2 } from 'lucide-react';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
-import { requestAiScreenRecapture } from '../lib/aiRecapture';
+import { requestAiScreenRecapture, isTransientFailedAiResult } from '../lib/aiRecapture';
 import { AiBbmReceiptModal } from './AiBbmReceiptModal';
 import { AiBbmReceiptResult, requestAiBbmReceiptCheck } from '../lib/aiBbmReceipt';
 import { ZoomableImage } from './ZoomableImage';
@@ -281,7 +281,7 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
     }
     const finalConfidence = conf ?? (isRecapture ? 95 : isSuspicious ? 70 : 98);
 
-    return {
+    const builtResult: AiRecaptureResult = {
       isRecapture,
       confidence: finalConfidence,
       verdict: standardVerdict,
@@ -302,6 +302,12 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
           : 'Foto bukti terverifikasi valid dan tersimpan di database.',
       checkedAt: act.aiRecaptureCheckedAt
     };
+
+    if (isTransientFailedAiResult(builtResult)) {
+      return null;
+    }
+
+    return builtResult;
   };
 
   useBackHandler(!!selectedPhotoUrl, () => setSelectedPhotoUrl(null), 'bbmList_photoUrl');
@@ -468,8 +474,9 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
     setAiAnalysisError(null);
 
     // 1. If result is already saved in database or cached state and not forcing re-analysis, load immediately without calling AI API!
+    // Ignore legacy poisoned ECONNRESET/Network results (confidence 0) so Admin gets a real fresh AI analysis.
     const existingResult = getAiRecaptureResult(act);
-    if (existingResult && !forceReanalyze) {
+    if (existingResult && !isTransientFailedAiResult(existingResult) && !forceReanalyze) {
       if (!aiRecaptureResults[act.id]) {
         setAiRecaptureResults(prev => ({ ...prev, [act.id]: existingResult }));
       }
@@ -485,8 +492,8 @@ export const BbmListModal: React.FC<BbmListModalProps> = ({
         [act.id]: newResult,
       }));
 
-      // Automatically persist to Google Sheet Activity database so it won't ever need re-checking
-      if (onUpdateActivity) {
+      // Automatically persist to Google Sheet Activity database only for genuine AI results
+      if (onUpdateActivity && !isTransientFailedAiResult(newResult)) {
         try {
           await onUpdateActivity({
             ...act,

@@ -31,7 +31,8 @@ import {
   Loader2,
   MapPin,
   User,
-  X
+  X,
+  Zap
 } from 'lucide-react';
 
 interface ReviewBbmActivityModalProps {
@@ -195,8 +196,10 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
   useBackHandler(isOpen && !localPhotoPreview, onClose, 'reviewBbmActivity_modal');
 
   const targetPlat = useMemo(() => normalizePlat(item?.platNomorKendaraan), [item?.platNomorKendaraan]);
+  const targetIsGenset = Boolean(item?.isGenset);
+  const hasExplicitIsGenset = typeof item?.isGenset === 'boolean';
 
-  // Fetch all BBM items for this plate from server cache (ensures closed reports not yet in client cache are also included)
+  // Fetch all BBM items for this plate & IsGenset category from server cache
   useEffect(() => {
     if (!isOpen || !targetPlat) {
       setServerBbmItems([]);
@@ -207,7 +210,7 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
     let cancelled = false;
     setIsSyncingServer(true);
 
-    fetchBbmUsageItemsByPlate(targetPlat)
+    fetchBbmUsageItemsByPlate(targetPlat, targetIsGenset)
       .then((rows) => {
         if (!cancelled) {
           setServerBbmItems(rows);
@@ -222,7 +225,7 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, targetPlat]);
+  }, [isOpen, targetPlat, targetIsGenset]);
 
   const requestMap = useMemo(() => {
     const map = new Map<string, BudgetRequest>();
@@ -273,6 +276,7 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
       if (!candidate || !candidate.id || candidate.id.startsWith('summary_')) return;
       if (!candidate.isBBM) return;
       if (normalizePlat(candidate.platNomorKendaraan) !== targetPlat) return;
+      if (Boolean(candidate.isGenset) !== targetIsGenset) return;
       const reqIdKey = String(candidate.requestId || '').toUpperCase().trim();
       if (reqIdKey && cancelledReqIds.has(reqIdKey) && candidate.id !== item.id) return;
       combinedMap.set(candidate.id, candidate);
@@ -319,6 +323,8 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
     const filtered = (activities || [])
       .filter((act) => {
         if (normalizePlat(act.platNomor) !== targetPlat) return false;
+        // Jika IsBBM = TRUE dan IsGenset = TRUE, hanya tampilkan Activity dengan kolom V (IsBackup) = TRUE
+        if (targetIsGenset && act.isBackup !== true) return false;
         const actYmd = extractYmd(act.tanggal) || extractYmd(act.createdAt || act.timestamp);
         if (!actYmd || !curStartYmd) return false;
 
@@ -329,7 +335,7 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
           if (!isNaN(actMs) && actMs < curMs) return false;
         }
 
-        // End boundary: strictly before the next BBM purchase for the same plate
+        // End boundary: strictly before the next BBM purchase for the same plate & IsGenset category
         if (foundNextYmd) {
           if (sameDayWithNext) {
             if (actYmd > foundNextYmd) return false;
@@ -363,7 +369,7 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
       matchedActivities: filtered,
       totalPurchasesForPlate: sortedPurchases.length
     };
-  }, [item, targetPlat, allUsageItems, allRequests, serverBbmItems, activities]);
+  }, [item, targetPlat, targetIsGenset, allUsageItems, allRequests, serverBbmItems, activities]);
 
   if (!isOpen || !item) return null;
 
@@ -408,12 +414,24 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
               <div className="min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-display font-bold text-slate-900 text-sm sm:text-base">
-                    Review BBM Kendaraan
+                    {targetIsGenset ? 'Review BBM Genset' : 'Review BBM Kendaraan'}
                   </h3>
                   {targetPlat && (
                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-slate-900 text-amber-300 font-mono text-xs font-extrabold tracking-wider shadow-xs">
                       <Car className="w-3.5 h-3.5 text-amber-400" />
                       {targetPlat}
+                    </span>
+                  )}
+                  {hasExplicitIsGenset && (
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-extrabold border ${
+                        targetIsGenset
+                          ? 'bg-amber-100 text-amber-900 border-amber-300'
+                          : 'bg-indigo-50 text-indigo-800 border-indigo-200'
+                      }`}
+                    >
+                      {targetIsGenset ? <Zap className="w-3 h-3 text-amber-600" /> : <Fuel className="w-3 h-3 text-indigo-600" />}
+                      {targetIsGenset ? 'BBM Genset (Backup Power)' : 'BBM Pickup'}
                     </span>
                   )}
                 </div>
@@ -440,7 +458,7 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
               {/* Current Purchase */}
               <div className="bg-white rounded-2xl p-3 border border-amber-200/80 shadow-xs">
                 <span className="text-[9px] font-extrabold uppercase tracking-wider text-amber-700 block mb-1">
-                  Pembelian BBM Ini (Mulai)
+                  {targetIsGenset ? 'Pembelian BBM Genset Ini (Mulai)' : 'Pembelian BBM Ini (Mulai)'}
                 </span>
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
@@ -461,7 +479,7 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
               {/* Next Purchase */}
               <div className="bg-white rounded-2xl p-3 border border-slate-200 shadow-xs">
                 <span className="text-[9px] font-extrabold uppercase tracking-wider text-indigo-700 block mb-1">
-                  Pembelian BBM Berikutnya (Batas Akhir)
+                  {targetIsGenset ? 'Pembelian BBM Genset Berikutnya (Batas Akhir)' : 'Pembelian BBM Berikutnya (Batas Akhir)'}
                 </span>
                 {nextPurchase ? (
                   <>
@@ -534,14 +552,23 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
               <div className="text-center py-10 text-slate-400 space-y-2">
                 <ClipboardList className="w-10 h-10 mx-auto text-slate-300" />
                 <p className="text-xs font-bold text-slate-600">
-                  Tidak ada aktivitas dengan plat nomor <span className="font-mono text-slate-800">{targetPlat}</span> pada periode ini.
+                  {targetIsGenset ? (
+                    <>
+                      Tidak ada aktivitas <span className="text-amber-700">Backup Power</span> dengan plat nomor{' '}
+                      <span className="font-mono text-slate-800">{targetPlat}</span> pada periode ini.
+                    </>
+                  ) : (
+                    <>
+                      Tidak ada aktivitas dengan plat nomor <span className="font-mono text-slate-800">{targetPlat}</span> pada periode ini.
+                    </>
+                  )}
                 </p>
                 <p className="text-[11px] text-slate-400 max-w-md mx-auto">
                   Rentang pemeriksaan: mulai {formatYmdIndo(startYmd)}{' '}
                   {nextPurchase
-                    ? `sampai sebelum pembelian berikutnya (${formatYmdIndo(nextYmd)})`
+                    ? `sampai sebelum pembelian ${targetIsGenset ? 'BBM Genset ' : ''}berikutnya (${formatYmdIndo(nextYmd)})`
                     : 'sampai hari ini'}
-                  {totalPurchasesForPlate > 1 ? ` • Total ${totalPurchasesForPlate} catatan pengisian BBM untuk plat ini.` : '.'}
+                  {totalPurchasesForPlate > 1 ? ` • Total ${totalPurchasesForPlate} catatan pengisian ${targetIsGenset ? 'BBM Genset' : 'BBM'} untuk plat ini.` : '.'}
                 </p>
               </div>
             ) : (
@@ -601,6 +628,12 @@ export const ReviewBbmActivityModal: React.FC<ReviewBbmActivityModalProps> = ({
                           {act.platNomor && (
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-slate-900 text-amber-300 font-mono text-[10px] font-bold tracking-wide">
                               {normalizePlat(act.platNomor)}
+                            </span>
+                          )}
+                          {act.isBackup === true && (
+                            <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                              <Zap className="w-3 h-3 text-amber-500" />
+                              Backup Power
                             </span>
                           )}
                         </div>

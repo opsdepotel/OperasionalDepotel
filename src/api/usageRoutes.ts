@@ -35,7 +35,8 @@ const LAPORAN_HEADERS = [
   'createdat',
   'updatedat',
   'isbbm',
-  'platnomorkendaraan'
+  'platnomorkendaraan',
+  'isgenset'
 ];
 
 function mapRowToUsageItem(row: any[]): UsageReportItem | null {
@@ -47,6 +48,13 @@ function mapRowToUsageItem(row: any[]): UsageReportItem | null {
   const rawIsBbm = String(row[13] || '').trim().toUpperCase();
   const isBBM = rawIsBbm === 'TRUE' || rawIsBbm === 'YA' || rawIsBbm === 'YES' || rawIsBbm === '1';
   const platNomorKendaraan = String(row[14] || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const rawIsGenset = String(row[15] || '').trim().toUpperCase();
+  const isGenset: boolean | undefined =
+    rawIsGenset === 'TRUE' || rawIsGenset === 'YA' || rawIsGenset === 'YES' || rawIsGenset === '1'
+      ? true
+      : rawIsGenset === 'FALSE' || rawIsGenset === 'TIDAK' || rawIsGenset === 'NO' || rawIsGenset === '0'
+        ? false
+        : undefined;
 
   return {
     id,
@@ -63,7 +71,8 @@ function mapRowToUsageItem(row: any[]): UsageReportItem | null {
     updatedAt: String(row[12] || String(row[11] || '')).trim(),
     timestamp: String(row[11] || row[12] || '').trim(),
     isBBM,
-    platNomorKendaraan
+    platNomorKendaraan,
+    isGenset
   };
 }
 
@@ -134,6 +143,9 @@ usageRouter.get('/', requireFirebaseAuth, async (req, res) => {
     const targetUid = typeof req.query.uid === 'string' ? req.query.uid.trim() : '';
     const targetPlatRaw = typeof req.query.plat === 'string' ? req.query.plat.trim() : '';
     const targetPlat = targetPlatRaw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const rawIsGensetParam = typeof req.query.isGenset === 'string' ? req.query.isGenset.trim().toLowerCase() : '';
+    const filterIsGenset: boolean | undefined =
+      rawIsGensetParam === 'true' ? true : rawIsGensetParam === 'false' ? false : undefined;
 
     if (!targetUid && !targetPlat) {
       return res.status(400).json({
@@ -154,11 +166,14 @@ usageRouter.get('/', requireFirebaseAuth, async (req, res) => {
       const bbmRecords = usageCache.all.filter(item => {
         if (!item.isBBM) return false;
         const itemPlat = String(item.platNomorKendaraan || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-        return itemPlat === targetPlat;
+        if (itemPlat !== targetPlat) return false;
+        if (filterIsGenset !== undefined && Boolean(item.isGenset) !== filterIsGenset) return false;
+        return true;
       });
       return res.json({
         success: true,
         plat: targetPlat,
+        isGenset: filterIsGenset,
         count: bbmRecords.length,
         data: bbmRecords
       });

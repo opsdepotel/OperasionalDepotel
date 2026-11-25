@@ -47,6 +47,7 @@ export interface OfflineActivityItem {
   keterangan: string;
   jenisKendaraan?: string;
   platNomor?: string;
+  isBackup?: boolean;
   indikasiFake?: boolean;
   fakeReason?: string;
   userEmail: string;
@@ -605,6 +606,7 @@ export async function saveOfflineActivityLog(
     keterangan: string;
     jenisKendaraan?: string;
     platNomor?: string;
+    isBackup?: boolean;
     indikasiFake?: boolean;
     fakeReason?: string;
     userEmail: string;
@@ -635,6 +637,7 @@ export async function saveOfflineActivityLog(
     keterangan: data.keterangan,
     jenisKendaraan: data.jenisKendaraan || '',
     platNomor: (data.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+    isBackup: data.isBackup,
     indikasiFake: data.indikasiFake,
     fakeReason: data.fakeReason,
     userEmail: data.userEmail,

@@ -40,6 +40,21 @@ export function invalidateServiceAccountToken(): void {
 }
 
 /**
+ * Returns true if no Service Account token is cached or it is within 2 minutes of expiry.
+ */
+export function isServiceAccountTokenExpired(): boolean {
+  return !cachedServiceToken || cachedTokenExpiry <= Date.now() + 120000;
+}
+
+/**
+ * Returns true only if a Service Account token WAS previously fetched and is now within 2 minutes of expiry.
+ * Safe to use before Google API calls without interfering with personal OAuth tokens.
+ */
+export function isServiceAccountTokenStale(): boolean {
+  return Boolean(cachedServiceToken) && cachedTokenExpiry <= Date.now() + 120000;
+}
+
+/**
  * Retrieves a valid OAuth token from the Service Account backend.
  * Automatically caches for up to 50 minutes before requesting a fresh one.
  * Deduplicates simultaneous calls to prevent duplicate token requests.

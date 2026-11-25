@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
 import { initAuth, logout, isGoogleTokenExpired, isPersonalGoogleSession } from './lib/firebase';
-import { fetchServiceAccountToken } from './lib/serviceAccountClient';
+import { fetchServiceAccountToken, isServiceAccountTokenExpired } from './lib/serviceAccountClient';
 import { resolveStrictDepotelToken, uploadReceiptFileStrictDepotel } from './lib/photoMigration';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
@@ -38,6 +38,7 @@ import {
   updateBudgetRequest,
   createUsageItem,
   updateUsageItem,
+  batchUpdateUsageItems,
   deleteUsageItem,
   deleteBudgetRequest,
   saveUserProfile,
@@ -1060,7 +1061,9 @@ export default function App() {
 
     const checkTokenStatus = async () => {
       if (token) {
-        const expired = isGoogleTokenExpired();
+        const expired = isPersonalGoogleSession()
+          ? isGoogleTokenExpired()
+          : isServiceAccountTokenExpired();
         if (expired) {
           try {
             const saData = await fetchServiceAccountToken(true);
@@ -1082,10 +1085,23 @@ export default function App() {
     };
   }, [token]);
 
-  // When auth completes, load spreadsheet & data
+  // Guards to prevent silent hourly token rotations or back-to-back login calls from triggering redundant full syncs
+  const loadedForUserKeyRef = useRef<string | null>(null);
+  const inFlightSyncPromiseRef = useRef<Promise<UserProfile[]> | null>(null);
+  const lastSyncCompletedAtRef = useRef<number>(0);
+
+  // When auth completes for a new session/user, load spreadsheet & data once (silent token rotation does not re-trigger)
   useEffect(() => {
+    if (!user) {
+      loadedForUserKeyRef.current = null;
+      return;
+    }
     if (token && user) {
-      initializeDatabaseAndLoad(!!spreadsheetId);
+      const userKey = user.uid || user.email || 'authenticated';
+      if (loadedForUserKeyRef.current !== userKey) {
+        loadedForUserKeyRef.current = userKey;
+        initializeDatabaseAndLoad(!!spreadsheetId);
+      }
     }
   }, [token, user]);
 
@@ -1096,53 +1112,7 @@ export default function App() {
     }
   }, [userProfile]);
 
-  // Lightweight live sync of Users table from Google Sheets whenever user returns to app tab (0ms backend CPU)
-  const lastProfilesRefreshRef = useRef<number>(0);
-  useEffect(() => {
-    if (!token || !spreadsheetId) return;
-
-    const refreshProfilesLive = async () => {
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-      const now = Date.now();
-      if (now - lastProfilesRefreshRef.current < 15000) return;
-      lastProfilesRefreshRef.current = now;
-
-      try {
-        const freshProfiles = await fetchProfiles(token, spreadsheetId);
-        if (!freshProfiles || freshProfiles.length === 0) return;
-
-        setProfiles(freshProfiles);
-        safeSetJson('op_app_cached_profiles', freshProfiles);
-        setUserProfile(prev => {
-          if (!prev) return prev;
-          const prevEmail = (prev.email || '').trim().toLowerCase();
-          const prevUid = (prev.userId || '').trim().toLowerCase();
-          const matchedFresh = freshProfiles.find(p =>
-            (prevEmail && p.email && p.email.trim().toLowerCase() === prevEmail) ||
-            (prevUid && p.userId && p.userId.trim().toLowerCase() === prevUid)
-          );
-          if (!matchedFresh) return prev;
-          return matchedFresh;
-        });
-      } catch (err) {
-        console.warn('[ProfilesLiveSync] Background refresh skipped:', err);
-      }
-    };
-
-    const handleVisibilityOrFocus = () => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-        refreshProfilesLive();
-      }
-    };
-
-    window.addEventListener('focus', handleVisibilityOrFocus);
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-    return () => {
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-    };
-  }, [token, spreadsheetId]);
+  // Users!A1:Z is intentionally refreshed only during login and manual/initial refresh (no focus/visibilitychange polling)
 
   // Helper to safely format IDR currency for notifications and workflows
   const formatIDRValue = (num: any) => {
@@ -1360,17 +1330,23 @@ export default function App() {
     }
   };
 
-  const syncAllData = async (accessToken: string, sheetId: string, forceRefresh = false) => {
-    try {
-      const {
-        requests: allReqs,
-        usageItems: allItems,
-        profiles: allProfs,
-        sites: allSites,
-        activities: allActs,
-        resetDeviceLogs: allResetLogs,
-        itemReviewHistories: allHistories
-      } = await fetchAllDatabaseTables(accessToken, sheetId, forceRefresh);
+  const syncAllData = async (accessToken: string, sheetId: string, forceRefresh = false): Promise<UserProfile[]> => {
+    // Deduplicate concurrent non-forced syncAllData calls (e.g. initial load + login overlapping)
+    if (!forceRefresh && inFlightSyncPromiseRef.current) {
+      return inFlightSyncPromiseRef.current;
+    }
+
+    const runSync = (async (): Promise<UserProfile[]> => {
+      try {
+        const {
+          requests: allReqs,
+          usageItems: allItems,
+          profiles: allProfs,
+          sites: allSites,
+          activities: allActs,
+          resetDeviceLogs: allResetLogs,
+          itemReviewHistories: allHistories
+        } = await fetchAllDatabaseTables(accessToken, sheetId, forceRefresh);
 
       // Pre-index item nominal sums by requestId in O(I) single pass
       const itemNominalSumByReqId = new Map<string, number>();
@@ -1531,11 +1507,18 @@ export default function App() {
           }
         }
       }
+      lastSyncCompletedAtRef.current = Date.now();
       return mergedProfs;
     } catch (err: any) {
       console.error('syncAllData error:', err);
       throw err;
+    } finally {
+      inFlightSyncPromiseRef.current = null;
     }
+    })();
+
+    inFlightSyncPromiseRef.current = runSync;
+    return runSync;
   };
 
   const handleManualRefresh = async () => {
@@ -2011,6 +1994,7 @@ export default function App() {
     // 1. Clear DIOMS user session (Server-Signed Token & Local identity)
     clearStoredSession();
     setUserProfile(null);
+    lastSyncCompletedAtRef.current = 0;
 
     // 2. Clear volatile user-specific state & form memory
     setSelectedRequest(null);
@@ -2046,6 +2030,8 @@ export default function App() {
   const handleResetGoogleConnection = async () => {
     await logout();
     clearStoredSession();
+    loadedForUserKeyRef.current = null;
+    lastSyncCompletedAtRef.current = 0;
     setUser(null);
     setToken(null);
     setNeedsAuth(true);
@@ -2232,13 +2218,19 @@ export default function App() {
 
       let syncedProfiles: UserProfile[] = updatedProfs;
       if (currentToken && sheetId) {
-        try {
-          const freshSyncedProfs = await syncAllData(currentToken, sheetId);
-          if (freshSyncedProfs && freshSyncedProfs.length > 0) {
-            syncedProfiles = freshSyncedProfs;
+        const syncedJustNow =
+          Date.now() - lastSyncCompletedAtRef.current < 5000 &&
+          updatedProfs.length > 0 &&
+          requests.length > 0;
+        if (!syncedJustNow) {
+          try {
+            const freshSyncedProfs = await syncAllData(currentToken, sheetId);
+            if (freshSyncedProfs && freshSyncedProfs.length > 0) {
+              syncedProfiles = freshSyncedProfs;
+            }
+          } catch (syncErr) {
+            console.warn('Background sync on login encountered an error, continuing locally:', syncErr);
           }
-        } catch (syncErr) {
-          console.warn('Background sync on login encountered an error, continuing locally:', syncErr);
         }
       }
 
@@ -3562,6 +3554,7 @@ export default function App() {
       keterangan: string;
       jenisKendaraan?: string;
       platNomor?: string;
+      isBackup?: boolean;
       indikasiFake?: boolean;
       fakeReason?: string;
     },
@@ -3637,7 +3630,8 @@ export default function App() {
       indikasiFake: activityData.indikasiFake ?? false,
       fakeReason: activityData.fakeReason || '',
       jenisKendaraan: activityData.jenisKendaraan || '',
-      platNomor: (activityData.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+      platNomor: (activityData.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+      isBackup: activityData.isBackup
     };
 
     try {
@@ -3852,6 +3846,7 @@ export default function App() {
 
     const reviewResult = await runGoogleAction(async () => {
       const updatedItemsMap = new Map<string, UsageReportItem>();
+      const itemsToBatchUpdate: UsageReportItem[] = [];
       for (const dec of itemDecisions) {
         const original = targetItems.find(i => i.id === dec.itemId);
         if (original) {
@@ -3863,7 +3858,7 @@ export default function App() {
             adminComment: !isManager ? dec.comment : original.adminComment,
             updatedAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
           };
-          await updateUsageItem(currentToken, currentSheetId, updatedItem);
+          itemsToBatchUpdate.push(updatedItem);
           updatedItemsMap.set(updatedItem.id, updatedItem);
 
           const actionType = isManager
@@ -3890,6 +3885,10 @@ export default function App() {
             buktiUrl: original.buktiUrl
           });
         }
+      }
+
+      if (itemsToBatchUpdate.length > 0) {
+        await batchUpdateUsageItems(currentToken, currentSheetId, itemsToBatchUpdate);
       }
 
       if (historyLogs.length > 0) {

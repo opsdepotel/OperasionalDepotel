@@ -70,6 +70,7 @@ export interface UsageReportItem {
   timestamp?: string;
   isBBM?: boolean;
   platNomorKendaraan?: string;
+  isGenset?: boolean;
 }
 
 export interface UserProfile {
@@ -120,6 +121,8 @@ export interface UserActivity {
   // Kendaraan Operasional (Google Sheet Activity columns T & U)
   jenisKendaraan?: string;
   platNomor?: string;
+  // Jenis Kegiatan MBP (Google Sheet Activity column V: IsBackup)
+  isBackup?: boolean;
 }
 
 export interface ResetDeviceLog {

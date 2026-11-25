@@ -63,6 +63,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   activities = []
 }) => {
   const todayStr = getTodayDateStr();
+  const normalizedUserSubDivisi = (userProfile?.subDivisi || '').trim().toUpperCase();
+  const isMbpUser = userProfile?.role === Role.USER && normalizedUserSubDivisi === 'MBP';
 
   // Status pembatasan pengajuan bagi User Murni (> 1 UID belum dilaporkan)
   const userMurniStatus = useMemo(() => {
@@ -121,6 +123,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   const [itemNominal, setItemNominal] = useState<string>('');
   const [itemKeterangan, setItemKeterangan] = useState<string>('');
   const [itemIsBBM, setItemIsBBM] = useState<boolean>(false);
+  const [itemBbmMbpType, setItemBbmMbpType] = useState<'GENSET' | 'PICKUP' | null>(null);
   const [itemPlatNomorKendaraan, setItemPlatNomorKendaraan] = useState<string>('');
   const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -248,12 +251,14 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
       const hasNominal = parsedItemAmount > 0;
       const hasKeterangan = !!itemKeterangan.trim();
       const hasProof = !!selectedFile;
+      const hasBbmMbpTypeIfNeeded = !isMbpUser || !itemIsBBM || itemBbmMbpType !== null;
       const hasPlatIfBbm = !itemIsBBM || cleanedItemPlatNomor.length > 0;
 
-      if (!hasNominal || !hasKeterangan || !hasProof || !hasPlatIfBbm) {
+      if (!hasNominal || !hasKeterangan || !hasProof || !hasBbmMbpTypeIfNeeded || !hasPlatIfBbm) {
         let reasons: string[] = [];
         if (!hasNominal) reasons.push('Nominal pengeluaran (> Rp 0)');
         if (!hasKeterangan) reasons.push('Keterangan / Uraian nota');
+        if (!hasBbmMbpTypeIfNeeded) reasons.push('Jenis BBM (wajib pilih salah satu: BBM Genset atau BBM Pickup)');
         if (!hasPlatIfBbm) reasons.push('Plat Nomor Kendaraan (wajib karena Pengisian BBM dicentang)');
         if (!hasProof) reasons.push('Foto bukti nota / kuitansi pembayaran');
 
@@ -333,7 +338,8 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
           updatedAt: timestamp,
           timestamp: timestamp,
           isBBM: itemIsBBM,
-          platNomorKendaraan: cleanedItemPlatNomor
+          platNomorKendaraan: cleanedItemPlatNomor,
+          isGenset: isMbpUser ? Boolean(itemIsBBM && itemBbmMbpType === 'GENSET') : undefined
         };
       }
 
@@ -813,6 +819,7 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                       const checked = e.target.checked;
                       setItemIsBBM(checked);
                       if (!checked) {
+                        setItemBbmMbpType(null);
                         setItemPlatNomorKendaraan('');
                       }
                       if (error) setError(null);
@@ -824,6 +831,63 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                     <span className="text-xs font-bold text-slate-700">Pengisian BBM</span>
                   </div>
                 </label>
+
+                {/* Opsi BBM Genset / BBM Pickup dalam satu badge - Khusus ROLE USER SubDivisi MBP */}
+                {isMbpUser && itemIsBBM && (
+                  <div className="bg-white border border-amber-200/90 rounded-xl p-2.5 space-y-2 animate-fade-in">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        JENIS BBM <span className="text-rose-500">*</span>
+                      </span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                        Wajib pilih salah satu
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label
+                        htmlFor="talangan-first-item-bbm-genset-checkbox"
+                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer select-none transition-all ${
+                          itemBbmMbpType === 'GENSET'
+                            ? 'bg-amber-50/80 border-amber-300 text-amber-900'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                        }`}
+                      >
+                        <input
+                          id="talangan-first-item-bbm-genset-checkbox"
+                          type="checkbox"
+                          checked={itemBbmMbpType === 'GENSET'}
+                          onChange={(e) => {
+                            setItemBbmMbpType(e.target.checked ? 'GENSET' : null);
+                            if (error) setError(null);
+                          }}
+                          className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                        />
+                        <span className="text-xs font-bold">BBM Genset</span>
+                      </label>
+
+                      <label
+                        htmlFor="talangan-first-item-bbm-pickup-checkbox"
+                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer select-none transition-all ${
+                          itemBbmMbpType === 'PICKUP'
+                            ? 'bg-indigo-50/80 border-indigo-300 text-indigo-900'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                        }`}
+                      >
+                        <input
+                          id="talangan-first-item-bbm-pickup-checkbox"
+                          type="checkbox"
+                          checked={itemBbmMbpType === 'PICKUP'}
+                          onChange={(e) => {
+                            setItemBbmMbpType(e.target.checked ? 'PICKUP' : null);
+                            if (error) setError(null);
+                          }}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                        />
+                        <span className="text-xs font-bold">BBM Pickup</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
 
                 {itemIsBBM && (
                   <div className="space-y-1.5 pt-1 animate-fade-in">

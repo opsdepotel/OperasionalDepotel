@@ -14,7 +14,7 @@ import {
   dataURLtoFile,
   OfflineActivityItem
 } from '../lib/offlineReportStorage';
-import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone, Wifi, WifiOff, CloudOff, Send, Trash2, CheckCircle2, HardDrive, Car } from 'lucide-react';
+import { Calendar, MapPin, Camera, ChevronLeft, Plus, Image as ImageIcon, Loader2, RefreshCw, Compass, ExternalLink, AlertTriangle, AlertCircle, AlertOctagon, User, Filter, Building2, Search, X, Sparkles, ShieldCheck, ShieldAlert, Monitor, ZoomIn, ZoomOut, RotateCcw, UploadCloud, Smartphone, Wifi, WifiOff, CloudOff, Send, Trash2, CheckCircle2, HardDrive, Car, Zap } from 'lucide-react';
 
 
 import { detectFakeGps, recordGpsFixSample, PreviousActivityReference } from '../lib/fakeGpsDetector';
@@ -22,7 +22,7 @@ import { isMobileDevice } from '../lib/deviceUtils';
 import { validateCapturedActivityPhoto, ActivityPhotoCaptureSource } from '../lib/activityPhotoValidator';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
-import { requestAiScreenRecapture } from '../lib/aiRecapture';
+import { requestAiScreenRecapture, isTransientFailedAiResult } from '../lib/aiRecapture';
 import { ActivityLogMapContainer } from './ActivityLogMapContainer';
 import { AdminManualActivityModal, ManualActivitySubmitData } from './AdminManualActivityModal';
 
@@ -76,6 +76,7 @@ interface ActivityLogViewProps {
     keterangan: string;
     jenisKendaraan?: string;
     platNomor?: string;
+    isBackup?: boolean;
     indikasiFake?: boolean;
     fakeReason?: string;
   }, photoFile?: File) => Promise<void>;
@@ -97,6 +98,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   onBack
 }) => {
   const currentRole = role || userProfile?.role || Role.USER;
+  const normalizedUserSubDivisi = (userProfile?.subDivisi || '').trim().toUpperCase();
+  const isMbpUser = currentRole === Role.USER && normalizedUserSubDivisi === 'MBP';
   const isMobileUser = userProfile?.mobile === true ||
     String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
     String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
@@ -191,6 +194,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       keterangan: string;
       jenisKendaraan?: string;
       platNomor?: string;
+      isBackup?: boolean;
       indikasiFake?: boolean;
       fakeReason?: string;
     },
@@ -232,6 +236,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
             keterangan: item.keterangan,
             jenisKendaraan: item.jenisKendaraan,
             platNomor: item.platNomor,
+            isBackup: item.isBackup,
             indikasiFake: item.indikasiFake,
             fakeReason: item.fakeReason
           },
@@ -416,7 +421,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     }
     const finalConfidence = conf ?? (isRecapture ? 95 : isSuspicious ? 70 : 98);
 
-    return {
+    const builtResult: AiRecaptureResult = {
       isRecapture,
       confidence: finalConfidence,
       verdict: standardVerdict,
@@ -437,6 +442,12 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
           : 'Foto bukti terverifikasi valid dan tersimpan di database.',
       checkedAt: act.aiRecaptureCheckedAt
     };
+
+    if (isTransientFailedAiResult(builtResult)) {
+      return null;
+    }
+
+    return builtResult;
   };
 
   const resetPhotoModal = () => {
@@ -489,8 +500,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     setAiAnalysisError(null);
 
     // 1. If result is already saved in database or cached state and not forcing re-analysis, load immediately without calling AI API!
+    // Ignore legacy poisoned ECONNRESET/Network results (confidence 0) so Admin gets a real fresh AI analysis.
     const existingResult = getAiRecaptureResult(act);
-    if (existingResult && !forceReanalyze) {
+    if (existingResult && !isTransientFailedAiResult(existingResult) && !forceReanalyze) {
       if (!aiRecaptureResults[act.id]) {
         setAiRecaptureResults(prev => ({ ...prev, [act.id]: existingResult }));
       }
@@ -506,8 +518,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         [act.id]: newResult,
       }));
 
-      // Automatically persist to Google Sheet Activity database so it won't ever need re-checking
-      if (onUpdateActivity) {
+      // Automatically persist to Google Sheet Activity database only for genuine AI results
+      if (onUpdateActivity && !isTransientFailedAiResult(newResult)) {
         try {
           await onUpdateActivity({
             ...act,
@@ -543,9 +555,12 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [keterangan, setKeterangan] = useState('');
   const [jenisKendaraan, setJenisKendaraan] = useState('');
   const [platNomor, setPlatNomor] = useState('');
+  const [jenisKegiatanMbp, setJenisKegiatanMbp] = useState<'' | 'Backup Power' | 'Non Backup Power'>('');
   const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const isPlatNomorRequired = jenisKendaraan === 'Mobil' || jenisKendaraan === 'Sepeda Motor';
   const isVehicleValid = Boolean(jenisKendaraan) && (!isPlatNomorRequired || sanitizePlatNomor(platNomor).length > 0);
+  const showJenisKegiatanMbp = isMbpUser && jenisKendaraan === 'Mobil';
+  const isJenisKegiatanMbpValid = !showJenisKegiatanMbp || jenisKegiatanMbp === 'Backup Power' || jenisKegiatanMbp === 'Non Backup Power';
   const [originalPhotoFile, setOriginalPhotoFile] = useState<File | null>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -599,6 +614,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     setShowAddForm(false);
     setJenisKendaraan('');
     setPlatNomor('');
+    setJenisKegiatanMbp('');
     setPhotoValidationFlags([]);
     setCapturedGpsSnapshot(null);
     formOpenPositionRef.current = null;
@@ -845,6 +861,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     }
     if (isPlatNomorRequired && !sanitizePlatNomor(platNomor)) {
       setErrorMsg('Wajib mengisi Plat Nomor Kendaraan untuk jenis kendaraan Mobil atau Sepeda Motor.');
+      return;
+    }
+    if (showJenisKegiatanMbp && !jenisKegiatanMbp) {
+      setErrorMsg('Wajib memilih Jenis Kegiatan (Backup Power atau Non Backup Power) terlebih dahulu.');
       return;
     }
     if (!isValidGpsCoordinates(coordinatesActual)) {
@@ -1429,6 +1449,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       inputEl.value = '';
       return;
     }
+    if (showJenisKegiatanMbp && !jenisKegiatanMbp) {
+      setErrorMsg('Wajib memilih Jenis Kegiatan (Backup Power atau Non Backup Power) terlebih dahulu.');
+      inputEl.value = '';
+      return;
+    }
     if (!isValidGpsCoordinates(coordinatesActual)) {
       setErrorMsg('Data koordinat GPS wajib ada sebelum mengambil foto bukti kegiatan. Silakan aktifkan lokasi (GPS) dan klik "Ambil Ulang GPS".');
       inputEl.value = '';
@@ -1546,6 +1571,10 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
       setErrorMsg('Plat Nomor Kendaraan wajib diisi untuk jenis kendaraan Mobil atau Sepeda Motor.');
       return;
     }
+    if (showJenisKegiatanMbp && !jenisKegiatanMbp) {
+      setErrorMsg('Jenis Kegiatan wajib dipilih (Backup Power atau Non Backup Power).');
+      return;
+    }
     if (!photoFile) {
       setErrorMsg('Wajib mengambil foto bukti kegiatan langsung.');
       return;
@@ -1638,6 +1667,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         keterangan: keterangan.trim(),
         jenisKendaraan,
         platNomor: cleanPlatNomor,
+        ...(isMbpUser ? { isBackup: jenisKendaraan === 'Mobil' && jenisKegiatanMbp === 'Backup Power' } : {}),
         indikasiFake: combinedIndikasiFake,
         fakeReason: combinedFakeReason
       };
@@ -1654,6 +1684,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         setKeterangan('');
         setJenisKendaraan('');
         setPlatNomor('');
+        setJenisKegiatanMbp('');
         setOriginalPhotoFile(null);
         setPhotoFile(null);
         setPhotoPreview(null);
@@ -1867,6 +1898,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
     keterangan: q.keterangan,
     jenisKendaraan: q.jenisKendaraan,
     platNomor: q.platNomor,
+    isBackup: q.isBackup,
     buktiUrl: q.photoDataUrl,
     indikasiFake: q.indikasiFake,
     fakeReason: q.fakeReason,
@@ -1953,6 +1985,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
               setKeterangan('');
               setJenisKendaraan('');
               setPlatNomor('');
+              setJenisKegiatanMbp('');
               setOriginalPhotoFile(null);
               setPhotoFile(null);
               setPhotoPreview(null);
@@ -2115,7 +2148,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                     id="activity-jenis-kendaraan-select"
                     value={jenisKendaraan}
                     onChange={(e) => {
-                      setJenisKendaraan(e.target.value);
+                      const nextVehicle = e.target.value;
+                      setJenisKendaraan(nextVehicle);
+                      if (nextVehicle !== 'Mobil') {
+                        setJenisKegiatanMbp('');
+                      }
                       if (errorMsg) setErrorMsg(null);
                     }}
                     disabled={!isGpsReady}
@@ -2195,12 +2232,46 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                 </div>
               </div>
 
+              {/* Jenis Kegiatan - Khusus ROLE USER SubDivisi MBP saat Kendaraan Operasional = Mobil */}
+              {showJenisKegiatanMbp && (
+                <div className="space-y-1.5 bg-slate-50/80 border border-slate-200/80 p-3.5 rounded-2xl">
+                  <label
+                    htmlFor="activity-jenis-kegiatan-mbp-select"
+                    className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5"
+                  >
+                    <Zap className="w-3.5 h-3.5 text-amber-500" />
+                    <span>
+                      JENIS KEGIATAN <span className="text-red-500">*</span>
+                    </span>
+                  </label>
+                  <select
+                    id="activity-jenis-kegiatan-mbp-select"
+                    value={jenisKegiatanMbp}
+                    onChange={(e) => {
+                      setJenisKegiatanMbp(e.target.value as '' | 'Backup Power' | 'Non Backup Power');
+                      if (errorMsg) setErrorMsg(null);
+                    }}
+                    disabled={!isGpsReady}
+                    required
+                    className={`w-full px-3 py-2 border rounded-xl text-xs font-semibold focus:outline-none transition-all ${
+                      !isGpsReady
+                        ? 'bg-slate-100/70 border-slate-200 text-slate-400 cursor-not-allowed'
+                        : 'bg-white border-slate-200 text-slate-800 focus:ring-1 focus:ring-indigo-500'
+                    }`}
+                  >
+                    <option value="">-- Pilih Jenis Kegiatan --</option>
+                    <option value="Backup Power">Backup Power</option>
+                    <option value="Non Backup Power">Non Backup Power</option>
+                  </select>
+                </div>
+              )}
+
               {/* Camera Capture Only input */}
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
                   AMBIL FOTO BUKTI (KAMERA HP LANGSUNG)
                 </label>
-                <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim() || !isVehicleValid || !isGpsReady)) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
+                <div className={`flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl p-4 transition-colors relative ${(!photoPreview && (!selectedSiteId.trim() || !keterangan.trim() || !isJenisKegiatanMbpValid || !isVehicleValid || !isGpsReady)) ? 'bg-slate-100/50 cursor-not-allowed' : 'bg-slate-50 hover:bg-slate-100'}`}>
                   {photoPreview ? (
                     <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-100">
                       <img 
@@ -2223,7 +2294,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         Ulangi Foto
                       </button>
                     </div>
-                  ) : (!selectedSiteId.trim() || !keterangan.trim() || !isVehicleValid || !isGpsReady) ? (
+                  ) : (!selectedSiteId.trim() || !keterangan.trim() || !isJenisKegiatanMbpValid || !isVehicleValid || !isGpsReady) ? (
                     <div className="flex flex-col items-center justify-center py-5 w-full text-slate-400 select-none">
                       <Camera className="w-8 h-8 text-slate-300 mb-2" />
                       <span className="text-xs font-bold text-slate-400">Buka Kamera HP (Terkunci)</span>
@@ -2234,7 +2305,7 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                           </span>
                         ) : (
                           <span>
-                            Silakan isi <strong className="text-slate-500 font-bold">Site ID</strong>, <strong className="text-slate-500 font-bold">Keterangan Kegiatan</strong>, dan <strong className="text-slate-500 font-bold">Kendaraan Operasional</strong> terlebih dahulu untuk mengaktifkan kamera.
+                            Silakan isi <strong className="text-slate-500 font-bold">Site ID</strong>, <strong className="text-slate-500 font-bold">Keterangan Kegiatan</strong>, <strong className="text-slate-500 font-bold">Kendaraan Operasional</strong>{showJenisKegiatanMbp && (<>, dan <strong className="text-slate-500 font-bold">Jenis Kegiatan</strong></>)} terlebih dahulu untuk mengaktifkan kamera.
                           </span>
                         )}
                       </span>
@@ -2832,6 +2903,19 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                                     • {act.platNomor}
                                   </span>
                                 )}
+                              </span>
+                            )}
+                            {currentRole === Role.USER && typeof act.isBackup === 'boolean' && (
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 ${
+                                  act.isBackup
+                                    ? 'text-amber-800 bg-amber-50 border-amber-200'
+                                    : 'text-slate-600 bg-slate-100 border-slate-200'
+                                }`}
+                                title="Jenis Kegiatan MBP"
+                              >
+                                <Zap className={`w-3 h-3 shrink-0 ${act.isBackup ? 'text-amber-500' : 'text-slate-400'}`} />
+                                <span>{act.isBackup ? 'Backup Power' : 'Non Backup Power'}</span>
                               </span>
                             )}
                             {(() => {

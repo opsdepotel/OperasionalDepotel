@@ -4,7 +4,12 @@
  */
 
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from '../types';
-import { uploadReceiptViaServiceAccount, fetchServiceAccountToken, invalidateServiceAccountToken } from './serviceAccountClient';
+import {
+  uploadReceiptViaServiceAccount,
+  fetchServiceAccountToken,
+  invalidateServiceAccountToken,
+  isServiceAccountTokenStale
+} from './serviceAccountClient';
 import { getStoredSessionToken } from './sessionClient';
 
 const originalFetch = window.fetch;
@@ -19,23 +24,43 @@ async function executeFetch(
   const id = setTimeout(() => controller.abort(), timeout);
 
   try {
+    const resourceUrl = typeof resource === 'string' ? resource : (resource as any)?.url || '';
+    const isGoogleApiCall = resourceUrl.includes('googleapis.com');
+    const isGetOrRead = !restOptions.method || restOptions.method.toUpperCase() === 'GET';
+    let effectiveOptions: RequestInit = restOptions;
+
+    // Proactively refresh an expiring Service Account token BEFORE calling Google API to eliminate 401 errors
+    if (isGoogleApiCall && isServiceAccountTokenStale()) {
+      try {
+        const fresh = await fetchServiceAccountToken(false);
+        if (fresh && fresh.token) {
+          const updatedHeaders = new Headers(restOptions.headers || {});
+          if (updatedHeaders.has('Authorization')) {
+            updatedHeaders.set('Authorization', `Bearer ${fresh.token}`);
+            effectiveOptions = { ...restOptions, headers: updatedHeaders };
+          }
+        }
+      } catch (proactiveErr) {
+        console.warn('[GoogleAPI] Proactive token refresh skipped:', proactiveErr);
+      }
+    }
+
     let response = await originalFetch(resource, {
-      ...restOptions,
+      ...effectiveOptions,
       signal: controller.signal
     });
 
     // Auto-recovery for Google API 401 Unauthorized (Expired / stale access token)
-    const resourceUrl = typeof resource === 'string' ? resource : (resource as any)?.url || '';
-    if (response.status === 401 && resourceUrl.includes('googleapis.com')) {
+    if (response.status === 401 && isGoogleApiCall) {
       console.warn('[GoogleAPI] Request returned 401 Unauthorized. Auto-refreshing token from server...');
       invalidateServiceAccountToken();
       try {
         const fresh = await fetchServiceAccountToken(true);
         if (fresh && fresh.token) {
-          const newHeaders = new Headers(restOptions.headers || {});
+          const newHeaders = new Headers(effectiveOptions.headers || {});
           newHeaders.set('Authorization', `Bearer ${fresh.token}`);
           response = await originalFetch(resource, {
-            ...restOptions,
+            ...effectiveOptions,
             headers: newHeaders,
             signal: controller.signal
           });
@@ -43,6 +68,15 @@ async function executeFetch(
       } catch (tokenRefreshErr) {
         console.warn('[GoogleAPI] Auto-refresh retry failed:', tokenRefreshErr);
       }
+    }
+
+    // Gentle jittered retry once on transient 429 / 503 for idempotent GET requests
+    if (isGoogleApiCall && isGetOrRead && (response.status === 429 || response.status === 503) && attempt < 1) {
+      const backoffMs = 1500 + Math.floor(Math.random() * 500);
+      console.warn(`[GoogleAPI] HTTP ${response.status} on GET, retrying once in ${backoffMs}ms...`);
+      clearTimeout(id);
+      await new Promise((r) => setTimeout(r, backoffMs));
+      return executeFetch(resource, options, attempt + 1);
     }
 
     return response;
@@ -133,7 +167,7 @@ const LAPORAN_HEADERS = [
   'BuktiUrl', 'BuktiFileId', 'StatusManager', 'ManagerComment',
   'StatusAdmin', 'AdminComment', 'UpdatedAt',
   'Timestamp',
-  'IsBBM', 'PlatNomorKendaraan'
+  'IsBBM', 'PlatNomorKendaraan', 'IsGenset'
 ];
 
 const USERS_HEADERS = [
@@ -145,7 +179,8 @@ const ACTIVITY_HEADERS = [
   'IndikasiFake', 'FakeReason',
   'AiRecaptureVerdict', 'AiRecaptureConfidence', 'AiRecaptureSummary', 'AiRecaptureIndicators', 'AiRecaptureCheckedAt',
   'Timestamp',
-  'JenisKendaraan', 'PlatNomor'
+  'JenisKendaraan', 'PlatNomor',
+  'IsBackup'
 ];
 
 const RESET_DEVICE_LOG_HEADERS = [
@@ -297,6 +332,17 @@ function mapToUsageItem(row: Record<string, any>): UsageReportItem {
     (Array.isArray(row._rawRow) && row._rawRow.length > 14 ? row._rawRow[14] : '');
   const platNomorKendaraan = String(rawPlat ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+  const rawIsGenset =
+    row.IsGenset ?? row.isGenset ?? row['Is Genset'] ??
+    (Array.isArray(row._rawRow) && row._rawRow.length > 15 ? row._rawRow[15] : '');
+  const isGensetStr = String(rawIsGenset ?? '').trim().toUpperCase();
+  const isGenset: boolean | undefined =
+    rawIsGenset === true || isGensetStr === 'TRUE' || isGensetStr === 'YA' || isGensetStr === 'YES' || isGensetStr === '1'
+      ? true
+      : rawIsGenset === false || isGensetStr === 'FALSE' || isGensetStr === 'TIDAK' || isGensetStr === 'NO' || isGensetStr === '0'
+        ? false
+        : undefined;
+
   return {
     id: String(row.ItemUID || row.itemUid || row.ItemID || row.id || ''),
     requestId: String(row.UID || row.uid || row.requestId || ''),
@@ -312,7 +358,8 @@ function mapToUsageItem(row: Record<string, any>): UsageReportItem {
     updatedAt: String(row.UpdatedAt || row.updatedAt || ''),
     timestamp: ts,
     isBBM,
-    platNomorKendaraan
+    platNomorKendaraan,
+    isGenset
   };
 }
 
@@ -494,6 +541,16 @@ function mapToUserActivity(row: Record<string, any>): UserActivity {
     ts = createdAtVal || (rawRow.length >= 19 && rawRow[18] ? String(rawRow[18]).trim() : '');
   }
 
+  const rawIsBackup =
+    getVal('IsBackup', 'isBackup', 'Is Backup') ||
+    (rawRow.length >= 22 && rawRow[21] !== undefined && rawRow[21] !== null ? String(rawRow[21]).trim() : '');
+  const isBackupVal: boolean | undefined =
+    rawIsBackup.toUpperCase() === 'TRUE'
+      ? true
+      : rawIsBackup.toUpperCase() === 'FALSE'
+        ? false
+        : undefined;
+
   return {
     id: getVal('ActivityID', 'activityId', 'id', 'Activity ID'),
     userEmail: getVal('UserEmail', 'userEmail', 'Email', 'User Email'),
@@ -522,7 +579,8 @@ function mapToUserActivity(row: Record<string, any>): UserActivity {
       (
         getVal('PlatNomor', 'platNomor', 'Plat Nomor') ||
         (rawRow.length >= 21 && rawRow[20] ? String(rawRow[20]).trim() : '')
-      ).toUpperCase() || undefined
+      ).toUpperCase() || undefined,
+    isBackup: isBackupVal
   };
 }
 
@@ -719,9 +777,9 @@ export async function ensureSheetsAndHeaders(token: string, sheetId: string): Pr
     // Set headers only for newly added sheets
     const headerMap: Record<string, { range: string; values: string[][] }> = {
       Pengajuan: { range: 'Pengajuan!A1:Q1', values: [PENGAJUAN_HEADERS] },
-      Laporan: { range: 'Laporan!A1:O1', values: [LAPORAN_HEADERS] },
+      Laporan: { range: 'Laporan!A1:P1', values: [LAPORAN_HEADERS] },
       Users: { range: 'Users!A1:N1', values: [USERS_HEADERS] },
-      Activity: { range: 'Activity!A1:U1', values: [ACTIVITY_HEADERS] },
+      Activity: { range: 'Activity!A1:V1', values: [ACTIVITY_HEADERS] },
       ResetDeviceLog: { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
       ItemReviewHistory: { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
     };
@@ -1164,15 +1222,23 @@ export async function uploadReceiptFile(
         console.warn('Could not set public permission on Drive file:', permErr);
       }
 
-      // Fetch file metadata to get webViewLink
-      const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true&fields=webViewLink`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      const metaData = await metaRes.json().catch(() => ({}));
+      // Reuse webViewLink already returned by upload response (saves 1 Drive API call per upload)
+      let resolvedViewUrl: string = uploadData.webViewLink || '';
+      if (!resolvedViewUrl && fileId) {
+        try {
+          const metaRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true&fields=webViewLink`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const metaData = await metaRes.json().catch(() => ({}));
+          resolvedViewUrl = metaData.webViewLink || '';
+        } catch {
+          // Fallback to canonical Drive link below
+        }
+      }
 
       return {
         fileId,
-        viewUrl: metaData.webViewLink || `https://drive.google.com/file/d/${fileId}/view`
+        viewUrl: resolvedViewUrl || `https://drive.google.com/file/d/${fileId}/view`
       };
     } else {
       const errText = await uploadRes.text();
@@ -1583,6 +1649,7 @@ export function getAllCachedClosedUsageItems(): UsageReportItem[] {
 
 export async function fetchBbmUsageItemsByPlate(
   platNomor: string,
+  isGenset?: boolean,
   spreadsheetId: string = SPREADSHEET_ID
 ): Promise<UsageReportItem[]> {
   const cleanPlat = String(platNomor || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -1594,8 +1661,9 @@ export async function fetchBbmUsageItemsByPlate(
   }
 
   try {
+    const isGensetQuery = typeof isGenset === 'boolean' ? `&isGenset=${isGenset ? 'true' : 'false'}` : '';
     const res = await fetch(
-      `/api/laporan?plat=${encodeURIComponent(cleanPlat)}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`,
+      `/api/laporan?plat=${encodeURIComponent(cleanPlat)}${isGensetQuery}&spreadsheetId=${encodeURIComponent(spreadsheetId)}`,
       {
         headers: { Authorization: `Bearer ${sessionToken}` }
       }
@@ -1894,6 +1962,10 @@ export async function fetchAllDatabaseTables(
       throw new Error('[HTTP 401] Request had invalid authentication credentials.');
     }
 
+    if (res.status === 429) {
+      throw new Error('[HTTP 429] Batas antrean permintaan Google Sheets sementara tercapai. Silakan tunggu beberapa detik lalu coba sinkron ulang.');
+    }
+
     if (res.ok) {
       const data = await res.json();
       const valueRanges: { range: string; values?: any[][] }[] = data.valueRanges || [];
@@ -1933,7 +2005,7 @@ export async function fetchAllDatabaseTables(
       };
     }
   } catch (batchErr: any) {
-    if (batchErr.message && batchErr.message.includes('401')) {
+    if (batchErr.message && (batchErr.message.includes('401') || batchErr.message.includes('429'))) {
       throw batchErr;
     }
     console.warn('[batchGet] batchGet encountered an issue, falling back to parallel fetch:', batchErr);
@@ -2385,7 +2457,8 @@ export async function createUsageItem(token: string, spreadsheetId: string, item
     UpdatedAt: item.updatedAt || nowTimestamp,
     Timestamp: nowTimestamp,
     IsBBM: item.isBBM ? 'TRUE' : 'FALSE',
-    PlatNomorKendaraan: cleanPlatNomor
+    PlatNomorKendaraan: cleanPlatNomor,
+    IsGenset: item.isGenset === true ? 'TRUE' : item.isGenset === false ? 'FALSE' : ''
   });
 
   let appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A1:append?valueInputOption=USER_ENTERED`, {
@@ -2468,10 +2541,11 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
     UpdatedAt: item.updatedAt || nowTimestamp,
     Timestamp: nowTimestamp,
     IsBBM: item.isBBM ? 'TRUE' : 'FALSE',
-    PlatNomorKendaraan: cleanPlatNomor
+    PlatNomorKendaraan: cleanPlatNomor,
+    IsGenset: item.isGenset === true ? 'TRUE' : item.isGenset === false ? 'FALSE' : ''
   });
 
-  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:O${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A${sheetRowIdx}:P${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -2484,6 +2558,119 @@ export async function updateUsageItem(token: string, spreadsheetId: string, item
 
   if (!updateRes.ok) {
     throw new Error('Gagal mengupdate item laporan.');
+  }
+}
+
+// Batch Update multiple Laporan Items using 1 read + 1 values:batchUpdate request (saves 2*(N-1) API calls)
+export async function batchUpdateUsageItems(
+  token: string,
+  spreadsheetId: string,
+  items: UsageReportItem[]
+): Promise<void> {
+  if (!items || items.length === 0) return;
+  if (items.length === 1) {
+    return updateUsageItem(token, spreadsheetId, items[0]);
+  }
+
+  if (token === 'mock_demo_token') {
+    const list = getMockData<UsageReportItem[]>('mock_db_laporan', []);
+    const byId = new Map(items.map(it => [it.id, it]));
+    const updatedList = list.map(existing => byId.get(existing.id) || existing);
+    setMockData('mock_db_laporan', updatedList);
+    return;
+  }
+
+  // 1. Read Laporan!A:A once to build an exact ItemUID -> 1-based sheet row map
+  const colARes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Laporan!A:A`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (colARes.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
+  if (!colARes.ok) {
+    throw new Error('Gagal membaca daftar baris laporan untuk batch update.');
+  }
+
+  const colAData = await colARes.json();
+  const colARows: any[][] = colAData.values || [];
+  const rowIndexMap = new Map<string, number>();
+
+  for (let i = 1; i < colARows.length; i++) {
+    const cellId = String(colARows[i]?.[0] || '').trim().toLowerCase();
+    if (cellId) {
+      rowIndexMap.set(cellId, i);
+    }
+  }
+
+  const batchData: Array<{ range: string; values: any[][] }> = [];
+  const unmatchedItems: UsageReportItem[] = [];
+
+  for (const item of items) {
+    const foundRowIdx = rowIndexMap.get(String(item.id || '').trim().toLowerCase());
+    if (foundRowIdx === undefined) {
+      unmatchedItems.push(item);
+      continue;
+    }
+
+    const nowTimestamp = item.timestamp ? formatTimestamp(item.timestamp) : formatTimestamp(new Date());
+    item.timestamp = nowTimestamp;
+
+    const sheetRowIdx = foundRowIdx + 1;
+    const cleanPlatNomor = item.isBBM
+      ? String(item.platNomorKendaraan || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+      : '';
+
+    const rowData = objectToRow(LAPORAN_HEADERS, {
+      ItemUID: item.id,
+      UID: item.requestId,
+      TanggalPenggunaan: item.tanggalPenggunaan,
+      Nominal: item.nominal,
+      Keterangan: item.keterangan,
+      BuktiUrl: sanitizeBuktiUrlForSheets(item.buktiUrl),
+      BuktiFileId: item.buktiFileId,
+      StatusManager: item.statusManager,
+      ManagerComment: item.managerComment,
+      StatusAdmin: item.statusAdmin,
+      AdminComment: item.adminComment,
+      UpdatedAt: item.updatedAt || nowTimestamp,
+      Timestamp: nowTimestamp,
+      IsBBM: item.isBBM ? 'TRUE' : 'FALSE',
+      PlatNomorKendaraan: cleanPlatNomor,
+      IsGenset: item.isGenset === true ? 'TRUE' : item.isGenset === false ? 'FALSE' : ''
+    });
+
+    batchData.push({
+      range: `Laporan!A${sheetRowIdx}:P${sheetRowIdx}`,
+      values: [rowData]
+    });
+  }
+
+  // 2. Commit all matched rows atomically in 1 batchUpdate call
+  if (batchData.length > 0) {
+    const batchRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          valueInputOption: 'USER_ENTERED',
+          data: batchData
+        })
+      }
+    );
+
+    if (!batchRes.ok) {
+      throw new Error('Gagal menyimpan batch update item laporan ke Google Sheets.');
+    }
+  }
+
+  // 3. Fallback individually only for any item whose ID wasn't in column A
+  for (const unmatched of unmatchedItems) {
+    await updateUsageItem(token, spreadsheetId, unmatched);
   }
 }
 
@@ -2640,7 +2827,8 @@ export async function createUserActivity(token: string, spreadsheetId: string, a
     AiRecaptureCheckedAt: activity.aiRecaptureCheckedAt || '',
     Timestamp: nowTimestamp,
     JenisKendaraan: activity.jenisKendaraan || '',
-    PlatNomor: (activity.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    PlatNomor: (activity.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+    IsBackup: activity.isBackup === true ? 'TRUE' : activity.isBackup === false ? 'FALSE' : ''
   });
 
   const appendRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:append?valueInputOption=USER_ENTERED`, {
@@ -2672,28 +2860,40 @@ export async function updateUserActivity(token: string, spreadsheetId: string, a
     return;
   }
 
-  // Ensure headers if row 1 does not have the 21 columns (A..U)
+  // Ensure headers once per session if row 1 does not have the 22 columns (A..V)
+  const activityHeaderSessionKey = `op_activity_headers_verified_v2_${spreadsheetId}`;
+  let activityHeadersAlreadyVerified = false;
   try {
-    const headerCheckRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:U1`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (headerCheckRes.ok) {
-      const headerData = await headerCheckRes.json();
-      const existingHeaders = headerData.values?.[0] || [];
-      const hasVerdictHeader = existingHeaders.some((h: any) => String(h).toLowerCase().includes('recapture') || String(h).toLowerCase().includes('verdict'));
-      if (!hasVerdictHeader || existingHeaders.length < ACTIVITY_HEADERS.length) {
-        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:U1?valueInputOption=USER_ENTERED`, {
-          method: 'PUT',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ values: [ACTIVITY_HEADERS] })
-        });
+    activityHeadersAlreadyVerified =
+      typeof sessionStorage !== 'undefined' && sessionStorage.getItem(activityHeaderSessionKey) === 'true';
+  } catch {}
+
+  if (!activityHeadersAlreadyVerified) {
+    try {
+      const headerCheckRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:V1`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (headerCheckRes.ok) {
+        const headerData = await headerCheckRes.json();
+        const existingHeaders = headerData.values?.[0] || [];
+        const hasVerdictHeader = existingHeaders.some((h: any) => String(h).toLowerCase().includes('recapture') || String(h).toLowerCase().includes('verdict'));
+        if (!hasVerdictHeader || existingHeaders.length < ACTIVITY_HEADERS.length) {
+          await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A1:V1?valueInputOption=USER_ENTERED`, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ values: [ACTIVITY_HEADERS] })
+          });
+        }
+        try {
+          sessionStorage.setItem(activityHeaderSessionKey, 'true');
+        } catch {}
       }
+    } catch (headerErr) {
+      console.warn('Could not auto-verify Activity headers:', headerErr);
     }
-  } catch (headerErr) {
-    console.warn('Could not auto-verify Activity headers:', headerErr);
   }
 
   const rowIdx = await findRowIndexFast(
@@ -2735,10 +2935,11 @@ export async function updateUserActivity(token: string, spreadsheetId: string, a
     AiRecaptureCheckedAt: activity.aiRecaptureCheckedAt || '',
     Timestamp: nowTimestamp,
     JenisKendaraan: activity.jenisKendaraan || '',
-    PlatNomor: (activity.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+    PlatNomor: (activity.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+    IsBackup: activity.isBackup === true ? 'TRUE' : activity.isBackup === false ? 'FALSE' : ''
   });
 
-  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A${sheetRowIdx}:U${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
+  const updateRes = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Activity!A${sheetRowIdx}:V${sheetRowIdx}?valueInputOption=USER_ENTERED`, {
     method: 'PUT',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -2961,23 +3162,30 @@ export async function saveUserProfile(token: string, spreadsheetId: string, prof
     return;
   }
 
-  const profiles = await fetchProfiles(token, spreadsheetId);
+  // Read Users!A1:N once to obtain both existing row index, push subscriptions, and preserved password cell
+  const usersRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!A1:N`,
+    {
+      cache: 'no-store',
+      headers: { Authorization: `Bearer ${token}` }
+    }
+  );
+  if (usersRes.status === 401) {
+    throw new Error('[HTTP 401] Token Google API expired atau tidak valid.');
+  }
+  if (!usersRes.ok) {
+    throw new Error(`[Google Sheets HTTP ${usersRes.status}] Gagal membaca tabel Users untuk penyimpanan profil.`);
+  }
+  const usersData = await usersRes.json();
+  const rawUserRows: any[][] = usersData.values || [];
+  const profiles = parseSheetRows<UserProfile>(USERS_HEADERS, rawUserRows, mapToUserProfile);
   const existingIdx = profiles.findIndex(p => p.email.toLowerCase() === profile.email.toLowerCase());
 
   let finalPassword = profile.password ? profile.password.trim() : '';
   if (!finalPassword && existingIdx !== -1) {
-    try {
-      const sheetRowIdx = existingIdx + 2;
-      const cellRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Users!B${sheetRowIdx}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (cellRes.ok) {
-        const cellData = await cellRes.json();
-        finalPassword = (cellData.values?.[0]?.[0] || '').trim();
-      }
-    } catch (e) {
-      console.warn('Could not read existing password cell from sheet:', e);
+    const rawRow = rawUserRows[existingIdx + 1];
+    if (rawRow && rawRow[1] !== undefined) {
+      finalPassword = String(rawRow[1]).trim();
     }
   }
 

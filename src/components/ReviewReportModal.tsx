@@ -313,9 +313,14 @@ export const ReviewReportModal: React.FC<ReviewReportModalProps> = ({
                     <h4 className="text-xs font-bold text-slate-800">{item.keterangan}</h4>
                     <p className="text-[10px] text-slate-500 font-medium">Tanggal: {item.tanggalPenggunaan} | Nominal: <strong>{formatIDR(item.nominal)}</strong></p>
                     {item.isBBM && (
-                      <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200/80 text-[10px] font-bold text-amber-800">
+                      <div className="inline-flex items-center flex-wrap gap-1.5 mt-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200/80 text-[10px] font-bold text-amber-800">
                         <Fuel className="w-3 h-3 text-amber-600 shrink-0" />
                         <span>Pengisian BBM</span>
+                        {(role === Role.MANAGER || role === Role.FINANCE) && typeof item.isGenset === 'boolean' && (
+                          <span className="bg-amber-100/80 text-amber-900 px-1.5 py-0.2 rounded border border-amber-200">
+                            {item.isGenset ? 'BBM Genset' : 'BBM Pickup'}
+                          </span>
+                        )}
                         {item.platNomorKendaraan && (
                           <span className="font-mono bg-white px-1.5 py-0.2 rounded border border-amber-200 text-slate-800">
                             {item.platNomorKendaraan}

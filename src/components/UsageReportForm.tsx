@@ -108,6 +108,9 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   onSyncOffline,
   isSyncingOffline = false
 }) => {
+  const normalizedUserSubDivisi = (userProfile?.subDivisi || '').trim().toUpperCase();
+  const isMbpUser = role === Role.USER && normalizedUserSubDivisi === 'MBP';
+
   // Extract and match site IDs from request.siteId. Format is "XXXNNN" (3 letters, 3 digits)
   const siteIdRegex = /[A-Za-z]{3}\d{3}/g;
   const regexMatches = request.siteId.match(siteIdRegex) || [];
@@ -384,6 +387,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
   const [nominal, setNominal] = useState('');
   const [keterangan, setKeterangan] = useState('');
   const [isBBM, setIsBBM] = useState(false);
+  const [bbmMbpType, setBbmMbpType] = useState<'GENSET' | 'PICKUP' | null>(null);
   const [platNomorKendaraan, setPlatNomorKendaraan] = useState('');
   const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -495,6 +499,10 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       setActionError('Keterangan penggunaan wajib diisi.');
       return;
     }
+    if (isMbpUser && isBBM && !bbmMbpType) {
+      setActionError('Wajib memilih salah satu opsi: BBM Genset atau BBM Pickup.');
+      return;
+    }
     const cleanedPlatNomor = isBBM ? sanitizePlatNomor(platNomorKendaraan) : '';
     if (isBBM && !cleanedPlatNomor) {
       setActionError('Plat Nomor Kendaraan wajib diisi jika Pengisian BBM dicentang.');
@@ -528,6 +536,10 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
 
       const timestamp = formatTimestamp(new Date());
 
+      const resolvedIsGenset: boolean | undefined = isMbpUser
+        ? Boolean(isBBM && bbmMbpType === 'GENSET')
+        : editingItem?.isGenset;
+
       setSavingStep('Menyimpan item ke database...');
       if (editingItem) {
         // Update existing item
@@ -545,7 +557,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           adminComment: '',
           updatedAt: timestamp,
           isBBM,
-          platNomorKendaraan: cleanedPlatNomor
+          platNomorKendaraan: cleanedPlatNomor,
+          isGenset: resolvedIsGenset
         };
         await onUpdateItem(updated);
         setEditingItem(null);
@@ -565,7 +578,8 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
           adminComment: '',
           updatedAt: timestamp,
           isBBM,
-          platNomorKendaraan: cleanedPlatNomor
+          platNomorKendaraan: cleanedPlatNomor,
+          isGenset: resolvedIsGenset
         };
         await onAddItem(newItem);
       }
@@ -578,6 +592,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
       setNominal('');
       setKeterangan('');
       setIsBBM(false);
+      setBbmMbpType(null);
       setPlatNomorKendaraan('');
       setSelectedFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -609,6 +624,15 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     setNominal(String(item.nominal));
     setKeterangan(item.keterangan);
     setIsBBM(Boolean(item.isBBM));
+    setBbmMbpType(
+      isMbpUser && item.isBBM
+        ? item.isGenset === true
+          ? 'GENSET'
+          : item.isGenset === false
+            ? 'PICKUP'
+            : null
+        : null
+    );
     setPlatNomorKendaraan(item.isBBM ? sanitizePlatNomor(item.platNomorKendaraan || '') : '');
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -623,6 +647,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
     setNominal('');
     setKeterangan('');
     setIsBBM(false);
+    setBbmMbpType(null);
     setPlatNomorKendaraan('');
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -915,9 +940,14 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                         {item.tanggalPenggunaan}
                       </p>
                       {item.isBBM && (
-                        <div className="inline-flex items-center gap-1.5 mt-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200/80 text-[10px] font-bold text-amber-800">
+                        <div className="inline-flex items-center flex-wrap gap-1.5 mt-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200/80 text-[10px] font-bold text-amber-800">
                           <Fuel className="w-3 h-3 text-amber-600 shrink-0" />
                           <span>Pengisian BBM</span>
+                          {(role === Role.USER || role === Role.MANAGER || role === Role.FINANCE) && typeof item.isGenset === 'boolean' && (
+                            <span className="bg-amber-100/80 text-amber-900 px-1.5 py-0.2 rounded border border-amber-200">
+                              {item.isGenset ? 'BBM Genset' : 'BBM Pickup'}
+                            </span>
+                          )}
                           {item.platNomorKendaraan && (
                             <span className="font-mono bg-white px-1.5 py-0.2 rounded border border-amber-200 text-slate-800">
                               {item.platNomorKendaraan}
@@ -1246,6 +1276,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                 setNominal('');
                 setKeterangan('');
                 setIsBBM(false);
+                setBbmMbpType(null);
                 setPlatNomorKendaraan('');
                 setSelectedFile(null);
                 setActionError(null);
@@ -1543,6 +1574,7 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                       const checked = e.target.checked;
                       setIsBBM(checked);
                       if (!checked) {
+                        setBbmMbpType(null);
                         setPlatNomorKendaraan('');
                       }
                       if (actionError) setActionError(null);
@@ -1554,6 +1586,63 @@ export const UsageReportForm: React.FC<UsageReportFormProps> = ({
                     <span className="text-xs font-bold text-slate-700">Pengisian BBM</span>
                   </div>
                 </label>
+
+                {/* Opsi BBM Genset / BBM Pickup dalam satu badge - Khusus ROLE USER SubDivisi MBP */}
+                {isMbpUser && isBBM && (
+                  <div className="bg-white border border-amber-200/90 rounded-xl p-2.5 space-y-2 animate-fade-in">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        JENIS BBM <span className="text-red-500">*</span>
+                      </span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">
+                        Wajib pilih salah satu
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label
+                        htmlFor="usage-bbm-genset-checkbox"
+                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer select-none transition-all ${
+                          bbmMbpType === 'GENSET'
+                            ? 'bg-amber-50/80 border-amber-300 text-amber-900'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                        }`}
+                      >
+                        <input
+                          id="usage-bbm-genset-checkbox"
+                          type="checkbox"
+                          checked={bbmMbpType === 'GENSET'}
+                          onChange={(e) => {
+                            setBbmMbpType(e.target.checked ? 'GENSET' : null);
+                            if (actionError) setActionError(null);
+                          }}
+                          className="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer accent-amber-600"
+                        />
+                        <span className="text-xs font-bold">BBM Genset</span>
+                      </label>
+
+                      <label
+                        htmlFor="usage-bbm-pickup-checkbox"
+                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer select-none transition-all ${
+                          bbmMbpType === 'PICKUP'
+                            ? 'bg-indigo-50/80 border-indigo-300 text-indigo-900'
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                        }`}
+                      >
+                        <input
+                          id="usage-bbm-pickup-checkbox"
+                          type="checkbox"
+                          checked={bbmMbpType === 'PICKUP'}
+                          onChange={(e) => {
+                            setBbmMbpType(e.target.checked ? 'PICKUP' : null);
+                            if (actionError) setActionError(null);
+                          }}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+                        />
+                        <span className="text-xs font-bold">BBM Pickup</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
 
                 {isBBM && (
                   <div className="space-y-1.5 pt-1 animate-fade-in">

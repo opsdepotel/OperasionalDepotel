@@ -276,26 +276,58 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
     }
   }, [logs]);
 
-  // Load saved progress from localStorage on mount
+  // Load saved progress from localStorage on mount (with self-healing for legacy stale totals)
   useEffect(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY_MIGRATION_PROGRESS);
       if (raw) {
         const saved = JSON.parse(raw);
-        if (saved.totalDbFiles) setTotalDbFiles(saved.totalDbFiles);
-        if (saved.processedDbFiles) setProcessedDbFiles(saved.processedDbFiles);
-        if (saved.migratedCount) setMigratedCount(saved.migratedCount);
-        if (saved.failedCount) setFailedCount(saved.failedCount);
-        if (saved.updatedCellsCount) setUpdatedCellsCount(saved.updatedCellsCount);
-        if (Array.isArray(saved.remainingDbQueue)) setRemainingDbQueue(saved.remainingDbQueue);
-        if (Array.isArray(saved.orphanedQueue)) setOrphanedQueue(saved.orphanedQueue);
-        if (saved.archivedOrphanCount) setArchivedOrphanCount(saved.archivedOrphanCount);
+        const savedRemaining = Array.isArray(saved.remainingDbQueue) ? saved.remainingDbQueue : [];
+        const savedOrphans = Array.isArray(saved.orphanedQueue) ? saved.orphanedQueue : [];
+        const rawTotal = Number(saved.totalDbFiles) || 0;
+        const rawProcessed = Number(saved.processedDbFiles) || 0;
+        const rawMigrated = Number(saved.migratedCount) || 0;
+
+        const normalizedTotal = Math.max(
+          rawTotal,
+          rawProcessed,
+          rawMigrated,
+          rawMigrated + savedRemaining.length
+        );
+        const normalizedProcessed = Math.min(normalizedTotal, Math.max(rawProcessed, rawMigrated));
+        const normalizedMigrated = Math.min(normalizedTotal, rawMigrated);
+
+        if (normalizedTotal > 0) setTotalDbFiles(normalizedTotal);
+        if (normalizedProcessed > 0) setProcessedDbFiles(normalizedProcessed);
+        if (normalizedMigrated > 0) setMigratedCount(normalizedMigrated);
+        if (saved.failedCount) setFailedCount(Number(saved.failedCount) || 0);
+        if (saved.updatedCellsCount) setUpdatedCellsCount(Number(saved.updatedCellsCount) || 0);
+        setRemainingDbQueue(savedRemaining);
+        setOrphanedQueue(savedOrphans);
+        if (saved.archivedOrphanCount) setArchivedOrphanCount(Number(saved.archivedOrphanCount) || 0);
+
+        if (
+          normalizedTotal !== rawTotal ||
+          normalizedProcessed !== rawProcessed ||
+          normalizedMigrated !== rawMigrated
+        ) {
+          localStorage.setItem(
+            STORAGE_KEY_MIGRATION_PROGRESS,
+            JSON.stringify({
+              ...saved,
+              totalDbFiles: normalizedTotal,
+              processedDbFiles: normalizedProcessed,
+              migratedCount: normalizedMigrated
+            })
+          );
+        }
       }
     } catch {}
   }, []);
 
-  // Save progress helper
+  // Save progress helper (always accepts explicit totalDb to prevent stale closure values)
   const saveProgress = (
+    totalDb: number,
     processed: number,
     migrated: number,
     failed: number,
@@ -305,12 +337,15 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
     archivedOrphans: number
   ) => {
     try {
+      const safeTotal = Math.max(totalDb, processed, migrated, migrated + remaining.length);
+      const safeProcessed = Math.min(safeTotal, Math.max(processed, migrated));
+      const safeMigrated = Math.min(safeTotal, migrated);
       localStorage.setItem(
         STORAGE_KEY_MIGRATION_PROGRESS,
         JSON.stringify({
-          totalDbFiles,
-          processedDbFiles: processed,
-          migratedCount: migrated,
+          totalDbFiles: safeTotal,
+          processedDbFiles: safeProcessed,
+          migratedCount: safeMigrated,
           failedCount: failed,
           updatedCellsCount: cells,
           remainingDbQueue: remaining,
@@ -320,6 +355,37 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
         })
       );
     } catch {}
+  };
+
+  // Sync UI counters & localStorage directly from live OwnershipAuditResult
+  const syncCountersFromAudit = (
+    res: OwnershipAuditResult,
+    currentFailed = failedCount,
+    currentCells = updatedCellsCount,
+    currentArchivedOrphans = archivedOrphanCount
+  ) => {
+    const db = res.database;
+    const nextTotal = db.totalUniqueFiles;
+    const nextVerified = db.verifiedFilesCount;
+    const nextRemaining = Array.isArray(db.unmigratedFileIds) ? db.unmigratedFileIds : [];
+    const nextOrphans = Array.isArray(res.orphanedList) ? res.orphanedList.map((o) => o.id) : [];
+
+    setTotalDbFiles(nextTotal);
+    setProcessedDbFiles(nextVerified);
+    setMigratedCount(nextVerified);
+    setRemainingDbQueue(nextRemaining);
+    setOrphanedQueue(nextOrphans);
+
+    saveProgress(
+      nextTotal,
+      nextVerified,
+      nextVerified,
+      currentFailed,
+      currentCells,
+      nextRemaining,
+      nextOrphans,
+      currentArchivedOrphans
+    );
   };
 
   // Formatters & helpers for detailed inspection
@@ -485,7 +551,16 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
       }
       addLog(`• Foto yatim lama di Drive (bukan milik depotel & siap backup): ${(res.orphanedFileIds || []).length.toLocaleString()} file`, 'warn');
 
-      saveProgress(alreadyDone, alreadyDone, 0, 0, res.dbFileIds, res.orphanedFileIds || [], 0);
+      saveProgress(
+        res.totalDbFiles,
+        alreadyDone,
+        alreadyDone,
+        0,
+        0,
+        res.dbFileIds,
+        res.orphanedFileIds || [],
+        0
+      );
     } catch (err: any) {
       const msg = err.message || 'Gagal memindai database foto.';
       setScanError(msg);
@@ -502,6 +577,7 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
     try {
       const res = await verifyOwnershipAudit();
       setAuditResult(res);
+      syncCountersFromAudit(res);
       const db = res.database;
       addLog(`Hasil Verifikasi Total Database: ${db.percentage}% file unik (${db.verifiedFilesCount.toLocaleString()} dari ${db.totalUniqueFiles.toLocaleString()}) sudah sah merujuk ke file kepemilikan depotel@vgd4.my.id!`, 'success');
       if (db.unmigratedFilesCount > 0) {
@@ -523,18 +599,20 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
       return;
     }
 
-    const queueToRun = overrideQueue || remainingDbQueue;
+    const safeOverrideQueue = Array.isArray(overrideQueue) ? overrideQueue : undefined;
+    const queueToRun = safeOverrideQueue || remainingDbQueue;
     if (queueToRun.length === 0) {
       if (totalDbFiles === 0) {
         await handleScan();
+        return;
       } else {
         addLog('Seluruh file dalam antrean database sudah selesai dimigrasikan.', 'info');
         return;
       }
     }
 
-    if (overrideQueue && overrideQueue.length > 0) {
-      setRemainingDbQueue(overrideQueue);
+    if (safeOverrideQueue && safeOverrideQueue.length > 0) {
+      setRemainingDbQueue(safeOverrideQueue);
       if (auditResult) {
         setTotalDbFiles(auditResult.database.totalUniqueFiles);
         setProcessedDbFiles(auditResult.database.verifiedFilesCount);
@@ -575,8 +653,13 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
     addLog(`Identitas token terkonfirmasi sah: ${tokenInfo.email}. Memulai duplikasi...`, 'success');
 
     let currentQueue = [...queueToRun];
-    let currentProcessed = overrideQueue && auditResult ? auditResult.database.verifiedFilesCount : processedDbFiles;
-    let currentMigrated = overrideQueue && auditResult ? auditResult.database.verifiedFilesCount : migratedCount;
+    let currentProcessed = safeOverrideQueue && auditResult ? auditResult.database.verifiedFilesCount : processedDbFiles;
+    let currentMigrated = safeOverrideQueue && auditResult ? auditResult.database.verifiedFilesCount : migratedCount;
+    const currentTotalDb =
+      safeOverrideQueue && auditResult
+        ? auditResult.database.totalUniqueFiles
+        : Math.max(totalDbFiles, currentProcessed + currentQueue.length, currentMigrated + currentQueue.length);
+    setTotalDbFiles(currentTotalDb);
     let currentFailed = failedCount;
     let currentCells = updatedCellsCount;
 
@@ -651,6 +734,7 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
       setRemainingDbQueue(currentQueue);
 
       saveProgress(
+        currentTotalDb,
         currentProcessed,
         currentMigrated,
         currentFailed,
@@ -669,9 +753,12 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
     setIsRunning(false);
     if (currentQueue.length === 0) {
       addLog('Selesai! Seluruh foto aktif di database berhasil diduplikasi menjadi milik depotel@vgd4.my.id.', 'success');
-      // Auto-refresh verification audit
+      // Auto-refresh verification audit & sync summary counters
       verifyOwnershipAudit()
-        .then(res => setAuditResult(res))
+        .then(res => {
+          setAuditResult(res);
+          syncCountersFromAudit(res, currentFailed, currentCells, archivedOrphanCount);
+        })
         .catch(() => {});
     } else if (!shouldContinueRef.current) {
       addLog('Proses migrasi dijeda oleh Administrator.', 'warn');
@@ -731,6 +818,7 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
             addLog(`Memindahkan batch: ${res.movedCount} file yatim dipindahkan (Sisa antrean: ${currentOrphans.length}).`, 'info');
 
             saveProgress(
+              totalDbFiles,
               processedDbFiles,
               migratedCount,
               failedCount,
@@ -775,6 +863,7 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
     setUpdatedCellsCount(0);
     setArchivedOrphanCount(0);
     setScanResult(null);
+    setAuditResult(null);
     setLogs([]);
     addLog('Riwayat lokal di-reset. Silakan tekan Mulai Pindai Audit.', 'info');
   };
@@ -810,7 +899,7 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
             <div className="flex justify-between items-center text-xs">
               <span className="font-medium text-slate-600 flex items-center gap-1.5">
                 <FileImage className="w-4 h-4 text-indigo-500" />
-                <span>Foto Aktif Database: <strong>{processedDbFiles}</strong> dari <strong>{totalDbFiles}</strong> ({progressPercent}%)</span>
+                <span>Foto Aktif Database: <strong>{processedDbFiles.toLocaleString()}</strong> dari <strong>{totalDbFiles.toLocaleString()}</strong> ({progressPercent}%)</span>
               </span>
               <span className="text-[11px] font-bold text-emerald-600">
                 {migratedCount} selesai dialihkan
@@ -1258,7 +1347,7 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
                       <button
                         type="button"
                         disabled={isScanning || isArchivingOrphans || (totalDbFiles > 0 && remainingDbQueue.length === 0)}
-                        onClick={startMigration}
+                        onClick={() => startMigration()}
                         className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-100 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <Play className="w-3.5 h-3.5" />
@@ -1274,7 +1363,7 @@ export const AdminPhotoMigrationCard: React.FC<AdminPhotoMigrationCardProps> = (
                     <div className="flex justify-between items-center text-[11px] text-slate-600">
                       <span>Progres Duplikasi Foto Aktif:</span>
                       <span className="font-bold text-indigo-700">
-                        {processedDbFiles} / {totalDbFiles} ({progressPercent}%)
+                        {processedDbFiles.toLocaleString()} / {totalDbFiles.toLocaleString()} ({progressPercent}%)
                       </span>
                     </div>
                     <div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden">

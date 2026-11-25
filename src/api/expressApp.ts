@@ -1,5 +1,5 @@
 import express from 'express';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
@@ -78,8 +78,8 @@ export function writeServerConfig(newConfig: Partial<ServerAppConfig>): ServerAp
 }
 
 let aiClient: GoogleGenAI | null = null;
-function getGenAI(): GoogleGenAI {
-  if (!aiClient) {
+function getGenAI(forceFresh = false): GoogleGenAI {
+  if (!aiClient || forceFresh) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       throw new Error('GEMINI_API_KEY environment variable is missing.');
@@ -90,7 +90,6 @@ function getGenAI(): GoogleGenAI {
         headers: {
           'User-Agent': 'aistudio-build',
         },
-        timeout: 90000,
       },
     });
   }
@@ -119,15 +118,17 @@ async function fetchImageAsBase64(
         headers: {
           Authorization: `Bearer ${googleAccessToken}`,
         },
+        signal: AbortSignal.timeout(8000),
       });
       if (metaRes.ok) {
         const metaData = await metaRes.json().catch(() => null);
         if (metaData?.thumbnailLink) {
-          const thumbUrl = metaData.thumbnailLink.replace(/=s\d+/, '=s1280');
+          const thumbUrl = metaData.thumbnailLink.replace(/=s\d+/, '=s1024');
           const thumbRes = await fetch(thumbUrl, {
             headers: {
               Authorization: `Bearer ${googleAccessToken}`,
             },
+            signal: AbortSignal.timeout(8000),
           });
           if (thumbRes.ok) {
             const contentType = (thumbRes.headers.get('content-type') || '').toLowerCase();
@@ -148,6 +149,7 @@ async function fetchImageAsBase64(
         headers: {
           Authorization: `Bearer ${googleAccessToken}`,
         },
+        signal: AbortSignal.timeout(10000),
       });
       if (driveRes.ok) {
         const contentType = (driveRes.headers.get('content-type') || '').toLowerCase();
@@ -168,8 +170,8 @@ async function fetchImageAsBase64(
   const candidateUrls: string[] = [];
   if (fileId && !fileId.includes('/')) {
     candidateUrls.push(
-      `https://lh3.googleusercontent.com/d/${fileId}=w1200`,
-      `https://drive.google.com/thumbnail?sz=w1200&id=${fileId}`,
+      `https://lh3.googleusercontent.com/d/${fileId}=w1024`,
+      `https://drive.google.com/thumbnail?sz=w1024&id=${fileId}`,
       `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`
     );
   }
@@ -191,6 +193,7 @@ async function fetchImageAsBase64(
             'Accept': 'image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
           },
           redirect: 'follow',
+          signal: AbortSignal.timeout(8000),
         });
         if (res.ok) {
           const contentType = (res.headers.get('content-type') || '').toLowerCase();
@@ -208,18 +211,46 @@ async function fetchImageAsBase64(
       } catch (err: any) {
         lastFetchErr = err;
         if (attempts < 2) {
-          await new Promise((r) => setTimeout(r, 400));
+          await new Promise((r) => setTimeout(r, 350));
         }
       }
     }
   }
 
-  // If public thumbnail URLs failed, try downloading directly using Service Account if available
+  // If public thumbnail URLs failed, try downloading via Service Account (lightweight thumbnailLink first, then alt=media)
   if (fileId && !fileId.includes('/')) {
     try {
       const auth = getServiceAccountAuth();
       if (auth) {
         const drive = google.drive({ version: 'v3', auth });
+
+        // Try lightweight thumbnailLink first to avoid multi-MB payloads that trigger ECONNRESET
+        try {
+          const metaRes = await drive.files.get({ fileId, fields: 'thumbnailLink' });
+          const rawThumb = metaRes.data?.thumbnailLink;
+          if (rawThumb) {
+            const thumbUrl = rawThumb.replace(/=s\d+/, '=s1024');
+            const saAccessToken = (await auth.getAccessToken())?.token;
+            const thumbRes = await fetch(thumbUrl, {
+              headers: saAccessToken ? { Authorization: `Bearer ${saAccessToken}` } : undefined,
+              signal: AbortSignal.timeout(8000),
+            });
+            if (thumbRes.ok) {
+              const contentType = (thumbRes.headers.get('content-type') || '').toLowerCase();
+              const arrayBuffer = await thumbRes.arrayBuffer();
+              const buffer = Buffer.from(arrayBuffer);
+              if (buffer.length > 200) {
+                return {
+                  base64: buffer.toString('base64'),
+                  mimeType: contentType.split(';')[0].trim() || 'image/jpeg',
+                };
+              }
+            }
+          }
+        } catch (saThumbErr) {
+          console.warn('Service Account thumbnail fetch failed, falling back to alt=media:', saThumbErr);
+        }
+
         const res = await drive.files.get(
           { fileId, alt: 'media' },
           { responseType: 'arraybuffer' }
@@ -337,12 +368,13 @@ expressApp.use('/api/push', pushRouter);
 expressApp.use('/push', pushRouter);
 
 // AI Screen Recapture & Spoofing Detection Endpoint
-expressApp.post('/api/ai/check-screen-recapture', async (req, res) => {
+const handleCheckScreenRecapture = async (req: express.Request, res: express.Response) => {
   try {
     const { imageBase64, imageUrl, fileId, googleAccessToken, activityInfo } = req.body;
 
     if (!imageBase64 && !imageUrl && !fileId) {
       return res.status(400).json({
+        success: false,
         error: 'Parameter gambar (imageBase64, imageUrl, atau fileId) wajib disertakan.',
       });
     }
@@ -365,7 +397,7 @@ expressApp.post('/api/ai/check-screen-recapture', async (req, res) => {
       mimeType = fetched.mimeType;
     }
 
-    const ai = getGenAI();
+    let ai = getGenAI();
 
     const prompt = `Anda adalah seorang ahli forensik digital spesialis Deteksi Pemalsuan & Foto Ulang Layar (Screen Recapture / Spoofing Detection) untuk audit kegiatan operasional lapangan.
 
@@ -385,40 +417,25 @@ ${activityInfo ? `Informasi Kegiatan yang Dilaporkan: ${JSON.stringify(activityI
 Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
 
     const candidateModels = [
+      'gemini-4-hydrogen',
       'gemini-3.1-flash-lite',
-      'gemini-flash-latest',
-      'gemini-3.8-flash',
     ];
     let response: any = null;
     let lastModelError: any = null;
+    const attemptErrors: string[] = [];
 
     for (const modelName of candidateModels) {
       let attempts = 0;
-      const maxAttempts = 3;
+      const maxAttempts = modelName === 'gemini-4-hydrogen' ? 3 : 2;
 
       while (attempts < maxAttempts) {
         try {
           attempts++;
-          response = await ai.models.generateContent({
-            model: modelName,
-            contents: {
-              parts: [
-                {
-                  inlineData: {
-                    data: base64Data,
-                    mimeType: mimeType || 'image/jpeg',
-                  },
-                },
-                {
-                  text: prompt,
-                },
-              ],
-            },
-            config: {
-              responseMimeType: 'application/json',
-              responseSchema: {
-                type: Type.OBJECT,
-                properties: {
+          const modelConfig: Record<string, any> = {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
                   isRecapture: {
                     type: Type.BOOLEAN,
                     description: 'True jika terindikasi kuat/sedang merupakan foto dari layar digital (recapture/spoofing). False jika foto langsung di objek fisik nyata.',
@@ -451,7 +468,28 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
                 },
                 required: ['isRecapture', 'confidence', 'verdict', 'summary', 'indicators', 'recommendation'],
               },
+          };
+
+          if (modelName === 'gemini-4-hydrogen') {
+            modelConfig.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+          }
+
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents: {
+              parts: [
+                {
+                  inlineData: {
+                    data: base64Data,
+                    mimeType: mimeType || 'image/jpeg',
+                  },
+                },
+                {
+                  text: prompt,
+                },
+              ],
             },
+            config: modelConfig,
           });
 
           if (response && response.text) {
@@ -459,24 +497,44 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
           }
         } catch (modelErr: any) {
           lastModelError = modelErr;
-          const errMsg = String(modelErr?.message || '') + ' ' + String(modelErr?.cause || '');
-          const isTransient = 
-            errMsg.includes('503') || 
-            errMsg.includes('UNAVAILABLE') || 
-            errMsg.includes('high demand') || 
-            errMsg.includes('504') || 
-            errMsg.includes('DEADLINE_EXCEEDED') || 
-            errMsg.includes('429') || 
-            errMsg.includes('RESOURCE_EXHAUSTED') || 
-            errMsg.includes('quota') ||
-            errMsg.includes('fetch failed') ||
+          const status = modelErr?.status || '';
+          const causeCode = String(modelErr?.cause?.code || '');
+          const causeMsg = String(modelErr?.cause?.message || modelErr?.cause || '');
+          const errMsg = `${String(modelErr?.message || '')} ${causeCode} ${causeMsg}`;
+          const sanitized = errMsg.replace(/AIza[0-9A-Za-z_-]+/g, '[REDACTED]').slice(0, 180);
+          attemptErrors.push(`${modelName}#${attempts}(${status || causeCode || 'ERR'}): ${sanitized}`);
+          console.warn(
+            `[check-screen-recapture] Model ${modelName} attempt ${attempts}/${maxAttempts} failed:`,
+            sanitized
+          );
+
+          const isSocketReset =
             errMsg.includes('ECONNRESET') ||
+            errMsg.includes('UND_ERR_SOCKET') ||
+            errMsg.includes('fetch failed') ||
             errMsg.includes('ETIMEDOUT') ||
-            errMsg.includes('network') ||
             errMsg.includes('socket');
-          
+
+          if (isSocketReset) {
+            // Re-create client to avoid reusing a stale keep-alive connection
+            ai = getGenAI(true);
+          }
+
+          const isTransient =
+            isSocketReset ||
+            errMsg.includes('503') ||
+            errMsg.includes('UNAVAILABLE') ||
+            errMsg.includes('high demand') ||
+            errMsg.includes('504') ||
+            errMsg.includes('DEADLINE_EXCEEDED') ||
+            errMsg.includes('429') ||
+            errMsg.includes('RESOURCE_EXHAUSTED') ||
+            errMsg.includes('quota') ||
+            errMsg.includes('network');
+
           if (isTransient && attempts < maxAttempts) {
-            await new Promise((r) => setTimeout(r, 1200 * attempts));
+            const backoffMs = 900 * attempts + Math.floor(Math.random() * 400);
+            await new Promise((r) => setTimeout(r, backoffMs));
           } else {
             break;
           }
@@ -489,35 +547,81 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
     }
 
     if (!response || !response.text) {
-      const lastErrMsg = String(lastModelError?.message || '') + ' ' + String(lastModelError?.cause || '');
+      const causeCode = String(lastModelError?.cause?.code || '');
+      const causeMsg = String(lastModelError?.cause?.message || lastModelError?.cause || '');
+      const lastErrMsg = `${String(lastModelError?.message || '')} ${causeCode} ${causeMsg}`;
+
+      if (attemptErrors.length > 0) {
+        console.warn('[check-screen-recapture] All attempts failed:', attemptErrors.join(' | '));
+      }
+
       if (
-        lastErrMsg.includes('503') || 
-        lastErrMsg.includes('UNAVAILABLE') || 
-        lastErrMsg.includes('high demand') ||
-        lastErrMsg.includes('fetch failed') ||
-        lastErrMsg.includes('ECONNRESET')
+        lastErrMsg.includes('API_KEY_INVALID') ||
+        lastErrMsg.includes('PERMISSION_DENIED') ||
+        lastErrMsg.includes('403')
       ) {
-        return res.json({
-          success: true,
-          data: {
-            isRecapture: false,
-            confidence: 0,
-            verdict: 'SUSPICIOUS',
-            summary: 'Koneksi ke server AI terganggu sementara (Network Reset / Busy). Hasil analisis otomatis ditangguhkan. Silakan verifikasi foto secara manual atau klik "Coba Ulang Analisis AI" dalam beberapa detik.',
-            indicators: ['Layanan API AI mengalami koneksi terputus sementara (ECONNRESET/Network)'],
-            reasons: 'Terjadi gangguan jaringan atau antrean server pada API Google Gemini.',
-            recommendation: 'Periksa foto secara manual atau lakukan pengujian ulang.',
-          },
+        // Use HTTP 500 JSON (not 403) so reverse proxy error_page 403 never overwrites JSON with HTML
+        return res.status(500).json({
+          success: false,
+          retryable: false,
+          upstreamStatus: 403,
+          error: 'API Key Gemini tidak valid atau izin akses ditolak (403). Periksa pengaturan GEMINI_API_KEY di panel Settings > Secrets.',
         });
       }
-      throw lastModelError || new Error('Layanan AI sedang sibuk sementara. Silakan coba sesaat lagi.');
+
+      if (
+        lastErrMsg.includes('429') ||
+        lastErrMsg.includes('RESOURCE_EXHAUSTED') ||
+        lastErrMsg.toLowerCase().includes('quota')
+      ) {
+        return res.status(429).json({
+          success: false,
+          retryable: true,
+          upstreamStatus: 429,
+          error: 'Batas kuota API Gemini tercapai (429). Silakan tunggu 30–45 detik lalu klik "Coba Lagi".',
+        });
+      }
+
+      if (
+        lastErrMsg.includes('503') ||
+        lastErrMsg.includes('UNAVAILABLE') ||
+        lastErrMsg.toLowerCase().includes('high demand')
+      ) {
+        // Use HTTP 500 JSON (not 503) so reverse proxy error_page 502/503/504 never overwrites JSON with HTML
+        return res.status(500).json({
+          success: false,
+          retryable: true,
+          upstreamStatus: 503,
+          error: 'Server AI Gemini sedang mengalami lonjakan antrean tinggi sementara (503 High Demand). Hasil tidak disimpan ke database — silakan tunggu beberapa detik lalu klik "Coba Lagi".',
+        });
+      }
+
+      if (
+        lastErrMsg.includes('ECONNRESET') ||
+        lastErrMsg.includes('UND_ERR_SOCKET') ||
+        lastErrMsg.includes('fetch failed') ||
+        lastErrMsg.includes('ETIMEDOUT') ||
+        lastErrMsg.includes('504') ||
+        lastErrMsg.includes('DEADLINE_EXCEEDED') ||
+        lastErrMsg.includes('aborted')
+      ) {
+        // Use HTTP 500 JSON (not 503/504) so reverse proxy error_page never overwrites JSON with HTML
+        return res.status(500).json({
+          success: false,
+          retryable: true,
+          upstreamStatus: 503,
+          error: 'Koneksi ke server AI Gemini terganggu sementara (Network Reset / Timeout). Hasil tidak disimpan ke database — silakan klik "Coba Lagi" beberapa detik lagi.',
+        });
+      }
+
+      throw lastModelError || new Error('Layanan AI tidak mengembalikan hasil analisis. Silakan coba sesaat lagi.');
     }
 
     const resultText = response.text || '{}';
     let parsedResult;
     try {
       parsedResult = JSON.parse(resultText);
-    } catch (parseErr) {
+    } catch {
       parsedResult = {
         isRecapture: false,
         confidence: 50,
@@ -535,7 +639,8 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
   } catch (error: any) {
     console.error('Error in check-screen-recapture:', error);
     let userFacingError = error.message || 'Terjadi kesalahan saat memproses analisis AI Screen Recapture.';
-    
+    let statusCode = 500;
+
     if (typeof userFacingError === 'string' && userFacingError.includes('{')) {
       try {
         const jsonMatch = userFacingError.match(/\{[\s\S]*\}/);
@@ -543,7 +648,8 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
           const parsed = JSON.parse(jsonMatch[0]);
           if (parsed?.error?.message) {
             if (parsed.error.code === 503 || parsed.error.status === 'UNAVAILABLE') {
-              userFacingError = 'Layanan AI sedang mengalami lonjakan antrean server sementara (503). Silakan klik "Coba Lagi" dalam beberapa detik.';
+              statusCode = 500;
+              userFacingError = 'Server AI Gemini sedang mengalami lonjakan antrean tinggi sementara (503 High Demand). Silakan klik "Coba Lagi" dalam beberapa detik.';
             } else {
               userFacingError = parsed.error.message;
             }
@@ -560,16 +666,26 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
       userFacingError.includes('RESOURCE_EXHAUSTED') ||
       userFacingError.toLowerCase().includes('rate limit')
     ) {
+      statusCode = 429;
       userFacingError =
-        'Batas kuota gratis (Rate Limit 429) API Gemini tercapai. Silakan tunggu sekitar 30–45 detik lalu coba lagi.';
+        'Batas kuota (Rate Limit 429) API Gemini tercapai. Silakan tunggu sekitar 30–45 detik lalu coba lagi.';
     }
 
-    return res.status(500).json({
+    // Avoid returning 403/502/503/504 so reverse proxy never intercepts JSON error responses
+    if (statusCode === 403 || statusCode === 502 || statusCode === 503 || statusCode === 504) {
+      statusCode = 500;
+    }
+
+    return res.status(statusCode).json({
       success: false,
+      retryable: statusCode === 500 || statusCode === 429,
       error: userFacingError,
     });
   }
-});
+};
+
+expressApp.post('/api/ai/check-screen-recapture', handleCheckScreenRecapture);
+expressApp.post('/ai/check-screen-recapture', handleCheckScreenRecapture);
 
 // AI BBM Duren Sawit Receipt OCR Check Endpoint
 expressApp.post('/api/ai/check-bbm-receipt', async (req, res) => {
@@ -792,6 +908,14 @@ Berikan respons dalam format JSON dengan struktur persis berikut:
       error: userFacingError,
     });
   }
+});
+
+// Catch-all JSON 404 for unknown /api/* routes so they never fall through to Vite/SPA index.html (Status 200 HTML)
+expressApp.use('/api', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: `Endpoint API tidak ditemukan: ${req.method} ${req.originalUrl}`,
+  });
 });
 
 // Express JSON Error Handler Middleware for /api routes
