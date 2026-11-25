@@ -154,6 +154,22 @@ export interface ItemReviewHistory {
   buktiUrl?: string;
 }
 
+export interface DevicePermissionLog {
+  id: string; // Map to LogID
+  timestamp: string; // YYYY-MM-DD HH:mm:ss
+  userEmail: string;
+  userNama: string;
+  role: Role | string;
+  divisiSubDivisi: string;
+  izinKamera: string;
+  izinLokasi: string;
+  izinNotifikasi: string;
+  semuaDiizinkan: boolean;
+  tipePerangkat: string;
+  infoBrowser: string;
+  userAgent: string;
+}
+
 /**
  * Normalizes any date/timestamp string or Date object into uniform YYYY-MM-DD HH:mm:ss format
  */

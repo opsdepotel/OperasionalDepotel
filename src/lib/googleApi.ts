@@ -5,6 +5,11 @@
 
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from '../types';
 import {
+  DevicePermissionsStatus,
+  getDeviceEnvironmentInfo,
+  buildPermissionLogSignature
+} from './devicePermissions';
+import {
   uploadReceiptViaServiceAccount,
   fetchServiceAccountToken,
   invalidateServiceAccountToken,
@@ -189,6 +194,23 @@ const RESET_DEVICE_LOG_HEADERS = [
 
 const ITEM_REVIEW_HISTORY_HEADERS = [
   'HistoryID', 'ItemUID', 'RequestUID', 'Timestamp', 'ActorRole', 'ActorEmail', 'ActorNama', 'ActionType', 'Status', 'Catatan', 'TanggalPenggunaan', 'Nominal', 'Keterangan', 'BuktiFileId', 'BuktiUrl'
+];
+
+const DEVICE_PERMISSIONS_LOG_SHEET = 'DevicePermissionsLog';
+const DEVICE_PERMISSIONS_LOG_HEADERS = [
+  'LogID',
+  'Timestamp',
+  'UserEmail',
+  'UserNama',
+  'Role',
+  'DivisiSubDivisi',
+  'IzinKamera',
+  'IzinLokasi',
+  'IzinNotifikasi',
+  'SemuaDiizinkan',
+  'TipePerangkat',
+  'InfoBrowser',
+  'UserAgent'
 ];
 
 // Helper to convert sheet rows (2D array) to JSON objects
@@ -754,7 +776,7 @@ export async function ensureSheetsAndHeaders(token: string, sheetId: string): Pr
   const meta = await res.json();
   const sheetTitles = meta.sheets ? meta.sheets.map((s: any) => s.properties.title) : [];
 
-  const requiredSheets = ['Pengajuan', 'Laporan', 'Users', 'Activity', 'ResetDeviceLog', 'ItemReviewHistory'];
+  const requiredSheets = ['Pengajuan', 'Laporan', 'Users', 'Activity', 'ResetDeviceLog', 'ItemReviewHistory', DEVICE_PERMISSIONS_LOG_SHEET];
   const sheetsToAdd = requiredSheets.filter(title => !sheetTitles.includes(title));
 
   if (sheetsToAdd.length > 0) {
@@ -781,7 +803,11 @@ export async function ensureSheetsAndHeaders(token: string, sheetId: string): Pr
       Users: { range: 'Users!A1:N1', values: [USERS_HEADERS] },
       Activity: { range: 'Activity!A1:V1', values: [ACTIVITY_HEADERS] },
       ResetDeviceLog: { range: 'ResetDeviceLog!A1:H1', values: [RESET_DEVICE_LOG_HEADERS] },
-      ItemReviewHistory: { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] }
+      ItemReviewHistory: { range: 'ItemReviewHistory!A1:O1', values: [ITEM_REVIEW_HISTORY_HEADERS] },
+      [DEVICE_PERMISSIONS_LOG_SHEET]: {
+        range: `${DEVICE_PERMISSIONS_LOG_SHEET}!A1:M1`,
+        values: [DEVICE_PERMISSIONS_LOG_HEADERS]
+      }
     };
 
     const headerData = sheetsToAdd
@@ -3476,4 +3502,260 @@ export async function fetchSites(token: string, spreadsheetId: string): Promise<
     return [];
   }
 }
+
+const permLogInFlightKeys = new Set<string>();
+const permLogSheetEnsuredSet = new Set<string>();
+
+function sanitizePermissionSheetCell(value: unknown, maxLen = 250): string {
+  const str = String(value ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, maxLen);
+  if (!str) return '';
+  if (/^[=+\-@]/.test(str)) {
+    return `'${str}`;
+  }
+  return str;
+}
+
+async function ensureDevicePermissionsLogSheet(
+  token: string,
+  spreadsheetId: string
+): Promise<{ ready: boolean; createdNow: boolean }> {
+  if (permLogSheetEnsuredSet.has(spreadsheetId)) {
+    return { ready: true, createdNow: false };
+  }
+
+  try {
+    const metaRes = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`,
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+    if (!metaRes.ok) return { ready: false, createdNow: false };
+
+    const meta = await metaRes.json().catch(() => null);
+    const titles: string[] = Array.isArray(meta?.sheets)
+      ? meta.sheets.map((s: any) => String(s?.properties?.title || ''))
+      : [];
+
+    let createdNow = false;
+    if (!titles.includes(DEVICE_PERMISSIONS_LOG_SHEET)) {
+      const addRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            requests: [{ addSheet: { properties: { title: DEVICE_PERMISSIONS_LOG_SHEET } } }]
+          })
+        }
+      );
+
+      if (!addRes.ok) {
+        const errTxt = await addRes.text().catch(() => '');
+        // Ignore race condition if another tab created the sheet concurrently
+        if (!errTxt.toLowerCase().includes('already exists')) {
+          return { ready: false, createdNow: false };
+        }
+      } else {
+        createdNow = true;
+      }
+
+      await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`${DEVICE_PERMISSIONS_LOG_SHEET}!A1:M1`)}?valueInputOption=RAW`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            values: [DEVICE_PERMISSIONS_LOG_HEADERS]
+          })
+        }
+      );
+    }
+
+    permLogSheetEnsuredSet.add(spreadsheetId);
+    return { ready: true, createdNow };
+  } catch {
+    return { ready: false, createdNow: false };
+  }
+}
+
+async function fetchLatestDevicePermissionSignatureForUser(
+  token: string,
+  spreadsheetId: string,
+  normalizedEmail: string
+): Promise<{ signature: string | null; failed: boolean }> {
+  try {
+    // Columns C..L = UserEmail(0), UserNama(1), Role(2), DivisiSubDivisi(3), IzinKamera(4), IzinLokasi(5), IzinNotifikasi(6), SemuaDiizinkan(7), TipePerangkat(8), InfoBrowser(9)
+    const range = encodeURIComponent(`${DEVICE_PERMISSIONS_LOG_SHEET}!C2:L`);
+    const res = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`,
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+
+    if (!res.ok) {
+      return { signature: null, failed: true };
+    }
+
+    const data = await res.json().catch(() => null);
+    const rows: any[][] = Array.isArray(data?.values) ? data.values : [];
+
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const row = rows[i];
+      const rowEmail = String(row?.[0] || '').trim().toLowerCase();
+      if (rowEmail === normalizedEmail) {
+        const sig = buildPermissionLogSignature(
+          {
+            camera: (String(row?.[4] || 'prompt').trim().toLowerCase() as any),
+            geolocation: (String(row?.[5] || 'prompt').trim().toLowerCase() as any),
+            notification: (String(row?.[6] || 'prompt').trim().toLowerCase() as any)
+          },
+          {
+            tipePerangkat: String(row?.[8] || '').trim(),
+            infoBrowser: String(row?.[9] || '').trim()
+          }
+        );
+        return { signature: sig, failed: false };
+      }
+    }
+
+    return { signature: null, failed: false };
+  } catch {
+    return { signature: null, failed: true };
+  }
+}
+
+/**
+ * Silently logs device permission statuses (Camera, Location, Notification) and device/browser info
+ * to a dedicated Google Sheet (`DevicePermissionsLog`) directly from the browser (0 Vercel CPU).
+ * Only sends when status/environment actually changed compared to the last recorded entry.
+ * Guaranteed non-blocking and never throws errors into user workflows.
+ */
+export async function syncDevicePermissionLogIfChanged(
+  token: string | null | undefined,
+  spreadsheetId: string | null | undefined,
+  userProfile: UserProfile | null | undefined,
+  status: DevicePermissionsStatus | null | undefined
+): Promise<boolean> {
+  try {
+    if (typeof window === 'undefined') return false;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+    if (!token || token === 'mock_demo_token' || !spreadsheetId) return false;
+    if (!userProfile?.email || !status) return false;
+
+    const normalizedEmail = userProfile.email.trim().toLowerCase();
+    if (!normalizedEmail) return false;
+
+    const env = getDeviceEnvironmentInfo();
+    const currentSignature = buildPermissionLogSignature(status, env);
+    const storageKey = `op_perm_log_sig_v1_${spreadsheetId}_${normalizedEmail}`;
+
+    // 1. Fast local check: 0 network calls when nothing changed
+    let cachedSignature: string | null = null;
+    try {
+      cachedSignature = localStorage.getItem(storageKey);
+    } catch {
+      cachedSignature = null;
+    }
+
+    if (cachedSignature === currentSignature) {
+      return false;
+    }
+
+    // 2. Prevent concurrent duplicate writes for the same user & state
+    const flightKey = `${spreadsheetId}:${normalizedEmail}:${currentSignature}`;
+    if (permLogInFlightKeys.has(flightKey)) {
+      return false;
+    }
+    permLogInFlightKeys.add(flightKey);
+
+    try {
+      // 3. Ensure target sheet exists first (prevents any HTTP 400 on first run)
+      const sheetState = await ensureDevicePermissionsLogSheet(token, spreadsheetId);
+      if (!sheetState.ready) {
+        return false;
+      }
+
+      // 4. When local cache is empty (fresh device or cleared browser storage) and sheet already existed,
+      // check the latest row in sheet once so we never write redundant duplicate rows.
+      if (!cachedSignature && !sheetState.createdNow) {
+        const remote = await fetchLatestDevicePermissionSignatureForUser(
+          token,
+          spreadsheetId,
+          normalizedEmail
+        );
+        if (remote.failed) {
+          return false;
+        }
+        if (remote.signature === currentSignature) {
+          try {
+            localStorage.setItem(storageKey, currentSignature);
+          } catch {}
+          return false;
+        }
+      }
+
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const randomPart = Math.random().toString(36).slice(2, 6).toUpperCase();
+      const logId = `PERM-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}-${randomPart}`;
+
+      const rowData = objectToRow(DEVICE_PERMISSIONS_LOG_HEADERS, {
+        LogID: logId,
+        Timestamp: formatTimestamp(now),
+        UserEmail: sanitizePermissionSheetCell(userProfile.email, 160),
+        UserNama: sanitizePermissionSheetCell(userProfile.nama || userProfile.userId || '', 120),
+        Role: sanitizePermissionSheetCell(userProfile.role || '', 40),
+        DivisiSubDivisi: sanitizePermissionSheetCell(
+          formatDivisiSubDivisi(userProfile.divisi, userProfile.subDivisi),
+          120
+        ),
+        IzinKamera: status.camera,
+        IzinLokasi: status.geolocation,
+        IzinNotifikasi: status.notification,
+        SemuaDiizinkan: status.allGranted ? 'TRUE' : 'FALSE',
+        TipePerangkat: sanitizePermissionSheetCell(env.tipePerangkat, 100),
+        InfoBrowser: sanitizePermissionSheetCell(env.infoBrowser, 160),
+        UserAgent: sanitizePermissionSheetCell(env.userAgent, 250)
+      });
+
+      const appendRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`${DEVICE_PERMISSIONS_LOG_SHEET}!A1`)}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            values: [rowData]
+          })
+        }
+      );
+
+      if (!appendRes.ok) {
+        return false;
+      }
+
+      try {
+        localStorage.setItem(storageKey, currentSignature);
+      } catch {}
+
+      return true;
+    } finally {
+      permLogInFlightKeys.delete(flightKey);
+    }
+  } catch {
+    // Strictly non-blocking: never surface background logging failures to users
+    return false;
+  }
+}
+
 

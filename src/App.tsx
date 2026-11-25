@@ -63,7 +63,8 @@ import {
   fetchGlobalConfig,
   invalidateClientActiveHistoriesCache,
   invalidateUidReviewHistoryCache,
-  invalidateClosedUsageItemsCache
+  invalidateClosedUsageItemsCache,
+  syncDevicePermissionLogIfChanged
 } from './lib/googleApi';
 import { compressTransferReceiptFile } from './lib/imageCompression';
 import { BudgetRequest, UsageReportItem, UserProfile, Role, RequestStatus, ItemStatus, SiteInfo, UserActivity, ResetDeviceLog, ItemReviewHistory, formatTimestamp } from './types';
@@ -887,17 +888,51 @@ export default function App() {
     // Run check on initial load
     checkStatus(true);
 
-    // Re-check permissions when user refocuses window (e.g. returns from browser settings)
+    // Re-check permissions when user refocuses window or returns from mobile browser settings
     const handleFocus = () => {
       checkStatus(false);
     };
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        checkStatus(false);
+      }
+    };
 
     window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       isMounted = false;
       window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
+
+  // Silently record Device Permissions & Browser/Device info to `DevicePermissionsLog` sheet
+  // ONLY when status or environment actually changed (direct to Google Sheets, 0 Vercel CPU, non-blocking).
+  useEffect(() => {
+    if (!token || !spreadsheetId || !userProfile?.email || !permissionsStatus) return;
+
+    // Short debounce so multi-permission grant actions ("Izinkan Semua") coalesce into a single log row
+    const timer = window.setTimeout(() => {
+      void syncDevicePermissionLogIfChanged(token, spreadsheetId, userProfile, permissionsStatus);
+    }, 1200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [
+    token,
+    spreadsheetId,
+    userProfile?.email,
+    userProfile?.nama,
+    userProfile?.role,
+    userProfile?.divisi,
+    userProfile?.subDivisi,
+    permissionsStatus?.camera,
+    permissionsStatus?.geolocation,
+    permissionsStatus?.notification,
+    permissionsStatus?.allGranted
+  ]);
 
   // Proactively register Web Push Subscription for active user if notification permission is granted
   useEffect(() => {

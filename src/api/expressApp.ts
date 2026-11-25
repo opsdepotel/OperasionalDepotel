@@ -423,51 +423,61 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
     let response: any = null;
     let lastModelError: any = null;
     const attemptErrors: string[] = [];
+    const quotaExhaustedModels = new Set<string>();
+    const nonRetryableModels = new Set<string>();
+    let sawQuotaExceeded = false;
+    let sawHighDemand = false;
+    let sawAuthError = false;
+    let sawNetworkError = false;
 
-    for (const modelName of candidateModels) {
-      let attempts = 0;
-      const maxAttempts = modelName === 'gemini-4-hydrogen' ? 3 : 2;
+    const maxRounds = 3;
+    for (let round = 1; round <= maxRounds; round++) {
+      let triedAnyModelInRound = false;
 
-      while (attempts < maxAttempts) {
+      for (const modelName of candidateModels) {
+        if (quotaExhaustedModels.has(modelName) || nonRetryableModels.has(modelName)) {
+          continue;
+        }
+        triedAnyModelInRound = true;
+
         try {
-          attempts++;
           const modelConfig: Record<string, any> = {
             responseMimeType: 'application/json',
             responseSchema: {
               type: Type.OBJECT,
               properties: {
-                  isRecapture: {
-                    type: Type.BOOLEAN,
-                    description: 'True jika terindikasi kuat/sedang merupakan foto dari layar digital (recapture/spoofing). False jika foto langsung di objek fisik nyata.',
-                  },
-                  confidence: {
-                    type: Type.NUMBER,
-                    description: 'Tingkat keyakinan analisis dalam persentase (0 sampai 100).',
-                  },
-                  verdict: {
-                    type: Type.STRING,
-                    description: 'Status kesimpulan singkat: "AUTHENTIC" (Asli Langsung), "SCREEN_RECAPTURE_DETECTED" (Terdeteksi Foto Layar), atau "SUSPICIOUS" (Mencurigakan).',
-                  },
-                  summary: {
-                    type: Type.STRING,
-                    description: 'Penjelasan ringkas kesimpulan hasil analisis forensik dalam bahasa Indonesia yang profesional.',
-                  },
-                  indicators: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING },
-                    description: 'Daftar temuan atau bukti spesifik yang teramati (misal: "Terdeteksi pola Moiré pada area tengah", "Terlihat pantulan backlight LCD", dll).',
-                  },
-                  reasons: {
-                    type: Type.STRING,
-                    description: 'Ulasan detail kondisi visual dan karakteristik gambar yang mendukung kesimpulan.',
-                  },
-                  recommendation: {
-                    type: Type.STRING,
-                    description: 'Rekomendasi tindakan untuk Administrator/Auditor.',
-                  },
+                isRecapture: {
+                  type: Type.BOOLEAN,
+                  description: 'True jika terindikasi kuat/sedang merupakan foto dari layar digital (recapture/spoofing). False jika foto langsung di objek fisik nyata.',
                 },
-                required: ['isRecapture', 'confidence', 'verdict', 'summary', 'indicators', 'recommendation'],
+                confidence: {
+                  type: Type.NUMBER,
+                  description: 'Tingkat keyakinan analisis dalam persentase (0 sampai 100).',
+                },
+                verdict: {
+                  type: Type.STRING,
+                  description: 'Status kesimpulan singkat: "AUTHENTIC" (Asli Langsung), "SCREEN_RECAPTURE_DETECTED" (Terdeteksi Foto Layar), atau "SUSPICIOUS" (Mencurigakan).',
+                },
+                summary: {
+                  type: Type.STRING,
+                  description: 'Penjelasan ringkas kesimpulan hasil analisis forensik dalam bahasa Indonesia yang profesional.',
+                },
+                indicators: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: 'Daftar temuan atau bukti spesifik yang teramati (misal: "Terdeteksi pola Moiré pada area tengah", "Terlihat pantulan backlight LCD", dll).',
+                },
+                reasons: {
+                  type: Type.STRING,
+                  description: 'Ulasan detail kondisi visual dan karakteristik gambar yang mendukung kesimpulan.',
+                },
+                recommendation: {
+                  type: Type.STRING,
+                  description: 'Rekomendasi tindakan untuk Administrator/Auditor.',
+                },
               },
+              required: ['isRecapture', 'confidence', 'verdict', 'summary', 'indicators', 'recommendation'],
+            },
           };
 
           if (modelName === 'gemini-4-hydrogen') {
@@ -501,12 +511,37 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
           const causeCode = String(modelErr?.cause?.code || '');
           const causeMsg = String(modelErr?.cause?.message || modelErr?.cause || '');
           const errMsg = `${String(modelErr?.message || '')} ${causeCode} ${causeMsg}`;
+          const errLower = errMsg.toLowerCase();
           const sanitized = errMsg.replace(/AIza[0-9A-Za-z_-]+/g, '[REDACTED]').slice(0, 180);
-          attemptErrors.push(`${modelName}#${attempts}(${status || causeCode || 'ERR'}): ${sanitized}`);
+          attemptErrors.push(`${modelName}@r${round}(${status || causeCode || 'ERR'}): ${sanitized}`);
           console.warn(
-            `[check-screen-recapture] Model ${modelName} attempt ${attempts}/${maxAttempts} failed:`,
+            `[check-screen-recapture] Model ${modelName} round ${round}/${maxRounds} failed:`,
             sanitized
           );
+
+          const isAuthErr =
+            errMsg.includes('API_KEY_INVALID') ||
+            errMsg.includes('PERMISSION_DENIED') ||
+            String(status) === '403';
+
+          if (isAuthErr) {
+            sawAuthError = true;
+            nonRetryableModels.add(modelName);
+            break;
+          }
+
+          const isQuotaErr =
+            String(status) === '429' ||
+            errMsg.includes('429') ||
+            errMsg.includes('RESOURCE_EXHAUSTED') ||
+            errLower.includes('quota');
+
+          if (isQuotaErr) {
+            sawQuotaExceeded = true;
+            // Skip immediately to fallback model instead of hammering an exhausted quota
+            quotaExhaustedModels.add(modelName);
+            continue;
+          }
 
           const isSocketReset =
             errMsg.includes('ECONNRESET') ||
@@ -516,33 +551,46 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
             errMsg.includes('socket');
 
           if (isSocketReset) {
+            sawNetworkError = true;
             // Re-create client to avoid reusing a stale keep-alive connection
             ai = getGenAI(true);
           }
 
-          const isTransient =
-            isSocketReset ||
+          const isHighDemandErr =
+            String(status) === '503' ||
             errMsg.includes('503') ||
             errMsg.includes('UNAVAILABLE') ||
-            errMsg.includes('high demand') ||
+            errLower.includes('high demand') ||
             errMsg.includes('504') ||
-            errMsg.includes('DEADLINE_EXCEEDED') ||
-            errMsg.includes('429') ||
-            errMsg.includes('RESOURCE_EXHAUSTED') ||
-            errMsg.includes('quota') ||
-            errMsg.includes('network');
+            errMsg.includes('DEADLINE_EXCEEDED');
 
-          if (isTransient && attempts < maxAttempts) {
-            const backoffMs = 900 * attempts + Math.floor(Math.random() * 400);
-            await new Promise((r) => setTimeout(r, backoffMs));
-          } else {
-            break;
+          if (isHighDemandErr) {
+            sawHighDemand = true;
+          } else if (!isSocketReset) {
+            nonRetryableModels.add(modelName);
           }
         }
       }
 
       if (response && response.text) {
         break;
+      }
+
+      if (sawAuthError || !triedAnyModelInRound) {
+        break;
+      }
+
+      const hasRetryableModelLeft = candidateModels.some(
+        (m) => !quotaExhaustedModels.has(m) && !nonRetryableModels.has(m)
+      );
+      if (!hasRetryableModelLeft) {
+        break;
+      }
+
+      if (round < maxRounds) {
+        // Exponential backoff with jitter (e.g. ~1.6s, ~3.4s) before next round
+        const backoffMs = 1400 * Math.pow(2, round - 1) + Math.floor(Math.random() * 500);
+        await new Promise((r) => setTimeout(r, backoffMs));
       }
     }
 
@@ -556,6 +604,7 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
       }
 
       if (
+        sawAuthError ||
         lastErrMsg.includes('API_KEY_INVALID') ||
         lastErrMsg.includes('PERMISSION_DENIED') ||
         lastErrMsg.includes('403')
@@ -570,19 +619,23 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
       }
 
       if (
-        lastErrMsg.includes('429') ||
-        lastErrMsg.includes('RESOURCE_EXHAUSTED') ||
-        lastErrMsg.toLowerCase().includes('quota')
+        (sawQuotaExceeded && !sawHighDemand) ||
+        (!sawHighDemand && (
+          lastErrMsg.includes('429') ||
+          lastErrMsg.includes('RESOURCE_EXHAUSTED') ||
+          lastErrMsg.toLowerCase().includes('quota')
+        ))
       ) {
         return res.status(429).json({
           success: false,
           retryable: true,
           upstreamStatus: 429,
-          error: 'Batas kuota API Gemini tercapai (429). Silakan tunggu 30–45 detik lalu klik "Coba Lagi".',
+          error: 'Batas kuota API Gemini tercapai (429). Silakan tunggu 30–45 detik lalu klik "Coba Lagi", atau gunakan API Key berbayar (billing enabled) di panel Settings > Secrets untuk kuota lebih tinggi.',
         });
       }
 
       if (
+        sawHighDemand ||
         lastErrMsg.includes('503') ||
         lastErrMsg.includes('UNAVAILABLE') ||
         lastErrMsg.toLowerCase().includes('high demand')
@@ -597,6 +650,7 @@ Berikan analisis yang objektif, teliti, dan terstruktur dalam format JSON.`;
       }
 
       if (
+        sawNetworkError ||
         lastErrMsg.includes('ECONNRESET') ||
         lastErrMsg.includes('UND_ERR_SOCKET') ||
         lastErrMsg.includes('fetch failed') ||
@@ -761,9 +815,8 @@ Berikan respons dalam format JSON dengan struktur persis berikut:
 }`;
 
     const candidateModels = [
+      'gemini-4-hydrogen',
       'gemini-3.1-flash-lite',
-      'gemini-flash-latest',
-      'gemini-3.8-flash',
     ];
     let response: any = null;
     let lastModelError: any = null;

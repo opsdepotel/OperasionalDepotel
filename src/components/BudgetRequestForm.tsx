@@ -6,6 +6,7 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { BudgetRequest, RequestStatus, SiteInfo, UsageReportItem, UserProfile, UserActivity, ItemStatus, formatTimestamp, Role } from '../types';
 import { parseNumericValue, generateUniqueUID } from '../lib/googleApi';
+import { sanitizePlatNomor, isStandardPlatNomor } from '../lib/platNomorUtils';
 import { FormProgressOverlay } from './FormProgressOverlay';
 import { checkUserMurniSubmissionStatus } from './UserUidMonitoringModal';
 import {
@@ -63,8 +64,9 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   activities = []
 }) => {
   const todayStr = getTodayDateStr();
+  const isUserRole = userProfile?.role === Role.USER;
   const normalizedUserSubDivisi = (userProfile?.subDivisi || '').trim().toUpperCase();
-  const isMbpUser = userProfile?.role === Role.USER && normalizedUserSubDivisi === 'MBP';
+  const isMbpUser = isUserRole && normalizedUserSubDivisi === 'MBP';
 
   // Status pembatasan pengajuan bagi User Murni (> 1 UID belum dilaporkan)
   const userMurniStatus = useMemo(() => {
@@ -125,7 +127,11 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
   const [itemIsBBM, setItemIsBBM] = useState<boolean>(false);
   const [itemBbmMbpType, setItemBbmMbpType] = useState<'GENSET' | 'PICKUP' | null>(null);
   const [itemPlatNomorKendaraan, setItemPlatNomorKendaraan] = useState<string>('');
-  const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const cleanedTalanganPlatNomor = sanitizePlatNomor(itemPlatNomorKendaraan);
+  const isTalanganPlatFormatInvalidForUser =
+    isUserRole && itemIsBBM && cleanedTalanganPlatNomor.length > 0 && !isStandardPlatNomor(cleanedTalanganPlatNomor);
+  const isTalanganPlatFormatValidForUser =
+    isUserRole && itemIsBBM && cleanedTalanganPlatNomor.length > 0 && isStandardPlatNomor(cleanedTalanganPlatNomor);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
@@ -916,18 +922,50 @@ export const BudgetRequestForm: React.FC<BudgetRequestFormProps> = ({
                           e.preventDefault();
                         }
                       }}
-                      placeholder="Contoh: B1234XYZ"
+                      placeholder={isUserRole ? 'Contoh: B1234XY atau B1234XYZ' : 'Contoh: B1234XYZ'}
                       required
                       pattern="[A-Z0-9]+"
-                      title="Hanya huruf A-Z dan angka 0-9 tanpa spasi atau simbol"
+                      title={
+                        isUserRole
+                          ? 'Format baku: ANNNNAA atau ANNNNAAA (A = huruf, N = angka) tanpa spasi atau simbol'
+                          : 'Hanya huruf A-Z dan angka 0-9 tanpa spasi atau simbol'
+                      }
                       autoCapitalize="characters"
                       autoCorrect="off"
                       spellCheck={false}
-                      className="w-full px-3 py-2 text-xs font-mono font-bold uppercase tracking-wider bg-white border border-slate-200 rounded-xl focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 transition-all outline-none"
+                      className={`w-full px-3 py-2 text-xs font-mono font-bold uppercase tracking-wider border rounded-xl transition-all outline-none ${
+                        isTalanganPlatFormatInvalidForUser
+                          ? 'bg-amber-50/40 border-amber-400 focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30'
+                          : isTalanganPlatFormatValidForUser
+                            ? 'bg-white border-emerald-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30'
+                            : 'bg-white border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30'
+                      }`}
                     />
-                    <p className="text-[10px] text-slate-400 font-medium">
-                      Hanya huruf <strong className="text-slate-500">A–Z</strong> dan angka <strong className="text-slate-500">0–9</strong> tanpa spasi atau simbol.
-                    </p>
+                    {isUserRole ? (
+                      <>
+                        <p className="text-[10px] text-slate-400 font-medium">
+                          Format baku: <strong className="text-slate-600 font-mono">ANNNNAA</strong> atau <strong className="text-slate-600 font-mono">ANNNNAAA</strong> (A = huruf, N = angka) tanpa spasi atau simbol. Contoh: <span className="font-mono font-semibold text-slate-500">B1234XY</span> / <span className="font-mono font-semibold text-slate-500">B1234XYZ</span>.
+                        </p>
+                        {isTalanganPlatFormatInvalidForUser && (
+                          <div className="mt-1.5 text-[10px] font-semibold text-amber-800 bg-amber-50/90 border border-amber-300 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                            <span>
+                              <strong>Peringatan:</strong> Format plat nomor belum sesuai format baku <strong className="font-mono">ANNNNAA</strong> atau <strong className="font-mono">ANNNNAAA</strong> (A = huruf, N = angka, contoh: <span className="font-mono font-bold">B1234XY</span> atau <span className="font-mono font-bold">B1234XYZ</span>). Mohon sesuaikan dengan format baku.
+                            </span>
+                          </div>
+                        )}
+                        {isTalanganPlatFormatValidForUser && (
+                          <div className="mt-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/80 border border-emerald-200/70 rounded-lg px-2.5 py-1 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span>Format plat nomor sudah sesuai format baku.</span>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-[10px] text-slate-400 font-medium">
+                        Hanya huruf <strong className="text-slate-500">A–Z</strong> dan angka <strong className="text-slate-500">0–9</strong> tanpa spasi atau simbol.
+                      </p>
+                    )}
                   </div>
                 )}
               </div>

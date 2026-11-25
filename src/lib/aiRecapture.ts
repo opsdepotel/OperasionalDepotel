@@ -238,7 +238,7 @@ export async function requestAiScreenRecapture(
 
   let primaryError: string | null = null;
   let fetchAttempts = 0;
-  const maxFetchAttempts = 2;
+  const maxFetchAttempts = 3;
 
   while (fetchAttempts < maxFetchAttempts) {
     try {
@@ -281,9 +281,13 @@ export async function requestAiScreenRecapture(
             errorMsg.includes('Network Reset') ||
             errorMsg.includes('Timeout');
 
-          if (isRetryable && fetchAttempts < maxFetchAttempts) {
+          // Do not burn retries immediately on 429 quota exhaustion; let user retry after cooldown
+          const isQuotaLimit = res.status === 429 || data?.upstreamStatus === 429;
+
+          if (isRetryable && !isQuotaLimit && fetchAttempts < maxFetchAttempts) {
             primaryError = errorMsg;
-            await new Promise((r) => setTimeout(r, 1500));
+            const backoffMs = 2000 * fetchAttempts + Math.floor(Math.random() * 600);
+            await new Promise((r) => setTimeout(r, backoffMs));
             continue;
           }
           throw new Error(errorMsg);

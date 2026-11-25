@@ -21,6 +21,7 @@ import { detectFakeGps, recordGpsFixSample, PreviousActivityReference } from '..
 import { isMobileDevice } from '../lib/deviceUtils';
 import { validateCapturedActivityPhoto, ActivityPhotoCaptureSource } from '../lib/activityPhotoValidator';
 import { formatDivisiSubDivisi } from '../lib/googleApi';
+import { sanitizePlatNomor, isStandardPlatNomor } from '../lib/platNomorUtils';
 import { AiScreenRecaptureModal, AiRecaptureResult } from './AiScreenRecaptureModal';
 import { requestAiScreenRecapture, isTransientFailedAiResult } from '../lib/aiRecapture';
 import { ActivityLogMapContainer } from './ActivityLogMapContainer';
@@ -98,8 +99,9 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   onBack
 }) => {
   const currentRole = role || userProfile?.role || Role.USER;
+  const isUserRole = currentRole === Role.USER;
   const normalizedUserSubDivisi = (userProfile?.subDivisi || '').trim().toUpperCase();
-  const isMbpUser = currentRole === Role.USER && normalizedUserSubDivisi === 'MBP';
+  const isMbpUser = isUserRole && normalizedUserSubDivisi === 'MBP';
   const isMobileUser = userProfile?.mobile === true ||
     String(userProfile?.mobile).trim().toUpperCase() === 'TRUE' ||
     String(userProfile?.mobile).trim().toUpperCase() === 'YA' ||
@@ -534,8 +536,8 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
         }
       }
     } catch (err: any) {
-      console.error('AI Screen Recapture check failed:', err);
-      setAiAnalysisError(err.message || 'Gagal memeriksa keaslian foto dengan AI.');
+      console.warn('AI Screen Recapture check unavailable:', err?.message || err);
+      setAiAnalysisError(err?.message || 'Gagal memeriksa keaslian foto dengan AI.');
     } finally {
       setIsAiAnalyzing(false);
     }
@@ -556,9 +558,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
   const [jenisKendaraan, setJenisKendaraan] = useState('');
   const [platNomor, setPlatNomor] = useState('');
   const [jenisKegiatanMbp, setJenisKegiatanMbp] = useState<'' | 'Backup Power' | 'Non Backup Power'>('');
-  const sanitizePlatNomor = (val: string) => val.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const isPlatNomorRequired = jenisKendaraan === 'Mobil' || jenisKendaraan === 'Sepeda Motor';
-  const isVehicleValid = Boolean(jenisKendaraan) && (!isPlatNomorRequired || sanitizePlatNomor(platNomor).length > 0);
+  const cleanedPlatNomor = sanitizePlatNomor(platNomor);
+  const isPlatFormatInvalidForUser = isUserRole && cleanedPlatNomor.length > 0 && !isStandardPlatNomor(cleanedPlatNomor);
+  const isPlatFormatValidForUser = isUserRole && cleanedPlatNomor.length > 0 && isStandardPlatNomor(cleanedPlatNomor);
+  const isVehicleValid = Boolean(jenisKendaraan) && (!isPlatNomorRequired || cleanedPlatNomor.length > 0);
   const showJenisKegiatanMbp = isMbpUser && jenisKendaraan === 'Mobil';
   const isJenisKegiatanMbpValid = !showJenisKegiatanMbp || jenisKegiatanMbp === 'Backup Power' || jenisKegiatanMbp === 'Non Backup Power';
   const [originalPhotoFile, setOriginalPhotoFile] = useState<File | null>(null);
@@ -2209,7 +2213,11 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                     disabled={!isGpsReady}
                     required={isPlatNomorRequired}
                     pattern={isPlatNomorRequired ? '[A-Z0-9]+' : '[A-Z0-9]*'}
-                    title="Hanya huruf A-Z dan angka 0-9 tanpa spasi atau simbol"
+                    title={
+                      isUserRole
+                        ? 'Format baku: ANNNNAA atau ANNNNAAA (A = huruf, N = angka) tanpa spasi atau simbol'
+                        : 'Hanya huruf A-Z dan angka 0-9 tanpa spasi atau simbol'
+                    }
                     autoCapitalize="characters"
                     autoCorrect="off"
                     spellCheck={false}
@@ -2218,17 +2226,45 @@ export const ActivityLogView: React.FC<ActivityLogViewProps> = ({
                         ? 'Form terkunci: Tunggu GPS aktif...'
                         : !isPlatNomorRequired && jenisKendaraan
                           ? 'Opsional (boleh dikosongkan)'
-                          : 'Contoh: B1234XYZ'
+                          : isUserRole
+                            ? 'Contoh: B1234XY atau B1234XYZ'
+                            : 'Contoh: B1234XYZ'
                     }
                     className={`w-full px-3 py-2 border rounded-xl text-xs font-mono font-bold uppercase tracking-wider focus:outline-none transition-all ${
                       !isGpsReady
                         ? 'bg-slate-100/70 border-slate-200 text-slate-400 cursor-not-allowed'
-                        : 'bg-white border-slate-200 text-slate-800 focus:ring-1 focus:ring-indigo-500'
+                        : isPlatFormatInvalidForUser
+                          ? 'bg-amber-50/40 border-amber-400 text-slate-800 focus:ring-1 focus:ring-amber-500'
+                          : isPlatFormatValidForUser
+                            ? 'bg-white border-emerald-400 text-slate-800 focus:ring-1 focus:ring-emerald-500'
+                            : 'bg-white border-slate-200 text-slate-800 focus:ring-1 focus:ring-indigo-500'
                     }`}
                   />
-                  <p className="text-[10px] text-slate-400 font-medium">
-                    Hanya huruf <strong className="text-slate-500">A–Z</strong> dan angka <strong className="text-slate-500">0–9</strong> tanpa spasi atau simbol.
-                  </p>
+                  {isUserRole ? (
+                    <>
+                      <p className="text-[10px] text-slate-400 font-medium">
+                        Format baku: <strong className="text-slate-600 font-mono">ANNNNAA</strong> atau <strong className="text-slate-600 font-mono">ANNNNAAA</strong> (A = huruf, N = angka) tanpa spasi atau simbol. Contoh: <span className="font-mono font-semibold text-slate-500">B1234XY</span> / <span className="font-mono font-semibold text-slate-500">B1234XYZ</span>.
+                      </p>
+                      {isPlatFormatInvalidForUser && (
+                        <div className="mt-1.5 text-[10px] font-semibold text-amber-800 bg-amber-50/90 border border-amber-300 rounded-lg px-2.5 py-1.5 flex items-start gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                          <span>
+                            <strong>Peringatan:</strong> Format plat nomor belum sesuai format baku <strong className="font-mono">ANNNNAA</strong> atau <strong className="font-mono">ANNNNAAA</strong> (A = huruf, N = angka, contoh: <span className="font-mono font-bold">B1234XY</span> atau <span className="font-mono font-bold">B1234XYZ</span>). Mohon sesuaikan dengan format baku.
+                          </span>
+                        </div>
+                      )}
+                      {isPlatFormatValidForUser && (
+                        <div className="mt-1 text-[10px] font-semibold text-emerald-700 bg-emerald-50/80 border border-emerald-200/70 rounded-lg px-2.5 py-1 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>Format plat nomor sudah sesuai format baku.</span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 font-medium">
+                      Hanya huruf <strong className="text-slate-500">A–Z</strong> dan angka <strong className="text-slate-500">0–9</strong> tanpa spasi atau simbol.
+                    </p>
+                  )}
                 </div>
               </div>
 
