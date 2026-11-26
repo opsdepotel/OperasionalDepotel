@@ -214,7 +214,12 @@ export const FinanceSharedReceiptModal: React.FC<FinanceSharedReceiptModalProps>
 
   const pendingTransferRequests = useMemo(() => {
     return requests.filter((r) => {
-      if (r.status === RequestStatus.CANCELLED || r.status === RequestStatus.REJECTED || r.status === RequestStatus.CLOSED) return false;
+      if (
+        r.status === RequestStatus.CANCELLED ||
+        r.status === RequestStatus.REJECTED ||
+        r.status === RequestStatus.CLOSED ||
+        r.status === RequestStatus.PENDING_APPROVAL
+      ) return false;
 
       // Check canonical isPendingTransferRequest (includes APPROVED, PARTIALLY_APPROVED for OP with Finance approval or Non-OP, PENDING_TALANGAN_TRANSFER, PENDING_PENGAJUAN_TRANSFER, etc.)
       if (isPendingTransferRequest(r, histories, usageItems)) return true;

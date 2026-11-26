@@ -29,6 +29,7 @@ import {
   fetchAllDatabaseTables,
   fetchHistoryForUid,
   fetchBudgetRequests,
+  fetchBudgetRequestById,
   fetchUsageItems,
   fetchUsageItemsForUid,
   fetchProfiles,
@@ -232,7 +233,11 @@ export const isPendingTransferRequest = (
   histories: ItemReviewHistory[] = [],
   usageItems: UsageReportItem[] = []
 ): boolean => {
-  if (req.status === RequestStatus.CANCELLED || req.status === RequestStatus.REJECTED) return false;
+  if (
+    req.status === RequestStatus.CANCELLED ||
+    req.status === RequestStatus.REJECTED ||
+    req.status === RequestStatus.PENDING_APPROVAL
+  ) return false;
 
   // Operasional Biasa (OP-): Jika belum CLOSED dan kondisi getTransferBertahap = TRUE (termasuk status TRANSFER_BERTAHAP maupun REVIEW_ADMIN)
   if (isOpBiasaRequest(req) && req.status !== RequestStatus.CLOSED && getTransferBertahap(req, histories, usageItems)) {
@@ -294,6 +299,48 @@ export const isRequestTransferred = (
     const isTransferredStatus = statusUpper === 'TRANSFERRED';
 
     return isApprovalFinanceAction || isTransferredStatus;
+  });
+};
+
+// Strict check for ACTUAL fund transfer by Finance (excludes budget-only APPROVAL_FINANCE 'DISETUJUI' logs)
+export const hasActualFinanceTransfer = (
+  req: BudgetRequest | null,
+  histories: ItemReviewHistory[] = []
+): boolean => {
+  if (!req) return false;
+
+  if ((req.adminActionAmount || 0) > 0) return true;
+
+  if (
+    [
+      RequestStatus.TRANSFERRED,
+      RequestStatus.TRANSFER_BERTAHAP,
+      RequestStatus.REPORTING,
+      RequestStatus.REVIEW_MANAGER,
+      RequestStatus.REVIEW_ADMIN,
+      RequestStatus.CLOSED
+    ].includes(req.status)
+  ) {
+    return true;
+  }
+
+  return histories.some(h => {
+    const isMatchingUid = h.requestUid === req.id || h.itemUid === req.id;
+    if (!isMatchingUid) return false;
+
+    const actionTypeUpper = (h.actionType || '').toString().toUpperCase();
+    const statusUpper = (h.status || '').toString().toUpperCase();
+
+    if (
+      actionTypeUpper.includes('REVISI') ||
+      statusUpper === 'REJECTED' ||
+      statusUpper === 'REVISI' ||
+      statusUpper === 'DITOLAK'
+    ) {
+      return false;
+    }
+
+    return statusUpper === 'TRANSFERRED' || statusUpper === 'TRANSFER_BERTAHAP';
   });
 };
 
@@ -909,8 +956,13 @@ export default function App() {
 
   // Silently record Device Permissions & Browser/Device info to `DevicePermissionsLog` sheet
   // ONLY when status or environment actually changed (direct to Google Sheets, 0 Vercel CPU, non-blocking).
+  // Excluded for Role.ADMINISTRATOR.
   useEffect(() => {
     if (!token || !spreadsheetId || !userProfile?.email || !permissionsStatus) return;
+    const normalizedRole = String(userProfile.role || '').trim().toUpperCase();
+    if (userProfile.role === Role.ADMINISTRATOR || normalizedRole === 'ADMINISTRATOR' || normalizedRole === 'ADMIN') {
+      return;
+    }
 
     // Short debounce so multi-permission grant actions ("Izinkan Semua") coalesce into a single log row
     const timer = window.setTimeout(() => {
@@ -2855,20 +2907,123 @@ export default function App() {
     setRequests(prev => [finalReq, ...prev.filter(r => r.id !== finalReq.id)]);
   };
 
+  // Helper to immediately synchronize a single refreshed BudgetRequest row into local state & cache
+  const syncSingleRequestLocalState = (liveReq: BudgetRequest) => {
+    setRequests(prev => {
+      const next = prev.map(r => (r.id === liveReq.id ? liveReq : r));
+      safeSetJson('op_app_cached_requests', next, 100);
+      return next;
+    });
+    if (selectedRequest?.id === liveReq.id) {
+      setSelectedRequest(liveReq);
+    }
+  };
+
+  // Live pre-save guard to prevent stale-cache / concurrent Manager or Finance budget review overwrites
+  const verifyLiveBudgetRequestForReview = async (
+    targetReq: BudgetRequest,
+    isFinanceActor: boolean
+  ): Promise<BudgetRequest> => {
+    if (!token || !spreadsheetId) {
+      throw new Error('Koneksi database tidak aktif. Silakan muat ulang aplikasi.');
+    }
+
+    let liveReq: BudgetRequest | null = null;
+    try {
+      liveReq = await fetchBudgetRequestById(token, spreadsheetId, targetReq.id);
+    } catch (err: any) {
+      const errMsg = String(err?.message || '');
+      const isAuthError =
+        errMsg.includes('401') ||
+        errMsg.toLowerCase().includes('authentication credentials') ||
+        errMsg.toLowerCase().includes('invalid_grant') ||
+        errMsg.toLowerCase().includes('unauthorized');
+      if (isAuthError) {
+        await handleGoogleAuthError();
+      }
+      throw err;
+    }
+
+    if (!liveReq) {
+      throw new Error(`Pengajuan UID ${targetReq.id} tidak ditemukan di database (kemungkinan telah dihapus).`);
+    }
+
+    const alreadyTransferred =
+      (liveReq.adminActionAmount || 0) > 0 ||
+      [
+        RequestStatus.TRANSFERRED,
+        RequestStatus.TRANSFER_BERTAHAP,
+        RequestStatus.REPORTING,
+        RequestStatus.REVIEW_MANAGER,
+        RequestStatus.REVIEW_ADMIN,
+        RequestStatus.CLOSED
+      ].includes(liveReq.status);
+
+    if (alreadyTransferred) {
+      syncSingleRequestLocalState(liveReq);
+      const nominalInfo = (liveReq.adminActionAmount || 0) > 0 ? ` (${formatIDR(liveReq.adminActionAmount)})` : '';
+      const msg = `Aksi dibatalkan: Pengajuan UID ${liveReq.id} sudah ditransfer oleh Finance${nominalInfo} dengan status ${liveReq.status}. Data di layar telah diperbarui.`;
+      setError(msg);
+      throw new Error(msg);
+    }
+
+    if (liveReq.status === RequestStatus.CANCELLED || liveReq.status === RequestStatus.REJECTED) {
+      syncSingleRequestLocalState(liveReq);
+      const msg = `Aksi dibatalkan: Pengajuan UID ${liveReq.id} sudah berstatus ${liveReq.status}. Data di layar telah diperbarui.`;
+      setError(msg);
+      throw new Error(msg);
+    }
+
+    if (isFinanceActor) {
+      if (liveReq.status === RequestStatus.PENDING_APPROVAL) {
+        syncSingleRequestLocalState(liveReq);
+        const msg = `Aksi dibatalkan: Pengajuan UID ${liveReq.id} masih menunggu persetujuan atasan (${liveReq.status}). Data di layar telah diperbarui.`;
+        setError(msg);
+        throw new Error(msg);
+      }
+      if (
+        liveReq.status !== RequestStatus.APPROVED &&
+        liveReq.status !== RequestStatus.PARTIALLY_APPROVED
+      ) {
+        syncSingleRequestLocalState(liveReq);
+        const msg = `Aksi dibatalkan: Pengajuan UID ${liveReq.id} sudah diproses sebelumnya (status terbaru: ${liveReq.status}). Data di layar telah diperbarui.`;
+        setError(msg);
+        throw new Error(msg);
+      }
+    } else {
+      const allowedStatuses =
+        activeRole === Role.DIREKTUR
+          ? [RequestStatus.PENDING_APPROVAL, RequestStatus.PARTIALLY_APPROVED]
+          : [RequestStatus.PENDING_APPROVAL];
+
+      if (!allowedStatuses.includes(liveReq.status)) {
+        syncSingleRequestLocalState(liveReq);
+        const msg = `Aksi dibatalkan: Pengajuan UID ${liveReq.id} sudah diproses sebelumnya (status terbaru: ${liveReq.status}). Data di layar telah diperbarui.`;
+        setError(msg);
+        throw new Error(msg);
+      }
+    }
+
+    return liveReq;
+  };
+
   // Workflow Action 2: Review Budget Request (Manager/Direktur/Finance Action)
   const handleReviewBudget = async (approvedAmount: number, comment: string) => {
     if (!token || !spreadsheetId || !reviewBudgetReq) return;
-    const isApprovedFull = approvedAmount === reviewBudgetReq.jumlahPengajuan;
     const isFinance = activeRole === Role.FINANCE || userProfile?.role === Role.FINANCE;
 
+    // Anti race-condition guard: verify latest status directly from Google Sheets before writing
+    const liveReq = await verifyLiveBudgetRequestForReview(reviewBudgetReq, isFinance);
+    const isApprovedFull = approvedAmount === liveReq.jumlahPengajuan;
+
     const updated: BudgetRequest = isFinance ? {
-      ...reviewBudgetReq,
+      ...liveReq,
       status: RequestStatus.PENDING_PENGAJUAN_TRANSFER,
-      managerActionAmount: approvedAmount > 0 ? approvedAmount : (reviewBudgetReq.managerActionAmount || reviewBudgetReq.jumlahPengajuan),
+      managerActionAmount: approvedAmount > 0 ? approvedAmount : (liveReq.managerActionAmount || liveReq.jumlahPengajuan),
       adminActionAmount: 0,
       adminComment: comment,
     } : {
-      ...reviewBudgetReq,
+      ...liveReq,
       status: isApprovedFull ? RequestStatus.APPROVED : RequestStatus.PARTIALLY_APPROVED,
       managerActionAmount: approvedAmount,
       managerComment: comment,
@@ -2877,18 +3032,18 @@ export default function App() {
 
     const historyLog: ItemReviewHistory = {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      itemUid: reviewBudgetReq.id,
-      requestUid: reviewBudgetReq.id,
+      itemUid: liveReq.id,
+      requestUid: liveReq.id,
       timestamp: formatTimestamp(new Date()),
       actorRole: userProfile?.role || activeRole || (isFinance ? Role.FINANCE : Role.MANAGER),
-      actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
+      actorEmail: userProfile?.email || liveReq.managerEmail,
       actorNama: userProfile?.nama || userProfile?.email || (isFinance ? 'Finance' : activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
       actionType: isFinance ? 'APPROVAL_FINANCE' : activeRole === Role.DIREKTUR ? 'APPROVAL_DIREKTUR' : 'APPROVAL_MANAGER',
       status: 'DISETUJUI',
       catatan: comment,
-      tanggalPenggunaan: reviewBudgetReq.tanggalPemakaian,
+      tanggalPenggunaan: liveReq.tanggalPemakaian,
       nominal: approvedAmount,
-      keterangan: reviewBudgetReq.keterangan
+      keterangan: liveReq.keterangan
     };
 
     const success = await runGoogleAction(
@@ -2911,21 +3066,21 @@ export default function App() {
       });
 
       // Trigger Web Push Notification to Applicant & Finance (BBM Duren Sawit is excluded)
-      if (!isBbmDurenSawitRequest(reviewBudgetReq)) {
+      if (!isBbmDurenSawitRequest(liveReq)) {
         const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
         const approvedNominalFormatted = formatIDRValue(approvedAmount);
-        const pemohonName = getUserDisplayName(reviewBudgetReq.userEmail);
-        const siteLabel = getSiteLabel(reviewBudgetReq.siteId);
-        const applicantEmail = reviewBudgetReq.userEmail?.toLowerCase().trim();
+        const pemohonName = getUserDisplayName(liveReq.userEmail);
+        const siteLabel = getSiteLabel(liveReq.siteId);
+        const applicantEmail = liveReq.userEmail?.toLowerCase().trim();
         const currentActorEmail = userProfile?.email?.toLowerCase().trim();
 
         // 1. Notify Applicant (USER) - do not notify self if the actor is also the applicant
         if (applicantEmail && applicantEmail !== currentActorEmail) {
           sendPushToEmail(
-            reviewBudgetReq.userEmail,
-            `Pengajuan UID ${reviewBudgetReq.id} Disetujui`,
+            liveReq.userEmail,
+            `Pengajuan UID ${liveReq.id} Disetujui`,
             `Pengajuan Anda (${siteLabel}) telah disetujui oleh ${actorLabel} sebesar ${approvedNominalFormatted}. Status: ${updated.status}.`,
-            reviewBudgetReq
+            liveReq
           ).catch(console.warn);
         }
 
@@ -2934,9 +3089,9 @@ export default function App() {
         if (!isFinance && (activeRole === Role.MANAGER || activeRole === Role.DIREKTUR)) {
           sendPushToRole(
             Role.FINANCE,
-            `Anggaran Siap Diproses: UID ${reviewBudgetReq.id}`,
+            `Anggaran Siap Diproses: UID ${liveReq.id}`,
             `Pengajuan ${siteLabel} (${pemohonName}) telah disetujui ${actorLabel} sebesar ${approvedNominalFormatted} dan siap diproses/ditransfer Finance.`,
-            reviewBudgetReq,
+            liveReq,
             undefined,
             [currentActorEmail, applicantEmail]
           ).catch(console.warn);
@@ -2951,12 +3106,15 @@ export default function App() {
     if (!token || !spreadsheetId || !reviewBudgetReq) return;
     const isFinance = activeRole === Role.FINANCE || userProfile?.role === Role.FINANCE;
 
+    // Anti race-condition guard: verify latest status directly from Google Sheets before rejecting
+    const liveReq = await verifyLiveBudgetRequestForReview(reviewBudgetReq, isFinance);
+
     const updated: BudgetRequest = isFinance ? {
-      ...reviewBudgetReq,
+      ...liveReq,
       status: RequestStatus.REJECTED,
       adminComment: reason
     } : {
-      ...reviewBudgetReq,
+      ...liveReq,
       status: RequestStatus.REJECTED,
       managerActionAmount: 0,
       managerComment: reason
@@ -2964,18 +3122,18 @@ export default function App() {
 
     const historyLog: ItemReviewHistory = {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      itemUid: reviewBudgetReq.id,
-      requestUid: reviewBudgetReq.id,
+      itemUid: liveReq.id,
+      requestUid: liveReq.id,
       timestamp: formatTimestamp(new Date()),
       actorRole: userProfile?.role || activeRole || (isFinance ? Role.FINANCE : Role.MANAGER),
-      actorEmail: userProfile?.email || reviewBudgetReq.managerEmail,
+      actorEmail: userProfile?.email || liveReq.managerEmail,
       actorNama: userProfile?.nama || userProfile?.email || (isFinance ? 'Finance' : activeRole === Role.DIREKTUR ? 'Direktur' : 'Manager'),
       actionType: isFinance ? 'REVISI_FINANCE' : activeRole === Role.DIREKTUR ? 'REVISI_DIREKTUR' : 'REVISI_MANAGER',
       status: 'REVISI',
       catatan: reason,
-      tanggalPenggunaan: reviewBudgetReq.tanggalPemakaian,
-      nominal: reviewBudgetReq.jumlahPengajuan,
-      keterangan: reviewBudgetReq.keterangan
+      tanggalPenggunaan: liveReq.tanggalPemakaian,
+      nominal: liveReq.jumlahPengajuan,
+      keterangan: liveReq.keterangan
     };
 
     const success = await runGoogleAction(
@@ -2998,17 +3156,17 @@ export default function App() {
       });
 
       // Trigger Web Push Notification to Applicant (BBM Duren Sawit is excluded)
-      if (reviewBudgetReq.userEmail && !isBbmDurenSawitRequest(reviewBudgetReq)) {
-        const applicantEmail = reviewBudgetReq.userEmail.toLowerCase().trim();
+      if (liveReq.userEmail && !isBbmDurenSawitRequest(liveReq)) {
+        const applicantEmail = liveReq.userEmail.toLowerCase().trim();
         const currentActorEmail = userProfile?.email?.toLowerCase().trim();
         if (applicantEmail !== currentActorEmail) {
           const actorLabel = userProfile?.nama || userProfile?.role || (isFinance ? 'Finance' : 'Atasan');
-          const siteLabel = getSiteLabel(reviewBudgetReq.siteId);
+          const siteLabel = getSiteLabel(liveReq.siteId);
           sendPushToEmail(
-            reviewBudgetReq.userEmail,
-            `Pengajuan UID ${reviewBudgetReq.id} Memerlukan Revisi`,
+            liveReq.userEmail,
+            `Pengajuan UID ${liveReq.id} Memerlukan Revisi`,
             `Pengajuan Anda (${siteLabel}) ditinjau oleh ${actorLabel}. Catatan: ${reason || '-'}`,
-            reviewBudgetReq
+            liveReq
           ).catch(console.warn);
         }
       }
@@ -3028,38 +3186,83 @@ export default function App() {
   ) => {
     if (!token || !spreadsheetId || !transferReq) return;
 
-    const isReqTalangan = transferReq.id.startsWith('OPT-') || transferReq.id.startsWith('BBMDS') || transferReq.id.startsWith('BBM_DurenSawit') || transferReq.tipePengajuan === 'DANA_TALANGAN' || transferReq.keterangan.startsWith('[DANA TALANGAN]');
-    const isPendingTalanganTransfer = transferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
+    // Anti race-condition guard: verify latest row from Google Sheets before executing transfer
+    let activeTransferReq: BudgetRequest = transferReq;
+    try {
+      const liveTransferReq = await fetchBudgetRequestById(token, spreadsheetId, transferReq.id);
+      if (!liveTransferReq) {
+        throw new Error(`Pengajuan UID ${transferReq.id} tidak ditemukan di database.`);
+      }
+      if (
+        isOpBiasaRequest(liveTransferReq) &&
+        [
+          RequestStatus.PENDING_APPROVAL,
+          RequestStatus.CANCELLED,
+          RequestStatus.REJECTED,
+          RequestStatus.CLOSED
+        ].includes(liveTransferReq.status)
+      ) {
+        syncSingleRequestLocalState(liveTransferReq);
+        const msg =
+          liveTransferReq.status === RequestStatus.PENDING_APPROVAL
+            ? `Transfer dibatalkan: Pengajuan UID ${liveTransferReq.id} masih berstatus PENDING_APPROVAL (belum disetujui Manager/Atasan). Data di layar telah diperbarui.`
+            : `Transfer dibatalkan: Pengajuan UID ${liveTransferReq.id} sudah berstatus ${liveTransferReq.status}. Data di layar telah diperbarui.`;
+        setError(msg);
+        throw new Error(msg);
+      }
+      activeTransferReq = liveTransferReq;
+    } catch (verifyErr: any) {
+      const errMsg = String(verifyErr?.message || '');
+      if (
+        errMsg.includes('Transfer dibatalkan:') ||
+        errMsg.includes('tidak ditemukan di database')
+      ) {
+        throw verifyErr;
+      }
+      const isAuthError =
+        errMsg.includes('401') ||
+        errMsg.toLowerCase().includes('authentication credentials') ||
+        errMsg.toLowerCase().includes('invalid_grant') ||
+        errMsg.toLowerCase().includes('unauthorized');
+      if (isAuthError) {
+        await handleGoogleAuthError();
+        throw verifyErr;
+      }
+      throw verifyErr;
+    }
+
+    const isReqTalangan = activeTransferReq.id.startsWith('OPT-') || activeTransferReq.id.startsWith('BBMDS') || activeTransferReq.id.startsWith('BBM_DurenSawit') || activeTransferReq.tipePengajuan === 'DANA_TALANGAN' || activeTransferReq.keterangan.startsWith('[DANA TALANGAN]');
+    const isPendingTalanganTransfer = activeTransferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
 
     const nowActionTime = customAdminActionTime || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
 
     // 1. Accumulate total transferred amount
-    const prevTransferred = transferReq.adminActionAmount || 0;
+    const prevTransferred = activeTransferReq.adminActionAmount || 0;
     const updatedTotalTransferred = prevTransferred + transferredAmount;
 
     // 2. Combine URLs and File IDs
-    const existingUrls = transferReq.buktiTransferUrl ? transferReq.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean) : [];
+    const existingUrls = activeTransferReq.buktiTransferUrl ? activeTransferReq.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean) : [];
     if (buktiUrl) existingUrls.push(buktiUrl);
     const combinedBuktiUrl = existingUrls.join('||');
 
-    const existingFileIds = transferReq.buktiTransferFileId ? transferReq.buktiTransferFileId.split('||').map(f => f.trim()).filter(Boolean) : [];
+    const existingFileIds = activeTransferReq.buktiTransferFileId ? activeTransferReq.buktiTransferFileId.split('||').map(f => f.trim()).filter(Boolean) : [];
     if (buktiFileId) existingFileIds.push(buktiFileId);
     const combinedFileId = existingFileIds.join('||');
 
     // 3. Determine target approved amount
     const approvedUsageAmount = usageItems
-      .filter(item => item.requestId === transferReq.id && item.statusAdmin === ItemStatus.APPROVED)
+      .filter(item => item.requestId === activeTransferReq.id && item.statusAdmin === ItemStatus.APPROVED)
       .reduce((sum, item) => sum + item.nominal, 0);
 
-    const finHistories = itemReviewHistories.filter(h => (h.requestUid === transferReq.id || h.itemUid === transferReq.id) && h.actionType === 'APPROVAL_FINANCE');
+    const finHistories = itemReviewHistories.filter(h => (h.requestUid === activeTransferReq.id || h.itemUid === activeTransferReq.id) && h.actionType === 'APPROVAL_FINANCE');
     let finApprovedNominal = 0;
     if (finHistories.length > 0) {
       finApprovedNominal = finHistories.reduce((s, h) => s + (h.nominal || 0), 0);
     }
 
     const targetTotal = isReqTalangan
-      ? (approvedUsageAmount > 0 ? approvedUsageAmount : transferReq.managerActionAmount)
-      : (finApprovedNominal > 0 ? finApprovedNominal : (transferReq.managerActionAmount > 0 ? transferReq.managerActionAmount : transferReq.jumlahPengajuan));
+      ? (approvedUsageAmount > 0 ? approvedUsageAmount : activeTransferReq.managerActionAmount)
+      : (finApprovedNominal > 0 ? finApprovedNominal : (activeTransferReq.managerActionAmount > 0 ? activeTransferReq.managerActionAmount : activeTransferReq.jumlahPengajuan));
 
     // 4. Determine status:
     let nextStatus = RequestStatus.TRANSFERRED;
@@ -3078,12 +3281,12 @@ export default function App() {
     }
 
     const updated: BudgetRequest = {
-      ...transferReq,
+      ...activeTransferReq,
       status: nextStatus,
       adminActionAmount: updatedTotalTransferred,
       buktiTransferUrl: combinedBuktiUrl,
       buktiTransferFileId: combinedFileId,
-      adminComment: adminComment || transferReq.adminComment || '',
+      adminComment: adminComment || activeTransferReq.adminComment || '',
       adminActionTime: nowActionTime
     };
 
@@ -6130,7 +6333,9 @@ export default function App() {
                                   {/* MANAGER ACTIONS */}
                                   {activeRole === Role.MANAGER && (
                                     <>
-                                      {dashboardTab !== 'SUBMISSION' && req.status === RequestStatus.PENDING_APPROVAL && (
+                                      {dashboardTab !== 'SUBMISSION' &&
+                                        req.status === RequestStatus.PENDING_APPROVAL &&
+                                        !hasActualFinanceTransfer(req, itemReviewHistories) && (
                                         <div className="flex gap-1.5 flex-wrap">
                                           {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? (
                                             <button
@@ -6229,7 +6434,8 @@ export default function App() {
                                   {activeRole === Role.DIREKTUR && (
                                     <>
                                       {/* Approval functionality only enabled under DIREKTUR_APPROVAL card */}
-                                      {statusFilter === 'DIREKTUR_APPROVAL' && (
+                                      {statusFilter === 'DIREKTUR_APPROVAL' &&
+                                        !hasActualFinanceTransfer(req, itemReviewHistories) && (
                                         <div className="flex gap-1.5 flex-wrap">
                                           {(req.id.startsWith('OPT-') || req.keterangan.startsWith('[DANA TALANGAN]')) ? (
                                             <button
@@ -6398,7 +6604,7 @@ export default function App() {
                                             )
                                           )}
 
-                                          {(req.status === RequestStatus.PENDING_TALANGAN_TRANSFER || req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER || req.status === RequestStatus.TRANSFER_BERTAHAP || (isOpBiasaRequest(req) && req.status !== RequestStatus.CLOSED && req.status !== RequestStatus.APPROVED && req.status !== RequestStatus.PARTIALLY_APPROVED && getTransferBertahap(req, itemReviewHistories, usageItems))) && (
+                                          {(req.status === RequestStatus.PENDING_TALANGAN_TRANSFER || req.status === RequestStatus.PENDING_PENGAJUAN_TRANSFER || req.status === RequestStatus.TRANSFER_BERTAHAP || (isOpBiasaRequest(req) && req.status !== RequestStatus.CLOSED && req.status !== RequestStatus.APPROVED && req.status !== RequestStatus.PARTIALLY_APPROVED && req.status !== RequestStatus.PENDING_APPROVAL && req.status !== RequestStatus.REJECTED && req.status !== RequestStatus.CANCELLED && getTransferBertahap(req, itemReviewHistories, usageItems))) && (
                                             <div className="flex flex-col items-end gap-1.5">
                                               {usageItems.some(i => i.requestId === req.id) && (
                                                 <button

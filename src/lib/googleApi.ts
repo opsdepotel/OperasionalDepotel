@@ -1340,6 +1340,57 @@ export async function fetchBudgetRequests(token: string, spreadsheetId: string):
   );
 }
 
+// Lightweight single-row live fetch for a specific BudgetRequest UID (0 Vercel CPU; direct Google Sheets API)
+export async function fetchBudgetRequestById(
+  token: string,
+  spreadsheetId: string,
+  uid: string
+): Promise<BudgetRequest | null> {
+  const cleanUid = String(uid || '').trim();
+  if (!cleanUid) return null;
+
+  if (token === 'mock_demo_token') {
+    const list = getMockData<BudgetRequest[]>('mock_db_pengajuan', defaultRequests);
+    return list.find(r => r.id.trim().toLowerCase() === cleanUid.toLowerCase()) || null;
+  }
+
+  const rowIdx = await findRowIndexFast(
+    token,
+    spreadsheetId,
+    'Pengajuan',
+    'UID',
+    cleanUid,
+    ['id', 'pengajuanuid'],
+    'Gagal memeriksa status terbaru pengajuan di database.'
+  );
+
+  if (rowIdx === -1) return null;
+
+  const sheetRowIdx = rowIdx + 1; // 1-indexed
+  const batchUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?ranges=${encodeURIComponent('Pengajuan!A1:Z1')}&ranges=${encodeURIComponent(`Pengajuan!A${sheetRowIdx}:Z${sheetRowIdx}`)}`;
+  const res = await fetch(batchUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store'
+  });
+
+  if (res.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
+  if (!res.ok) {
+    throw new Error('Gagal membaca detail status terbaru pengajuan dari database.');
+  }
+
+  const data = await res.json();
+  const valueRanges: any[] = data.valueRanges || [];
+  const headerRow: any[] = valueRanges[0]?.values?.[0] || PENGAJUAN_HEADERS;
+  const targetRow: any[] | undefined = valueRanges[1]?.values?.[0];
+
+  if (!targetRow || targetRow.length === 0) return null;
+
+  const parsed = parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, [headerRow, targetRow], mapToBudgetRequest);
+  return parsed[0] || null;
+}
+
 // Fetch Usage Report Items
 export async function fetchUsageItems(token: string, spreadsheetId: string): Promise<UsageReportItem[]> {
   if (token === 'mock_demo_token') {
@@ -3649,6 +3700,11 @@ export async function syncDevicePermissionLogIfChanged(
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
     if (!token || token === 'mock_demo_token' || !spreadsheetId) return false;
     if (!userProfile?.email || !status) return false;
+
+    const normalizedRole = String(userProfile.role || '').trim().toUpperCase();
+    if (userProfile.role === Role.ADMINISTRATOR || normalizedRole === 'ADMINISTRATOR' || normalizedRole === 'ADMIN') {
+      return false;
+    }
 
     const normalizedEmail = userProfile.email.trim().toLowerCase();
     if (!normalizedEmail) return false;
