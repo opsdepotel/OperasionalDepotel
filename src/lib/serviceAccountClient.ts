@@ -3,6 +3,10 @@
  * Fetches auto-renewing access tokens from the server-side Service Account
  */
 
+import { UserActivity } from '../types';
+import { getStoredSessionToken } from './sessionClient';
+import { getFirebaseIdToken } from './firebase';
+
 export interface ServiceAccountStatus {
   isConfigured: boolean;
   serviceAccountEmail: string | null;
@@ -159,4 +163,85 @@ export async function uploadReceiptViaServiceAccount(
     fileId,
     viewUrl
   };
+}
+
+export interface ServerActivitySubmitPayload {
+  tanggal: string;
+  siteId: string;
+  siteName: string;
+  coordinatesDb: string;
+  coordinatesActual: string;
+  keterangan: string;
+  jenisKendaraan?: string;
+  platNomor?: string;
+  isBackup?: boolean;
+  indikasiFake?: boolean;
+  fakeReason?: string;
+  spreadsheetId?: string;
+  driveFolderId?: string;
+  clientSubmissionId?: string;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Gagal membaca berkas foto di perangkat.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Submits a Daily Activity Log (photo + Google Sheet row) atomically through the server (/api/activities).
+ * Ensures Drive upload and Activity sheet append succeed together or cleanly roll back with zero orphan files.
+ */
+export async function submitActivityViaServer(
+  payload: ServerActivitySubmitPayload,
+  photoFile?: File
+): Promise<UserActivity> {
+  const sessionToken = getStoredSessionToken();
+  let authToken = sessionToken;
+  if (!authToken) {
+    try {
+      authToken = await getFirebaseIdToken();
+    } catch {
+      authToken = null;
+    }
+  }
+
+  if (!authToken) {
+    throw new Error('Sesi login tidak ditemukan (HTTP 401). Silakan login kembali.');
+  }
+
+  let photoBase64: string | undefined;
+  let photoFileName: string | undefined;
+  if (photoFile) {
+    photoBase64 = await readFileAsDataUrl(photoFile);
+    photoFileName = photoFile.name || `ACT_${Date.now()}.jpg`;
+  }
+
+  const res = await fetch('/api/activities', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authToken}`
+    },
+    body: JSON.stringify({
+      ...payload,
+      photoBase64,
+      photoFileName
+    })
+  });
+
+  const result = await res.json().catch(() => ({}));
+
+  if (!res.ok || !result.success || !result.activity) {
+    const fallbackMsg =
+      res.status === 401
+        ? 'Sesi autentikasi kedaluwarsa (HTTP 401).'
+        : `Gagal menyimpan Laporan Kegiatan ke server (HTTP ${res.status}, koneksi terganggu).`;
+    throw new Error(result.error || fallbackMsg);
+  }
+
+  return result.activity as UserActivity;
 }

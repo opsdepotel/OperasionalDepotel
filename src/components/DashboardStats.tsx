@@ -12,7 +12,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { OP_TimeLine } from './OP_TimeLine';
 import type { ManualActivitySubmitData } from './AdminManualActivityModal';
 import { getUnreportedTransferredRequests, isBbmRequest as isBbmRequestUtil } from '../lib/uidMonitoringUtils';
-import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing, Smartphone, TrendingUp } from 'lucide-react';
+import { Clock, CheckCircle2, AlertCircle, Coins, CreditCard, ClipboardCheck, ArrowRightLeft, ShieldCheck, CalendarCheck, Fuel, AlertTriangle, FileText, XCircle, Eye, X, Search, FileSpreadsheet, Download, MapPin, Navigation, RefreshCw, Copy, Check, ExternalLink, ShieldAlert, Loader2, ArrowLeft, Pause, Play, Radio, Plus, Share2, FolderOpen, ChevronDown, ChevronUp, Trash2, RotateCcw, BellRing, Smartphone, TrendingUp, Car } from 'lucide-react';
 
 const UserOperationalBalanceReportModal = lazy(() =>
   import('./UserOperationalBalanceReportModal').then(m => ({ default: m.UserOperationalBalanceReportModal }))
@@ -116,6 +116,7 @@ interface DashboardStatsProps {
   userProfile?: UserProfile | null;
   onOpenBbmModal?: () => void;
   onOpenBbmListModal?: () => void;
+  onOpenVehicleFuelAnalysis?: () => void;
   histories?: ItemReviewHistory[];
   activeTab?: 'APPROVAL' | 'SUBMISSION';
   onSelectTab?: (tab: 'APPROVAL' | 'SUBMISSION') => void;
@@ -158,6 +159,7 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
   userProfile,
   onOpenBbmModal,
   onOpenBbmListModal,
+  onOpenVehicleFuelAnalysis,
   histories = [],
   activeTab,
   onSelectTab,
@@ -1554,6 +1556,35 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
     );
   };
 
+  // Kartu Analisis Pemakaian BBM Kendaraan & Backup Genset (Administrator, Manager-Approval, Finance-Approval, Direktur-Monitoring)
+  const renderVehicleFuelAnalysisCard = (cardId: string, extraClassName = '') => {
+    if (!onOpenVehicleFuelAnalysis) return null;
+    return (
+      <div
+        onClick={onOpenVehicleFuelAnalysis}
+        className={`bg-white border border-slate-200 rounded-2xl p-4 shadow-sm hover:border-slate-400 hover:shadow-md transition-all cursor-pointer flex items-center justify-between gap-3 group ${extraClassName}`}
+        id={cardId}
+      >
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-slate-900 text-amber-400 flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+            <Car className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <h4 className="font-display font-bold text-xs text-slate-900 group-hover:text-indigo-700 transition-colors">
+              Analisis Pemakaian BBM Kendaraan &amp; Backup Genset
+            </h4>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              Telusuri jadwal pengisian BBM Non Backup &amp; BBM Backup beserta seluruh aktivitas operasional sebelum pengisian berikutnya.
+            </p>
+          </div>
+        </div>
+        <div className="w-8 h-8 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0 group-hover:translate-x-0.5 transition-transform font-bold text-xs">
+          &rarr;
+        </div>
+      </div>
+    );
+  };
+
   // Modal UID Aktif Tim Bawahan (VIEW ONLY - MANAGER)
   const renderManagerActiveUidModal = () => {
     if (!isManagerActiveUidModalOpen || role !== Role.MANAGER) return null;
@@ -2425,6 +2456,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             </div>
 
             {renderBbmCard()}
+
+            {renderVehicleFuelAnalysisCard('manager-vehicle-fuel-analysis-card')}
           </div>
         ) : (
           renderUserDashboardView()
@@ -2816,6 +2849,8 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
               Klik untuk membuka form Daftar User Murni, status UID yang sudah ditransfer dan pembatasan pengajuan baru.
             </p>
           </div>
+
+          {renderVehicleFuelAnalysisCard('finance-vehicle-fuel-analysis-card', 'col-span-2')}
 
           {/* Kartu Pintasan: Tabel Response Waktu Pengajuan & Transfer - FINANCE */}
           {(() => {
@@ -3454,6 +3489,9 @@ export const DashboardStats: React.FC<DashboardStatsProps> = ({
             &rarr;
           </div>
         </div>
+
+        {/* Kartu Analisis Pemakaian BBM Kendaraan & Backup Genset (Administrator) */}
+        {renderVehicleFuelAnalysisCard('administrator-vehicle-fuel-analysis-card')}
 
         {/* Kartu Activity User (Log Kegiatan) */}
         {onOpenActivities && (
@@ -4467,6 +4505,9 @@ User Agent: ${navigator.userAgent}`;
                 </div>
               );
             })()}
+
+            {/* Kartu Analisis Pemakaian BBM Kendaraan & Backup Genset - DIREKTUR MONITORING */}
+            {renderVehicleFuelAnalysisCard('direktur-vehicle-fuel-analysis-card')}
 
             {/* Total Financial Summary Card */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-3">

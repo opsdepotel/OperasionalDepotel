@@ -746,6 +746,105 @@ export async function updateGlobalConfig(
   }
 }
 
+// Lightweight cache for actual spreadsheet tab titles so values:batchGet never fails with HTTP 400
+// due to tab naming differences (e.g. "Site" vs "SiteID" vs "Site ID") or grid-column limits (!A1:Z).
+const SHEET_TITLES_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const sheetTitlesMemoryCache = new Map<string, { titles: string[]; timestamp: number }>();
+
+function getCachedSpreadsheetSheetTitles(spreadsheetId: string): string[] | null {
+  const now = Date.now();
+  const mem = sheetTitlesMemoryCache.get(spreadsheetId);
+  if (mem && mem.titles.length > 0 && now - mem.timestamp < SHEET_TITLES_CACHE_TTL_MS) {
+    return mem.titles;
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const raw = localStorage.getItem(`op_sheet_titles_v1_${spreadsheetId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (
+          parsed &&
+          Array.isArray(parsed.titles) &&
+          parsed.titles.length > 0 &&
+          typeof parsed.timestamp === 'number' &&
+          now - parsed.timestamp < SHEET_TITLES_CACHE_TTL_MS
+        ) {
+          sheetTitlesMemoryCache.set(spreadsheetId, { titles: parsed.titles, timestamp: parsed.timestamp });
+          return parsed.titles;
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function cacheSpreadsheetSheetTitles(spreadsheetId: string, titles: string[]): void {
+  const cleanTitles = Array.from(new Set(titles.map(t => String(t || '').trim()).filter(Boolean)));
+  if (cleanTitles.length === 0) return;
+  const entry = { titles: cleanTitles, timestamp: Date.now() };
+  sheetTitlesMemoryCache.set(spreadsheetId, entry);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(`op_sheet_titles_v1_${spreadsheetId}`, JSON.stringify(entry));
+    }
+  } catch {}
+}
+
+function invalidateSpreadsheetSheetTitlesCache(spreadsheetId: string): void {
+  sheetTitlesMemoryCache.delete(spreadsheetId);
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(`op_sheet_titles_v1_${spreadsheetId}`);
+    }
+  } catch {}
+}
+
+async function resolveSpreadsheetSheetTitles(
+  token: string,
+  spreadsheetId: string,
+  forceRefresh = false
+): Promise<string[] | null> {
+  if (!forceRefresh) {
+    const cached = getCachedSpreadsheetSheetTitles(spreadsheetId);
+    if (cached) return cached;
+  }
+
+  const metaRes = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`,
+    {
+      headers: { Authorization: `Bearer ${token}` }
+    }
+  );
+  if (metaRes.status === 401) {
+    throw new Error('[HTTP 401] Request had invalid authentication credentials.');
+  }
+  if (metaRes.status === 429) {
+    throw new Error('[HTTP 429] Batas antrean permintaan Google Sheets sementara tercapai. Silakan tunggu beberapa detik lalu coba sinkron ulang.');
+  }
+  if (!metaRes.ok) {
+    return null;
+  }
+
+  const meta = await metaRes.json().catch(() => null);
+  const titles: string[] = Array.isArray(meta?.sheets)
+    ? meta.sheets.map((s: any) => String(s?.properties?.title || '').trim()).filter(Boolean)
+    : [];
+
+  if (titles.length > 0) {
+    cacheSpreadsheetSheetTitles(spreadsheetId, titles);
+    return titles;
+  }
+  return null;
+}
+
+function formatA1SheetRange(sheetTitle: string): string {
+  const clean = String(sheetTitle || '').trim();
+  if (/^[A-Za-z0-9_]+$/.test(clean)) {
+    return clean;
+  }
+  return `'${clean.replace(/'/g, "''")}'`;
+}
+
 // Helper to ensure sheets exist and set headers/seeds
 export async function ensureSheetsAndHeaders(token: string, sheetId: string): Promise<void> {
   try {
@@ -778,6 +877,7 @@ export async function ensureSheetsAndHeaders(token: string, sheetId: string): Pr
 
   const requiredSheets = ['Pengajuan', 'Laporan', 'Users', 'Activity', 'ResetDeviceLog', 'ItemReviewHistory', DEVICE_PERMISSIONS_LOG_SHEET];
   const sheetsToAdd = requiredSheets.filter(title => !sheetTitles.includes(title));
+  cacheSpreadsheetSheetTitles(sheetId, [...sheetTitles, ...sheetsToAdd]);
 
   if (sheetsToAdd.length > 0) {
     // Add missing sheets
@@ -1758,11 +1858,119 @@ export async function fetchBbmUsageItemsByPlate(
   return [];
 }
 
+export async function fetchAllNonGensetBbmUsageItems(
+  spreadsheetId: string = SPREADSHEET_ID,
+  forceRefresh: boolean = false
+): Promise<UsageReportItem[]> {
+  const sessionToken = getStoredSessionToken();
+  if (!sessionToken || sessionToken === 'mock_demo_token') {
+    return [];
+  }
+
+  try {
+    const refreshParam = forceRefresh ? '&forceRefresh=true' : '';
+    const res = await fetch(
+      `/api/laporan?allBbm=true&excludeGenset=true&spreadsheetId=${encodeURIComponent(spreadsheetId)}${refreshParam}`,
+      {
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          ...(forceRefresh ? { 'Cache-Control': 'no-cache' } : {})
+        }
+      }
+    );
+    if (res.ok) {
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data)) {
+        return json.data as UsageReportItem[];
+      }
+    }
+  } catch (err) {
+    console.warn('[fetchAllNonGensetBbmUsageItems] /api/laporan?allBbm=true failed:', err);
+  }
+
+  return [];
+}
+
+const ALL_BBM_CACHE_TTL_MS = 5 * 60 * 1000;
+const allBbmUsageMemoryCache = new Map<string, { data: UsageReportItem[]; timestamp: number }>();
+const allBbmUsageInFlight = new Map<string, Promise<UsageReportItem[]>>();
+
+export function getCachedAllBbmUsageItems(
+  spreadsheetId: string = SPREADSHEET_ID
+): UsageReportItem[] | null {
+  const key = (spreadsheetId || SPREADSHEET_ID).trim();
+  const entry = allBbmUsageMemoryCache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > ALL_BBM_CACHE_TTL_MS) {
+    return null;
+  }
+  return entry.data;
+}
+
+export async function fetchAllBbmUsageItems(
+  spreadsheetId: string = SPREADSHEET_ID,
+  forceRefresh: boolean = false
+): Promise<UsageReportItem[]> {
+  const sessionToken = getStoredSessionToken();
+  if (!sessionToken || sessionToken === 'mock_demo_token') {
+    return [];
+  }
+
+  const cacheKey = (spreadsheetId || SPREADSHEET_ID).trim();
+  if (!forceRefresh) {
+    const cached = getCachedAllBbmUsageItems(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    const existingPromise = allBbmUsageInFlight.get(cacheKey);
+    if (existingPromise) {
+      return existingPromise;
+    }
+  }
+
+  const requestPromise = (async (): Promise<UsageReportItem[]> => {
+    try {
+      const refreshParam = forceRefresh ? '&forceRefresh=true' : '';
+      const res = await fetch(
+        `/api/laporan?allBbm=true&spreadsheetId=${encodeURIComponent(cacheKey)}${refreshParam}`,
+        {
+          headers: {
+            Authorization: `Bearer ${sessionToken}`,
+            ...(forceRefresh ? { 'Cache-Control': 'no-cache' } : {})
+          }
+        }
+      );
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          const items = json.data as UsageReportItem[];
+          allBbmUsageMemoryCache.set(cacheKey, { data: items, timestamp: Date.now() });
+          return items;
+        }
+      }
+    } catch (err) {
+      console.warn('[fetchAllBbmUsageItems] /api/laporan?allBbm=true failed:', err);
+    }
+
+    return allBbmUsageMemoryCache.get(cacheKey)?.data || [];
+  })();
+
+  allBbmUsageInFlight.set(cacheKey, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    if (allBbmUsageInFlight.get(cacheKey) === requestPromise) {
+      allBbmUsageInFlight.delete(cacheKey);
+    }
+  }
+}
+
 export function invalidateClosedUsageItemsCache(uid?: string): void {
   if (uid) {
     closedUsageItemsMemoryCache.delete(uid.toUpperCase().trim());
   } else {
     closedUsageItemsMemoryCache.clear();
+    allBbmUsageMemoryCache.clear();
   }
 }
 
@@ -2014,60 +2222,113 @@ export async function fetchAllDatabaseTables(
     };
   }
 
-  // Attempt 1: Fast single batchGet for primary tables + parallel on-demand active history fetch
-  try {
-    const ranges = [
-      'Pengajuan!A1:Z',
-      'Laporan!A1:Z',
-      'Users!A1:Z',
-      'SiteID!A1:Z',
-      'Activity!A1:Z',
-      'ResetDeviceLog!A1:Z'
-    ];
-    const query = ranges.map(r => `ranges=${encodeURIComponent(r)}`).join('&');
+  // Attempt 1: Fast single batchGet using resolved actual tab titles (eliminates HTTP 400 from SiteID vs Site or !A1:Z grid limits)
+  type BatchTableKey = 'pengajuan' | 'laporan' | 'users' | 'site' | 'activity' | 'resetDeviceLog';
+  const buildBatchEntries = (titles: string[] | null): Array<{ key: BatchTableKey; range: string }> => {
+    const normalizeTitle = (t: string) => t.trim().toLowerCase().replace(/[\s_-]/g, '');
+    const findTab = (candidates: string[]): string | undefined => {
+      if (!titles || titles.length === 0) return undefined;
+      return titles.find(t => candidates.includes(normalizeTitle(t)));
+    };
 
-    const [res, activeHistories] = await Promise.all([
-      fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query}`, {
+    const specs: Array<{ key: BatchTableKey; candidates: string[]; defaultTitle?: string }> = [
+      { key: 'pengajuan', candidates: ['pengajuan'], defaultTitle: 'Pengajuan' },
+      { key: 'laporan', candidates: ['laporan'], defaultTitle: 'Laporan' },
+      { key: 'users', candidates: ['users'], defaultTitle: 'Users' },
+      { key: 'site', candidates: ['siteid', 'site'] },
+      { key: 'activity', candidates: ['activity'], defaultTitle: 'Activity' },
+      { key: 'resetDeviceLog', candidates: ['resetdevicelog'], defaultTitle: 'ResetDeviceLog' }
+    ];
+
+    const entries: Array<{ key: BatchTableKey; range: string }> = [];
+    for (const spec of specs) {
+      const matched = findTab(spec.candidates);
+      if (matched) {
+        entries.push({ key: spec.key, range: formatA1SheetRange(matched) });
+      } else if (!titles && spec.defaultTitle) {
+        // Only fall back to default tab names when metadata lookup was unavailable
+        entries.push({ key: spec.key, range: formatA1SheetRange(spec.defaultTitle) });
+      }
+    }
+    return entries;
+  };
+
+  try {
+    const activeHistoriesPromise = fetchActiveItemReviewHistories(token, spreadsheetId, forceRefresh).catch(() => []);
+    let resolvedTitles = await resolveSpreadsheetSheetTitles(token, spreadsheetId, false);
+    let batchEntries = buildBatchEntries(resolvedTitles);
+
+    const runBatchGet = async (entries: Array<{ key: BatchTableKey; range: string }>) => {
+      const query = entries.map(e => `ranges=${encodeURIComponent(e.range)}`).join('&');
+      return fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchGet?${query}`, {
         cache: 'no-store',
         headers: { Authorization: `Bearer ${token}` },
         timeout: 60000
-      }),
-      fetchActiveItemReviewHistories(token, spreadsheetId, forceRefresh).catch(() => [])
-    ]);
+      });
+    };
 
-    if (res.status === 401) {
+    let res = batchEntries.length > 0 ? await runBatchGet(batchEntries) : null;
+
+    // Self-healing: if cached tab names became stale (e.g. a tab was renamed in Sheets), refresh titles once and retry batchGet
+    if (res && res.status === 400) {
+      invalidateSpreadsheetSheetTitlesCache(spreadsheetId);
+      resolvedTitles = await resolveSpreadsheetSheetTitles(token, spreadsheetId, true);
+      batchEntries = buildBatchEntries(resolvedTitles);
+      if (batchEntries.length > 0) {
+        res = await runBatchGet(batchEntries);
+      }
+    }
+
+    const activeHistories = await activeHistoriesPromise;
+
+    if (res && res.status === 401) {
       throw new Error('[HTTP 401] Request had invalid authentication credentials.');
     }
 
-    if (res.status === 429) {
+    if (res && res.status === 429) {
       throw new Error('[HTTP 429] Batas antrean permintaan Google Sheets sementara tercapai. Silakan tunggu beberapa detik lalu coba sinkron ulang.');
     }
 
-    if (res.ok) {
+    if (res && res.ok) {
       const data = await res.json();
-      const valueRanges: { range: string; values?: any[][] }[] = data.valueRanges || [];
+      const valueRanges: { range?: string; values?: any[][] }[] = data.valueRanges || [];
 
-      const getValues = (sheetName: string): any[][] => {
-        const found = valueRanges.find(vr => vr.range && vr.range.toLowerCase().includes(sheetName.toLowerCase()));
-        return (found && found.values) || [];
+      const rowsByKey: Record<BatchTableKey, any[][]> = {
+        pengajuan: [],
+        laporan: [],
+        users: [],
+        site: [],
+        activity: [],
+        resetDeviceLog: []
       };
 
-      const reqRows = getValues('Pengajuan');
-      const usageRows = getValues('Laporan');
-      const userRows = getValues('Users');
-      let siteRows = getValues('SiteID');
-      if (siteRows.length === 0) siteRows = getValues('Site');
-      const actRows = getValues('Activity');
-      const logRows = getValues('ResetDeviceLog');
+      batchEntries.forEach((entry, idx) => {
+        rowsByKey[entry.key] = valueRanges[idx]?.values || [];
+      });
 
-      const requests = parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, reqRows, mapToBudgetRequest);
-      const rawUsageItems = parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, usageRows, mapToUsageItem).filter(
+      const requests = parseSheetRows<BudgetRequest>(PENGAJUAN_HEADERS, rowsByKey.pengajuan, mapToBudgetRequest);
+      const rawUsageItems = parseSheetRows<UsageReportItem>(LAPORAN_HEADERS, rowsByKey.laporan, mapToUsageItem).filter(
         item => Boolean(item.id && item.id.trim() !== '' && item.requestId && item.requestId.trim() !== '')
       );
-      const profiles = parseSheetRows<UserProfile>(USERS_HEADERS, userRows, mapToUserProfile);
-      const sites = parseSitesRows(siteRows);
-      const activities = parseSheetRows<UserActivity>(ACTIVITY_HEADERS, actRows, mapToUserActivity);
-      const resetDeviceLogs = parseSheetRows<ResetDeviceLog>(RESET_DEVICE_LOG_HEADERS, logRows, mapToResetDeviceLog);
+      const profiles = parseSheetRows<UserProfile>(USERS_HEADERS, rowsByKey.users, mapToUserProfile);
+
+      let sites = parseSitesRows(rowsByKey.site);
+      if (sites.length === 0) {
+        try {
+          if (typeof window !== 'undefined') {
+            const cachedSitesRaw = localStorage.getItem('op_app_cached_sites');
+            if (cachedSitesRaw) {
+              const parsedCachedSites = JSON.parse(cachedSitesRaw);
+              if (Array.isArray(parsedCachedSites) && parsedCachedSites.length > 0) {
+                sites = parsedCachedSites;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      const activities = parseSheetRows<UserActivity>(ACTIVITY_HEADERS, rowsByKey.activity, mapToUserActivity);
+      const resetDeviceLogs = parseSheetRows<ResetDeviceLog>(RESET_DEVICE_LOG_HEADERS, rowsByKey.resetDeviceLog, mapToResetDeviceLog);
 
       const usageItems = splitAndSummarizeUsageItems(requests, rawUsageItems);
 

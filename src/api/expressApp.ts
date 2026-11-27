@@ -8,6 +8,7 @@ import { googleAuthRouter } from './googleRoutes.js';
 import { pushRouter } from './pushRoutes.js';
 import { historyRouter } from './historyRoutes.js';
 import { usageRouter } from './usageRoutes.js';
+import { activityRouter } from './activityRoutes.js';
 import { authRouter } from './authRoutes.js';
 import { getServiceAccountAuth } from '../lib/serverGoogleAuth.js';
 
@@ -362,6 +363,10 @@ expressApp.use('/api/google/history', historyRouter);
 // On-Demand Usage Report Items API Endpoints (/api/laporan)
 expressApp.use('/api/laporan', usageRouter);
 expressApp.use('/laporan', usageRouter);
+
+// Atomic Activity Submission API Endpoints (/api/activities)
+expressApp.use('/api/activities', activityRouter);
+expressApp.use('/activities', activityRouter);
 
 // Web Push Notifications Endpoints (VAPID)
 expressApp.use('/api/push', pushRouter);

@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom';
 import { useBackHandler } from './hooks/useBackHandler';
 import { User } from 'firebase/auth';
 import { initAuth, logout, isGoogleTokenExpired, isPersonalGoogleSession } from './lib/firebase';
-import { fetchServiceAccountToken, isServiceAccountTokenExpired } from './lib/serviceAccountClient';
+import { fetchServiceAccountToken, isServiceAccountTokenExpired, submitActivityViaServer } from './lib/serviceAccountClient';
 import { resolveStrictDepotelToken, uploadReceiptFileStrictDepotel } from './lib/photoMigration';
 import firebaseConfig from '../firebase-applet-config.json';
 import {
@@ -115,6 +115,7 @@ const FinanceSharedReceiptModal = lazy(() => import('./components/FinanceSharedR
 const DevicePermissionsModal = lazy(() => import('./components/DevicePermissionsModal').then(m => ({ default: m.DevicePermissionsModal })));
 const AdminResponseTimeModal = lazy(() => import('./components/AdminResponseTimeModal').then(m => ({ default: m.AdminResponseTimeModal })));
 const UserUidMonitoringModal = lazy(() => import('./components/UserUidMonitoringModal').then(m => ({ default: m.UserUidMonitoringModal })));
+const AdminVehicleFuelAnalysisModal = lazy(() => import('./components/AdminVehicleFuelAnalysisModal').then(m => ({ default: m.AdminVehicleFuelAnalysisModal })));
 
 const ViewSuspenseFallback = (
   <div className="bg-white border border-slate-200 rounded-2xl p-8 text-center text-xs text-slate-400 animate-pulse">
@@ -728,6 +729,17 @@ export default function App() {
   const [requestHistoryModalItem, setRequestHistoryModalItem] = useState<UsageReportItem | null>(null);
   const [isBbmModalOpen, setIsBbmModalOpen] = useState(false);
   const [isBbmListModalOpen, setIsBbmListModalOpen] = useState(false);
+  const [isVehicleFuelAnalysisModalOpen, setIsVehicleFuelAnalysisModalOpen] = useState(false);
+  const handleCloseVehicleFuelAnalysis = useCallback(() => {
+    setIsVehicleFuelAnalysisModalOpen(false);
+  }, []);
+  const handlePreviewVehicleFuelDoc = useCallback((doc: { url: string; fileId?: string; title: string }) => {
+    setPreviewDocument({
+      url: doc.url,
+      fileId: doc.fileId,
+      title: doc.title
+    });
+  }, []);
   const [isFinancialReportsModalOpen, setIsFinancialReportsModalOpen] = useState(false);
   const [isUserDashboardPreviewModalOpen, setIsUserDashboardPreviewModalOpen] = useState(false);
   const [isDiomsLogoModalOpen, setIsDiomsLogoModalOpen] = useState(false);
@@ -743,6 +755,7 @@ export default function App() {
   useBackHandler(!!cancelConfirmReq, () => setCancelConfirmReq(null), 'cancelConfirmReq');
   useBackHandler(isBbmModalOpen, () => setIsBbmModalOpen(false), 'isBbmModalOpen');
   useBackHandler(isBbmListModalOpen, () => setIsBbmListModalOpen(false), 'isBbmListModalOpen');
+  useBackHandler(isVehicleFuelAnalysisModalOpen, () => setIsVehicleFuelAnalysisModalOpen(false), 'isVehicleFuelAnalysisModalOpen');
   useBackHandler(isFinancialReportsModalOpen, () => setIsFinancialReportsModalOpen(false), 'isFinancialReportsModalOpen');
   useBackHandler(isUserDashboardPreviewModalOpen, () => setIsUserDashboardPreviewModalOpen(false), 'isUserDashboardPreviewModalOpen');
   useBackHandler(isDiomsLogoModalOpen, () => setIsDiomsLogoModalOpen(false), 'isDiomsLogoModalOpen');
@@ -2910,12 +2923,18 @@ export default function App() {
   // Helper to immediately synchronize a single refreshed BudgetRequest row into local state & cache
   const syncSingleRequestLocalState = (liveReq: BudgetRequest) => {
     setRequests(prev => {
-      const next = prev.map(r => (r.id === liveReq.id ? liveReq : r));
+      const exists = prev.some(r => r.id === liveReq.id);
+      const next = exists
+        ? prev.map(r => (r.id === liveReq.id ? liveReq : r))
+        : [liveReq, ...prev];
       safeSetJson('op_app_cached_requests', next, 100);
       return next;
     });
     if (selectedRequest?.id === liveReq.id) {
       setSelectedRequest(liveReq);
+    }
+    if (transferReq?.id === liveReq.id) {
+      setTransferReq(liveReq);
     }
   };
 
@@ -3186,37 +3205,17 @@ export default function App() {
   ) => {
     if (!token || !spreadsheetId || !transferReq) return;
 
-    // Anti race-condition guard: verify latest row from Google Sheets before executing transfer
+    // Opsi 1: Anti race-condition & anti double-transfer live guard (berlaku untuk OP- maupun OPT-)
     let activeTransferReq: BudgetRequest = transferReq;
     try {
       const liveTransferReq = await fetchBudgetRequestById(token, spreadsheetId, transferReq.id);
       if (!liveTransferReq) {
         throw new Error(`Pengajuan UID ${transferReq.id} tidak ditemukan di database.`);
       }
-      if (
-        isOpBiasaRequest(liveTransferReq) &&
-        [
-          RequestStatus.PENDING_APPROVAL,
-          RequestStatus.CANCELLED,
-          RequestStatus.REJECTED,
-          RequestStatus.CLOSED
-        ].includes(liveTransferReq.status)
-      ) {
-        syncSingleRequestLocalState(liveTransferReq);
-        const msg =
-          liveTransferReq.status === RequestStatus.PENDING_APPROVAL
-            ? `Transfer dibatalkan: Pengajuan UID ${liveTransferReq.id} masih berstatus PENDING_APPROVAL (belum disetujui Manager/Atasan). Data di layar telah diperbarui.`
-            : `Transfer dibatalkan: Pengajuan UID ${liveTransferReq.id} sudah berstatus ${liveTransferReq.status}. Data di layar telah diperbarui.`;
-        setError(msg);
-        throw new Error(msg);
-      }
       activeTransferReq = liveTransferReq;
     } catch (verifyErr: any) {
       const errMsg = String(verifyErr?.message || '');
-      if (
-        errMsg.includes('Transfer dibatalkan:') ||
-        errMsg.includes('tidak ditemukan di database')
-      ) {
+      if (errMsg.includes('tidak ditemukan di database')) {
         throw verifyErr;
       }
       const isAuthError =
@@ -3226,21 +3225,144 @@ export default function App() {
         errMsg.toLowerCase().includes('unauthorized');
       if (isAuthError) {
         await handleGoogleAuthError();
-        throw verifyErr;
       }
       throw verifyErr;
     }
 
-    const isReqTalangan = activeTransferReq.id.startsWith('OPT-') || activeTransferReq.id.startsWith('BBMDS') || activeTransferReq.id.startsWith('BBM_DurenSawit') || activeTransferReq.tipePengajuan === 'DANA_TALANGAN' || activeTransferReq.keterangan.startsWith('[DANA TALANGAN]');
+    const blockTransferWithSync = (msg: string): never => {
+      syncSingleRequestLocalState(activeTransferReq);
+      setError(msg);
+      throw new Error(msg);
+    };
+
+    const isReqTalangan =
+      activeTransferReq.id.startsWith('OPT-') ||
+      activeTransferReq.id.startsWith('BBMDS') ||
+      activeTransferReq.id.startsWith('BBM_DurenSawit') ||
+      activeTransferReq.tipePengajuan === 'DANA_TALANGAN' ||
+      (activeTransferReq.keterangan || '').startsWith('[DANA TALANGAN]');
     const isPendingTalanganTransfer = activeTransferReq.status === RequestStatus.PENDING_TALANGAN_TRANSFER;
+    const prevTransferred = activeTransferReq.adminActionAmount || 0;
+
+    // Opsi 2: Hitung targetTotal secara akurat (tidak menjumlahkan log TRANSFERRED/CLOSED sebelumnya)
+    const approvedUsageAmount = usageItems
+      .filter(item => {
+        if (item.requestId !== activeTransferReq.id) return false;
+        const mgrApproved =
+          item.statusManager === ItemStatus.APPROVED ||
+          (item.statusManager || '').toString().toUpperCase() === 'APPROVED';
+        const adminApproved =
+          item.statusAdmin === ItemStatus.APPROVED ||
+          (item.statusAdmin || '').toString().toUpperCase() === 'APPROVED';
+        return mgrApproved && adminApproved;
+      })
+      .reduce((sum, item) => sum + (item.nominal || 0), 0);
+
+    const finApprovalHistories = itemReviewHistories.filter(h => {
+      const isMatchingUid = h.requestUid === activeTransferReq.id || h.itemUid === activeTransferReq.id;
+      if (!isMatchingUid) return false;
+      const actorRoleUpper = (h.actorRole || '').toString().toUpperCase();
+      const actionTypeUpper = (h.actionType || '').toString().toUpperCase();
+      const statusUpper = (h.status || '').toString().toUpperCase();
+      return (
+        actorRoleUpper === 'FINANCE' &&
+        actionTypeUpper === 'APPROVAL_FINANCE' &&
+        statusUpper === 'DISETUJUI' &&
+        (h.nominal || 0) > 0
+      );
+    });
+    let finApprovedNominal = 0;
+    if (finApprovalHistories.length > 0) {
+      const directReqHist = finApprovalHistories.find(
+        h => h.requestUid === activeTransferReq.id && (h.nominal || 0) > 0
+      );
+      finApprovedNominal = directReqHist
+        ? directReqHist.nominal
+        : finApprovalHistories.reduce((sum, h) => sum + (h.nominal || 0), 0);
+    }
+
+    const targetTotal = isReqTalangan
+      ? (approvedUsageAmount > 0 ? approvedUsageAmount : activeTransferReq.managerActionAmount)
+      : (finApprovedNominal > 0
+          ? finApprovedNominal
+          : (activeTransferReq.managerActionAmount > 0
+              ? activeTransferReq.managerActionAmount
+              : activeTransferReq.jumlahPengajuan));
+
+    // Opsi 1A: Blokir status terminal / belum disetujui (berlaku untuk OP- & OPT-)
+    if (
+      [
+        RequestStatus.PENDING_APPROVAL,
+        RequestStatus.CANCELLED,
+        RequestStatus.REJECTED,
+        RequestStatus.CLOSED
+      ].includes(activeTransferReq.status)
+    ) {
+      const msg =
+        activeTransferReq.status === RequestStatus.PENDING_APPROVAL
+          ? `Transfer dibatalkan: Pengajuan UID ${activeTransferReq.id} masih berstatus PENDING_APPROVAL (belum disetujui Manager/Atasan). Data di layar telah diperbarui.`
+          : activeTransferReq.status === RequestStatus.CLOSED
+            ? `Transfer dibatalkan: Pengajuan UID ${activeTransferReq.id} sudah berstatus CLOSED (total ditransfer: ${formatIDR(prevTransferred)}). Data di layar telah diperbarui.`
+            : `Transfer dibatalkan: Pengajuan UID ${activeTransferReq.id} sudah berstatus ${activeTransferReq.status}. Data di layar telah diperbarui.`;
+      blockTransferWithSync(msg);
+    }
+
+    // Opsi 1B: Validasi khusus OPT- (Dana Talangan)
+    if (isReqTalangan) {
+      if (transferredAmount > 0 && !isPendingTalanganTransfer) {
+        blockTransferWithSync(
+          `Transfer dibatalkan: Dana Talangan UID ${activeTransferReq.id} saat ini berstatus ${activeTransferReq.status} (bukan PENDING_TALANGAN_TRANSFER). Data di layar telah diperbarui.`
+        );
+      }
+      if (transferredAmount === 0) {
+        const isValidInitialActivation =
+          activeTransferReq.status === RequestStatus.APPROVED ||
+          activeTransferReq.status === RequestStatus.PARTIALLY_APPROVED;
+        const isValidFinalClosingOnly =
+          isPendingTalanganTransfer && targetTotal > 0 && prevTransferred >= targetTotal;
+        if (!isValidInitialActivation && !isValidFinalClosingOnly) {
+          blockTransferWithSync(
+            `Transfer dibatalkan: Dana Talangan UID ${activeTransferReq.id} sudah diproses dengan status ${activeTransferReq.status}. Data di layar telah diperbarui.`
+          );
+        }
+      }
+    } else if (transferredAmount === 0) {
+      // Opsi 1C: Validasi closing-only Rp 0 pada OP- agar tidak menimpa status yang sudah TRANSFERRED/REPORTING/REVIEW
+      const isValidOpClosingOnly =
+        targetTotal > 0 &&
+        prevTransferred >= targetTotal &&
+        [
+          RequestStatus.APPROVED,
+          RequestStatus.PARTIALLY_APPROVED,
+          RequestStatus.PENDING_PENGAJUAN_TRANSFER,
+          RequestStatus.TRANSFER_BERTAHAP
+        ].includes(activeTransferReq.status);
+      if (!isValidOpClosingOnly) {
+        blockTransferWithSync(
+          `Transfer dibatalkan: Pengajuan UID ${activeTransferReq.id} sudah berstatus ${activeTransferReq.status} dengan total transfer ${formatIDR(prevTransferred)}. Data di layar telah diperbarui.`
+        );
+      }
+    }
+
+    // Opsi 1D: Blokir Sudah Lunas 100% & Over-Transfer terhadap data live Google Sheets (OP- & OPT-)
+    const updatedTotalTransferred = prevTransferred + transferredAmount;
+    if (transferredAmount > 0 && targetTotal > 0) {
+      const liveRemaining = Math.max(0, targetTotal - prevTransferred);
+      if (prevTransferred >= targetTotal) {
+        blockTransferWithSync(
+          `Transfer dibatalkan: Pengajuan UID ${activeTransferReq.id} sudah LUNAS ditransfer di database (${formatIDR(prevTransferred)} dari ${formatIDR(targetTotal)}, status: ${activeTransferReq.status}). Data di layar telah diperbarui.`
+        );
+      }
+      if (updatedTotalTransferred > targetTotal) {
+        blockTransferWithSync(
+          `Transfer dibatalkan: Total akumulasi transfer (${formatIDR(prevTransferred)} + ${formatIDR(transferredAmount)} = ${formatIDR(updatedTotalTransferred)}) melebihi nominal disetujui (${formatIDR(targetTotal)}). Sisa maksimal yang dapat ditransfer: ${formatIDR(liveRemaining)}. Data di layar telah diperbarui.`
+        );
+      }
+    }
 
     const nowActionTime = customAdminActionTime || new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
 
-    // 1. Accumulate total transferred amount
-    const prevTransferred = activeTransferReq.adminActionAmount || 0;
-    const updatedTotalTransferred = prevTransferred + transferredAmount;
-
-    // 2. Combine URLs and File IDs
+    // 2. Combine URLs and File IDs from live row
     const existingUrls = activeTransferReq.buktiTransferUrl ? activeTransferReq.buktiTransferUrl.split('||').map(u => u.trim()).filter(Boolean) : [];
     if (buktiUrl) existingUrls.push(buktiUrl);
     const combinedBuktiUrl = existingUrls.join('||');
@@ -3248,21 +3370,6 @@ export default function App() {
     const existingFileIds = activeTransferReq.buktiTransferFileId ? activeTransferReq.buktiTransferFileId.split('||').map(f => f.trim()).filter(Boolean) : [];
     if (buktiFileId) existingFileIds.push(buktiFileId);
     const combinedFileId = existingFileIds.join('||');
-
-    // 3. Determine target approved amount
-    const approvedUsageAmount = usageItems
-      .filter(item => item.requestId === activeTransferReq.id && item.statusAdmin === ItemStatus.APPROVED)
-      .reduce((sum, item) => sum + item.nominal, 0);
-
-    const finHistories = itemReviewHistories.filter(h => (h.requestUid === activeTransferReq.id || h.itemUid === activeTransferReq.id) && h.actionType === 'APPROVAL_FINANCE');
-    let finApprovedNominal = 0;
-    if (finHistories.length > 0) {
-      finApprovedNominal = finHistories.reduce((s, h) => s + (h.nominal || 0), 0);
-    }
-
-    const targetTotal = isReqTalangan
-      ? (approvedUsageAmount > 0 ? approvedUsageAmount : activeTransferReq.managerActionAmount)
-      : (finApprovedNominal > 0 ? finApprovedNominal : (activeTransferReq.managerActionAmount > 0 ? activeTransferReq.managerActionAmount : activeTransferReq.jumlahPengajuan));
 
     // 4. Determine status:
     let nextStatus = RequestStatus.TRANSFERRED;
@@ -3292,8 +3399,8 @@ export default function App() {
 
     const historyLog: ItemReviewHistory = {
       id: `HIST-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
-      itemUid: transferReq.id,
-      requestUid: transferReq.id,
+      itemUid: activeTransferReq.id,
+      requestUid: activeTransferReq.id,
       timestamp: formatTimestamp(new Date()),
       actorRole: userProfile?.role || activeRole || Role.FINANCE,
       actorEmail: userProfile?.email || '',
@@ -3301,21 +3408,40 @@ export default function App() {
       actionType: 'APPROVAL_FINANCE',
       status: nextStatus === RequestStatus.CLOSED ? 'CLOSED' : 'TRANSFERRED',
       catatan: adminComment || (nextStatus === RequestStatus.CLOSED ? 'Closing UID Talangan oleh Finance' : `Transfer #${existingUrls.length} sebesar ${formatIDR(transferredAmount)}`),
-      tanggalPenggunaan: transferReq.tanggalPemakaian,
+      tanggalPenggunaan: activeTransferReq.tanggalPemakaian,
       nominal: transferredAmount,
-      keterangan: transferReq.keterangan,
+      keterangan: activeTransferReq.keterangan,
       buktiFileId: buktiFileId,
       buktiUrl: buktiUrl
     };
 
-    const success = await runGoogleAction(
-      async () => {
-        await updateBudgetRequest(token, spreadsheetId, updated);
+    // Opsi 3: Eksekusi simpan dengan proteksi kegagalan parsial, sinkronisasi cache langsung, & propagasi error ke TransferModal
+    const defaultErrMsg = (isReqTalangan && isPendingTalanganTransfer)
+      ? 'Gagal memproses transfer dana talangan.'
+      : 'Gagal memproses transfer anggaran.';
+
+    let pengajuanUpdatedInDb = false;
+    setIsLoading(true);
+    setError(null);
+    try {
+      await updateBudgetRequest(token, spreadsheetId, updated);
+      pengajuanUpdatedInDb = true;
+
+      // Sinkronkan state & local cache segera setelah database Pengajuan berhasil diperbarui
+      syncSingleRequestLocalState(updated);
+
+      // Catat ke ItemReviewHistory (dengan 1x retry otomatis bila terjadi gangguan jaringan sesaat)
+      try {
         await createItemReviewHistory(token, spreadsheetId, historyLog);
-      },
-      (isReqTalangan && isPendingTalanganTransfer) ? 'Gagal memproses transfer dana talangan.' : 'Gagal memproses transfer anggaran.'
-    );
-    if (success !== null) {
+      } catch (firstHistErr: any) {
+        const firstErrMsg = String(firstHistErr?.message || '');
+        if (firstErrMsg.includes('401') || firstErrMsg.toLowerCase().includes('unauthorized')) {
+          throw firstHistErr;
+        }
+        await new Promise(resolve => setTimeout(resolve, 600));
+        await createItemReviewHistory(token, spreadsheetId, historyLog);
+      }
+
       if (sharedFilePrefill?.recordId) {
         await deleteSharedReceipt(sharedFilePrefill.recordId);
       }
@@ -3326,43 +3452,77 @@ export default function App() {
         safeSetJson('op_app_cached_item_review_histories', next, 50);
         return next;
       });
-      setRequests(prev => {
-        const next = prev.map(r => r.id === updated.id ? updated : r);
-        safeSetJson('op_app_cached_requests', next, 100);
-        return next;
-      });
 
       // Trigger Web Push Notification to Applicant and Manager (BBM Duren Sawit is excluded)
-      if (!isBbmDurenSawitRequest(transferReq)) {
+      if (!isBbmDurenSawitRequest(activeTransferReq)) {
         const transferNominalFormatted = formatIDRValue(transferredAmount);
-        const siteLabel = getSiteLabel(transferReq.siteId);
-        const pemohonName = getUserDisplayName(transferReq.userEmail);
-        const applicantEmail = transferReq.userEmail?.toLowerCase().trim();
-        const managerEmail = transferReq.managerEmail?.toLowerCase().trim();
+        const siteLabel = getSiteLabel(activeTransferReq.siteId);
+        const pemohonName = getUserDisplayName(activeTransferReq.userEmail);
+        const applicantEmail = activeTransferReq.userEmail?.toLowerCase().trim();
+        const managerEmail = activeTransferReq.managerEmail?.toLowerCase().trim();
         const currentActorEmail = userProfile?.email?.toLowerCase().trim();
 
         // 1. Notify Applicant (if not the actor)
         if (applicantEmail && applicantEmail !== currentActorEmail) {
           sendPushToEmail(
-            transferReq.userEmail,
-            `Dana UID ${transferReq.id} Telah Ditransfer`,
+            activeTransferReq.userEmail,
+            `Dana UID ${activeTransferReq.id} Telah Ditransfer`,
             `Finance telah mentransfer dana sebesar ${transferNominalFormatted} untuk pengajuan ${siteLabel}.`,
-            transferReq
+            updated
           ).catch(console.warn);
         }
 
         // 2. Notify Manager (if not the actor and not identical to applicant)
         if (managerEmail && managerEmail !== currentActorEmail && managerEmail !== applicantEmail) {
           sendPushToEmail(
-            transferReq.managerEmail,
-            `Dana Ditransfer: UID ${transferReq.id}`,
+            activeTransferReq.managerEmail,
+            `Dana Ditransfer: UID ${activeTransferReq.id}`,
             `Dana pengajuan ${pemohonName} (${siteLabel}) sebesar ${transferNominalFormatted} telah ditransfer oleh Finance.`,
-            transferReq
+            updated
           ).catch(console.warn);
         }
       }
 
       setTransferReq(null);
+    } catch (saveErr: any) {
+      console.error(saveErr);
+      const errMsg = String(saveErr?.message || '');
+      const isAuthError =
+        errMsg.includes('401') ||
+        errMsg.toLowerCase().includes('authentication credentials') ||
+        errMsg.toLowerCase().includes('invalid_grant') ||
+        errMsg.toLowerCase().includes('unauthorized');
+
+      if (pengajuanUpdatedInDb) {
+        // Pengajuan SUDAH tersimpan di Google Sheets & sudah disinkronkan ke Local Cache; bersihkan prefill agar tidak dipakai ulang
+        try {
+          if (sharedFilePrefill?.recordId) {
+            await deleteSharedReceipt(sharedFilePrefill.recordId);
+          }
+          await clearAllSharedReceipts();
+        } catch {}
+        setSharedFilePrefill(null);
+
+        const partialMsg = `Data transfer UID ${updated.id} (${formatIDR(updatedTotalTransferred)}) SUDAH tersimpan di database Pengajuan dan layar telah disinkronkan, namun pencatatan riwayat gagal karena gangguan jaringan. Mohon JANGAN melakukan transfer ulang.`;
+        if (isAuthError) {
+          await handleGoogleAuthError();
+        } else {
+          setError(partialMsg);
+        }
+        throw new Error(partialMsg);
+      } else {
+        // Pengajuan belum berubah di database; pastikan local cache sinkron dengan liveTransferReq
+        syncSingleRequestLocalState(activeTransferReq);
+        const failMsg = errMsg || defaultErrMsg;
+        if (isAuthError) {
+          await handleGoogleAuthError();
+        } else {
+          setError(failMsg);
+        }
+        throw new Error(failMsg);
+      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -3798,116 +3958,112 @@ export default function App() {
     },
     photoFile?: File
   ) => {
-    // Ensure active token is valid before starting
-    let activeToken = token;
-    if (!activeToken || activeToken === 'mock_demo_token' || isGoogleTokenExpired()) {
-      try {
-        const saData = await fetchServiceAccountToken();
-        if (saData && saData.token) {
-          activeToken = saData.token;
-          setToken(saData.token);
-        }
-      } catch (e) {}
-    }
-
-    if (!activeToken || !spreadsheetId) {
-      throw new Error('Koneksi database tidak aktif. Silakan segarkan aplikasi.');
-    }
-
     const rawCoord = (activityData.coordinatesActual || '').trim().toLowerCase();
-    const isInvalidGps = !rawCoord || rawCoord.includes('tidak') || rawCoord.includes('belum') || rawCoord.includes('gagal') || rawCoord.includes('error');
+    const isInvalidGps =
+      !rawCoord ||
+      rawCoord.includes('tidak') ||
+      rawCoord.includes('belum') ||
+      rawCoord.includes('gagal') ||
+      rawCoord.includes('error');
     if (isInvalidGps) {
       throw new Error('Data koordinat GPS wajib ada untuk menyimpan Log Kegiatan Harian.');
     }
 
-    let finalBuktiUrl = '';
-    let finalBuktiFileId = '';
+    let activeToken = token;
+    let savedActivity: UserActivity;
 
-    if (photoFile) {
-      if (activeToken === 'mock_demo_token') {
-        const mockId = `mock_act_file_${Date.now()}`;
-        finalBuktiUrl = `https://drive.google.com/file/d/${mockId}/view`;
-        finalBuktiFileId = mockId;
-      } else {
-        try {
-          const uploadResult = await uploadReceiptFile(activeToken, driveFolderId || DRIVE_FOLDER_ID, photoFile);
-          finalBuktiUrl = uploadResult.viewUrl;
-          finalBuktiFileId = uploadResult.fileId;
-        } catch (upErr: any) {
-          console.warn('Photo upload returned error, attempting retry with fresh server token:', upErr);
-          const freshSa = await fetchServiceAccountToken(true);
-          if (freshSa && freshSa.token) {
-            activeToken = freshSa.token;
-            setToken(freshSa.token);
-            const uploadResult = await uploadReceiptFile(freshSa.token, driveFolderId || DRIVE_FOLDER_ID, photoFile);
-            finalBuktiUrl = uploadResult.viewUrl;
-            finalBuktiFileId = uploadResult.fileId;
-          } else {
-            throw upErr;
+    if (activeToken === 'mock_demo_token') {
+      const mockId = `mock_act_file_${Date.now()}`;
+      const todayStr = activityData.tanggal.replace(/-/g, '');
+      const randomDigits = Math.floor(1000 + Math.random() * 9000);
+      const activityId = `ACT-${todayStr}-${randomDigits}`;
+      savedActivity = {
+        id: activityId,
+        userEmail: userProfile?.email || user?.email || '',
+        tanggal: activityData.tanggal,
+        createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
+        siteId: activityData.siteId,
+        siteName: activityData.siteName,
+        coordinatesDb: activityData.coordinatesDb,
+        coordinatesActual: activityData.coordinatesActual,
+        keterangan: activityData.keterangan,
+        buktiUrl: photoFile ? `https://drive.google.com/file/d/${mockId}/view` : '',
+        buktiFileId: photoFile ? mockId : undefined,
+        indikasiFake: activityData.indikasiFake ?? false,
+        fakeReason: activityData.fakeReason || '',
+        jenisKendaraan: activityData.jenisKendaraan || '',
+        platNomor: (activityData.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+        isBackup: activityData.isBackup
+      };
+      await createUserActivity('mock_demo_token', spreadsheetId || 'mock_sheet_id', savedActivity);
+    } else {
+      // Deterministic idempotency key per distinct capture/payload so retries never create duplicate Drive files or Sheet rows
+      const actorEmail = (userProfile?.email || user?.email || '').trim().toLowerCase();
+      const clientSubmissionId = [
+        actorEmail,
+        activityData.tanggal,
+        activityData.siteId,
+        activityData.coordinatesActual,
+        (activityData.keterangan || '').slice(0, 60),
+        photoFile?.name || '',
+        photoFile?.size || 0
+      ].join('|');
+
+      // Unified atomic server pipeline: pre-verifies Sheet -> uploads photo -> appends Activity row -> rolls back Drive file on failure
+      savedActivity = await submitActivityViaServer(
+        {
+          tanggal: activityData.tanggal,
+          siteId: activityData.siteId,
+          siteName: activityData.siteName,
+          coordinatesDb: activityData.coordinatesDb,
+          coordinatesActual: activityData.coordinatesActual,
+          keterangan: activityData.keterangan,
+          jenisKendaraan: activityData.jenisKendaraan,
+          platNomor: activityData.platNomor,
+          isBackup: activityData.isBackup,
+          indikasiFake: activityData.indikasiFake,
+          fakeReason: activityData.fakeReason,
+          spreadsheetId: spreadsheetId || undefined,
+          driveFolderId: driveFolderId || DRIVE_FOLDER_ID,
+          clientSubmissionId
+        },
+        photoFile
+      );
+    }
+
+    // Optimistically update activities state immediately, then sync full list in background if token is available
+    setActivities(prev => {
+      const exists = prev.some(a => a.id.toUpperCase() === savedActivity.id.toUpperCase());
+      const next = exists ? prev : [savedActivity, ...prev];
+      safeSetJson('op_app_cached_activities', next, 30);
+      return next;
+    });
+
+    if (spreadsheetId) {
+      try {
+        if (!activeToken || isGoogleTokenExpired()) {
+          const saData = await fetchServiceAccountToken().catch(() => null);
+          if (saData?.token) {
+            activeToken = saData.token;
+            setToken(saData.token);
           }
         }
-      }
-    }
-
-    const todayStr = activityData.tanggal.replace(/-/g, '');
-    const randomDigits = Math.floor(1000 + Math.random() * 9000);
-    const activityId = `ACT-${todayStr}-${randomDigits}`;
-
-    const newActivity: UserActivity = {
-      id: activityId,
-      userEmail: userProfile?.email || user?.email || '',
-      tanggal: activityData.tanggal,
-      createdAt: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }),
-      siteId: activityData.siteId,
-      siteName: activityData.siteName,
-      coordinatesDb: activityData.coordinatesDb,
-      coordinatesActual: activityData.coordinatesActual,
-      keterangan: activityData.keterangan,
-      buktiUrl: finalBuktiUrl,
-      buktiFileId: finalBuktiFileId || undefined,
-      indikasiFake: activityData.indikasiFake ?? false,
-      fakeReason: activityData.fakeReason || '',
-      jenisKendaraan: activityData.jenisKendaraan || '',
-      platNomor: (activityData.platNomor || '').toUpperCase().replace(/[^A-Z0-9]/g, ''),
-      isBackup: activityData.isBackup
-    };
-
-    try {
-      await createUserActivity(activeToken, spreadsheetId, newActivity);
-    } catch (err: any) {
-      const errStr = (err.message || String(err)).toLowerCase();
-      const isAuthError = errStr.includes('401') ||
-        errStr.includes('authentication credentials') ||
-        errStr.includes('unauthenticated') ||
-        errStr.includes('unauthorized') ||
-        errStr.includes('invalid_grant');
-
-      if (isAuthError) {
-        console.warn('createUserActivity encountered 401 error, fetching fresh token and retrying...');
-        const freshSa = await fetchServiceAccountToken(true);
-        if (freshSa && freshSa.token) {
-          activeToken = freshSa.token;
-          setToken(freshSa.token);
-          await createUserActivity(freshSa.token, spreadsheetId, newActivity);
-        } else {
-          throw err;
+        if (activeToken) {
+          const allActs = await fetchUserActivities(activeToken, spreadsheetId);
+          if (allActs.length > 0) {
+            const hasSaved = allActs.some(a => a.id.toUpperCase() === savedActivity.id.toUpperCase());
+            const mergedActs = hasSaved ? allActs : [savedActivity, ...allActs];
+            setActivities(mergedActs);
+            safeSetJson('op_app_cached_activities', mergedActs, 30);
+          }
         }
-      } else {
-        throw err;
+      } catch (fetchErr) {
+        console.warn('[handleSaveActivity] Post-save activity list refresh skipped:', fetchErr);
       }
-    }
-
-    // Refresh activities state
-    try {
-      const allActs = await fetchUserActivities(activeToken, spreadsheetId);
-      setActivities(allActs);
-      safeSetJson('op_app_cached_activities', allActs, 30);
-    } catch (fetchErr) {
-      setActivities(prev => [newActivity, ...prev]);
     }
 
     // Seamless Background Auto-Bind check on activity submission
-    if (userProfile) {
+    if (userProfile && activeToken && spreadsheetId) {
       const isMobileUser =
         userProfile.mobile === true ||
         String(userProfile.mobile).trim().toUpperCase() === 'TRUE' ||
@@ -3919,7 +4075,7 @@ export default function App() {
           userProfile,
           async (boundProfile) => {
             try {
-              await saveUserProfile(activeToken, spreadsheetId, boundProfile);
+              await saveUserProfile(activeToken!, spreadsheetId, boundProfile);
             } catch (e) {
               console.warn('Auto-bind on activity submission error:', e);
             }
@@ -4020,6 +4176,7 @@ export default function App() {
         errStr.includes('unauthorized') ||
         errStr.includes('invalid_grant');
 
+      let recovered = false;
       if (isAuthError) {
         console.warn('createUserActivity encountered 401 error, fetching fresh token and retrying...');
         const freshSa = await fetchServiceAccountToken(true);
@@ -4027,10 +4184,22 @@ export default function App() {
           activeToken = freshSa.token;
           setToken(freshSa.token);
           await createUserActivity(freshSa.token, spreadsheetId, newActivity);
-        } else {
-          throw err;
+          recovered = true;
         }
-      } else {
+      }
+
+      if (!recovered) {
+        // Prevent orphan Drive file if manual activity sheet append fails
+        if (finalBuktiFileId && activeToken && activeToken !== 'mock_demo_token') {
+          try {
+            await fetch(`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(finalBuktiFileId)}?supportsAllDrives=true`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${activeToken}` }
+            });
+          } catch (cleanupErr) {
+            console.warn('[handleSaveManualActivity] Rollback delete Drive file failed:', cleanupErr);
+          }
+        }
         throw err;
       }
     }
@@ -5465,6 +5634,14 @@ export default function App() {
                   userProfile={userProfile}
                   onOpenBbmModal={() => setIsBbmModalOpen(true)}
                   onOpenBbmListModal={() => setIsBbmListModalOpen(true)}
+                  onOpenVehicleFuelAnalysis={
+                    activeRole === Role.ADMINISTRATOR ||
+                    activeRole === Role.DIREKTUR ||
+                    activeRole === Role.FINANCE ||
+                    activeRole === Role.MANAGER
+                      ? () => setIsVehicleFuelAnalysisModalOpen(true)
+                      : undefined
+                  }
                   histories={itemReviewHistories}
                   activeTab={dashboardTab}
                   onSelectTab={handleSelectDashboardTab}
@@ -6885,6 +7062,25 @@ export default function App() {
                 setPreviewDocument({ url: rawUrl, title: 'Nota Pengisian BBM Duren Sawit' });
               }
             }}
+          />
+        </Suspense>
+      )}
+
+      {/* Modal Analisis Pemakaian BBM Kendaraan & Backup Genset (Administrator, Direktur, Finance, Manager) */}
+      {(activeRole === Role.ADMINISTRATOR ||
+        activeRole === Role.DIREKTUR ||
+        activeRole === Role.FINANCE ||
+        activeRole === Role.MANAGER) && isVehicleFuelAnalysisModalOpen && (
+        <Suspense fallback={null}>
+          <AdminVehicleFuelAnalysisModal
+            isOpen={isVehicleFuelAnalysisModalOpen}
+            onClose={handleCloseVehicleFuelAnalysis}
+            requests={requests}
+            usageItems={usageItems}
+            activities={activities}
+            profiles={profiles}
+            spreadsheetId={spreadsheetId}
+            onPreviewDocument={handlePreviewVehicleFuelDoc}
           />
         </Suspense>
       )}
